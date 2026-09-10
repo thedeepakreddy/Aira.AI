@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# dependencies
+node_modules/
+
+# build output
+dist/
+.next/
+.vinext/
+.wrangler/
+*.tsbuildinfo
+
+# local environment / secrets
+.env
+.env.*
+!.env.example
+
+# editor
+.vscode/
+.idea/

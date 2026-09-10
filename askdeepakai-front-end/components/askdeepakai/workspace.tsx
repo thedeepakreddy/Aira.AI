@@ -1,0 +1,185 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { Mic, MicOff, Paperclip, Sparkles, Signal, Wifi, BatteryFull, X, Send, PauseCircle, PlayCircle, MessageCircle, Plus, Terminal, LogIn, LogOut } from 'lucide-react';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+
+
+import {Sheet,SheetTrigger,SheetContent,SheetTitle,SheetDescription,SheetHeader} from '@/components/ui/sheet';
+import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
+import RemoteTerminal from './terminal';
+import Login from './login';
+import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
+export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
+type View = 'auto'|'mobile'|'desktop';
+type Message = {role:'user'|'assistant'; text:string};
+const PROMPT = 'Deploy an autonomous AI agent to monitor liquidity pools';
+const TRANSCRIPT = PROMPT + '. Make it a tactical trading bot.';
+const REFERENCE_REPLY = 'Deployed AlphaRaptor.sh to your agent network. The automation loop is active. Need to configure risk mitigation parameters?';
+const SUGGESTIONS = ['Deploy autonomous agent','Optimize gas for ZK-proofs','Audit my protocol'];
+type ModelContext = {registerTool:(tool:{name:string;title:string;description:string;inputSchema:object;annotations:object;execute:(input:unknown)=>unknown},options:{signal:AbortSignal})=>void|Promise<void>};
+
+export default function Workspace({view='auto',initialScreen='home'}:{view?:View;initialScreen?:Screen}) {
+ const [screen,setScreen]=useState<Screen>(initialScreen);
+ const [historyOpen,setHistoryOpen]=useState(false);
+ const [conversations,setConversations]=useState<Conversation[]>([]);
+ const [currentId,setCurrentId]=useState<string|null>(null);
+ const [historyReady,setHistoryReady]=useState(false);
+ const [storageNotice,setStorageNotice]=useState('');
+ const [signedIn,setSignedIn]=useState(false);
+ const basePath=view==='auto'?'':'/'+view;
+ function showScreen(next:Screen){
+  setScreen(next);
+  const path=basePath+(next==='cli'?'/cli':next==='login'?'/login':'')||'/';
+  if(typeof window!=='undefined'&&window.location.pathname!==path)window.history.pushState({},'',path);
+ }
+ function newChat(){clearTimers();setCurrentId(null);setMessages([]);setDraft('');setAttachment('');setBusy(false);setDemoSequence(false);setHistoryOpen(false);showScreen('home')}
+ function openConversation(conversation:Conversation){clearTimers();setCurrentId(conversation.id);setMessages(conversation.messages);setDraft('');setAttachment('');setBusy(false);setDemoSequence(false);setHistoryOpen(false);showScreen('chat')}
+ function openCLI(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('cli')}
+ function openLogin(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
+ function completeLogin(){setSignedIn(true);try{sessionStorage.setItem('askdeepakai.preview-session','true')}catch{}showScreen('home')}
+ function signOut(){setSignedIn(false);try{sessionStorage.removeItem('askdeepakai.preview-session')}catch{}openLogin()}
+
+ const [draft,setDraft]=useState('');
+ const [paused,setPaused]=useState(false);
+ const [wordCount,setWordCount]=useState(0);
+ const [messages,setMessages]=useState<Message[]>([]);
+ const [busy,setBusy]=useState(false);
+ const [attachment,setAttachment]=useState('');
+ const [reduceMotion,setReduceMotion]=useState(false);
+ const [demoSequence,setDemoSequence]=useState(false);
+ const fileInput=useRef<HTMLInputElement>(null);
+ const textarea=useRef<HTMLTextAreaElement>(null);
+ const scrollRegion=useRef<HTMLDivElement>(null);
+ const closeButton=useRef<HTMLButtonElement>(null);
+ const orbVideo=useRef<HTMLVideoElement>(null);
+ const timers=useRef<ReturnType<typeof setTimeout>[]>([]);
+ const screenRef=useRef(screen);
+ screenRef.current=screen;
+ const words=TRANSCRIPT.split(' ');
+
+ function clearTimers(){timers.current.forEach(clearTimeout);timers.current=[]}
+ function later(fn:()=>void,ms:number){timers.current.push(setTimeout(fn,ms))}
+ function goHome(){clearTimers();showScreen('home');setBusy(false);setPaused(false);setDemoSequence(false)}
+ function startVoice(){clearTimers();showScreen('voice');setWordCount(0);setPaused(false);setBusy(false);setDemoSequence(true)}
+ function sendMessage(text:string, reference=false){
+  const clean=text.trim(); if(!clean)return;
+  clearTimers();if(screenRef.current!=='chat'||reference||!currentId)setCurrentId(crypto.randomUUID());setDemoSequence(reference);showScreen('chat');setDraft('');setAttachment('');setBusy(true);
+  setMessages(previous=>reference?[{role:'user',text:PROMPT}]:[...(screenRef.current==='chat'?previous:[]),{role:'user',text:clean}]);
+  later(()=>{
+   setMessages(previous=>[...previous,{role:'assistant',text:reference?REFERENCE_REPLY:/core parameters/i.test(clean)?'Core agent parameters initialized.':'This is the front-end demo. Your message was received; connect an AI backend to generate a live response.'}]);
+   setBusy(false);
+  },900);
+  if(reference){
+   later(()=>{setMessages(previous=>[...previous,{role:'user',text:'Show me the active core parameters.'}]);setBusy(true)},2300);
+   later(()=>{setMessages(previous=>[...previous,{role:'assistant',text:'Core agent parameters initialized.'}]);setBusy(false)},3100);
+  }
+ }
+ function submit(){if(busy)return;if(draft.trim())sendMessage(draft);else startVoice()}
+ useEffect(()=>{
+  try{setConversations(parseHistory(localStorage.getItem(HISTORY_KEY)));setSignedIn(sessionStorage.getItem('askdeepakai.preview-session')==='true')}catch{setStorageNotice('History is available for this session only.')}
+  setHistoryReady(true);
+  function back(){
+   clearTimers();setBusy(false);setHistoryOpen(false);
+   const path=window.location.pathname;
+   setScreen(path.endsWith('/cli')?'cli':path.endsWith('/login')?'login':'home');
+  }
+  window.addEventListener('popstate',back);
+  return()=>window.removeEventListener('popstate',back);
+ },[]);
+ useEffect(()=>{
+  if(historyReady&&currentId&&messages.length)setConversations(previous=>saveConversation(previous,currentId,messages,Date.now()));
+ },[messages,currentId,historyReady]);
+ useEffect(()=>{
+  if(!historyReady)return;
+  try{localStorage.setItem(HISTORY_KEY,JSON.stringify(conversations))}catch{setStorageNotice('Browser storage is full or unavailable. New history stays in this session.')}
+ },[conversations,historyReady]);
+ useEffect(()=>{
+  const query=window.matchMedia('(prefers-reduced-motion: reduce)');
+  const update=()=>setReduceMotion(query.matches);update();query.addEventListener('change',update);
+  return()=>{query.removeEventListener('change',update);clearTimers()}
+ },[]);
+ useEffect(()=>{
+  if(screen!=='voice'||paused)return;
+  const tick=setInterval(()=>setWordCount(n=>Math.min(n+1,words.length)),145);
+  return()=>clearInterval(tick);
+ },[screen,paused,words.length]);
+ useEffect(()=>{
+  if(screen!=='voice'||paused||wordCount<words.length)return;
+  const timer=setTimeout(()=>sendMessage(PROMPT,true),1600);
+  return()=>clearTimeout(timer);
+ },[screen,paused,wordCount,words.length]);
+ useEffect(()=>{
+  if(!orbVideo.current)return;
+  if(paused||reduceMotion)orbVideo.current.pause();else void orbVideo.current.play().catch(()=>{});
+ },[screen,paused,reduceMotion]);
+ useEffect(()=>{
+  if(screen==='voice'||screen==='chat')closeButton.current?.focus({preventScroll:true});
+ },[screen]);
+ useEffect(()=>{
+  function key(event:KeyboardEvent){if(event.key==='Escape'&&!event.defaultPrevented&&!historyOpen&&(screenRef.current==='voice'||screenRef.current==='chat'))goHome()}
+  window.addEventListener('keydown',key);
+  return()=>window.removeEventListener('keydown',key)
+ },[screen,historyOpen]);
+ useEffect(()=>{scrollRegion.current?.scrollTo({top:scrollRegion.current.scrollHeight,behavior:reduceMotion?'instant':'smooth'})},[messages,busy,reduceMotion]);
+ useEffect(()=>{
+  const context=(document as Document&{modelContext?:ModelContext}).modelContext;
+  if(!context?.registerTool)return;
+  const lifecycle=new AbortController();
+  try{void Promise.resolve(context.registerTool({
+   name:'start_askdeepakai_reference_demo',title:'Start Aira reference demo',
+   description:'Open the local, simulated voice interaction from the supplied reference. Does not access the microphone or deploy anything.',
+   inputSchema:{type:'object',properties:{screen:{type:'string',enum:['home','voice']}},required:['screen'],additionalProperties:false},
+   annotations:{readOnlyHint:false,untrustedContentHint:false},
+   execute(input:unknown){
+    if(!input||typeof input!=='object'||!('screen' in input)||!['home','voice'].includes(String(input.screen))||Object.keys(input).length!==1)throw new Error('screen must be home or voice');
+    flushSync(()=>{if(input.screen==='home')goHome();else startVoice()});
+    return{screen:input.screen,simulated:true}
+   }
+  },{signal:lifecycle.signal})).catch(()=>{})}catch{}
+  return()=>lifecycle.abort()
+ },[]);
+
+ return <div className={'viewport-frame view-'+view}><main className="stage"><div className="device"><div className={'surface '+screen}>
+ <p className="sr-only">Interactive front-end demonstration. Voice transcription and agent responses are simulated from the reference video. No microphone audio is recorded.</p>
+ <div className="status-bar" aria-hidden="true"><span>9:41</span><div className="island"/><div className="status-icons"><Signal/><Wifi/><BatteryFull/></div></div>
+ <input ref={fileInput} className="sr-only" type="file" tabIndex={-1} onChange={event=>{setAttachment(event.target.files?.[0]?.name??'');event.target.value=''}}/>
+ <header className={'home-header app-header '+(screen!=='home'?'in-session':'')}>
+ <Sheet open={historyOpen} onOpenChange={setHistoryOpen}><SheetTrigger className="history-trigger glass" aria-label="Open chat history"><span className="menu-glyph" aria-hidden="true"><i/><i/><i/></span></SheetTrigger>
+ <SheetContent side="left" className={"history-sheet "+(view==="mobile"?"mobile-sheet":"")}>
+  <SheetHeader><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><SheetTitle>Your workspace</SheetTitle><SheetDescription>Pick up a conversation or start something new.</SheetDescription></SheetHeader>
+  <Tabs defaultValue={screen==='cli'?'cli':'chat'} className="history-tabs"><TabsList aria-label="Workspace mode"><TabsTrigger value="chat"><MessageCircle/>Chat</TabsTrigger><TabsTrigger value="cli"><Terminal/>CLI</TabsTrigger></TabsList>
+  <TabsContent value="chat"><button className="new-chat-button warm-button" onClick={newChat}><Plus/>New chat</button><p className="history-label">CHAT HISTORY</p><div className="history-list">{conversations.length?conversations.map(conversation=><button className={'history-item '+(currentId===conversation.id?'selected':'')} key={conversation.id} onClick={()=>openConversation(conversation)}><MessageCircle/><span><strong>{conversation.title}</strong><small>{new Date(conversation.updatedAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</small></span></button>):<div className="history-empty"><MessageCircle/><p>A little space for big ideas.</p><span>Your conversations will appear here.</span></div>}</div></TabsContent>
+  <TabsContent value="cli"><div className="history-cli"><Terminal/><h3>Your remote workspace.</h3><p>Explore a terminal designed for your laptop and phone.</p><button className="warm-button" onClick={openCLI}>Open CLI<Send/></button><small>Front-end demo session</small></div></TabsContent></Tabs>
+  <footer className="history-footer"><p>{storageNotice||'Chat history is saved on this browser.'}</p><button className="history-account" onClick={signedIn?signOut:openLogin}>{signedIn?<LogOut/>:<LogIn/>}{signedIn?'Sign out of demo':'Log in'}<span>Demo</span></button></footer>
+ </SheetContent></Sheet>
+ <button className="brand-home" onClick={goHome} aria-label="Aira by AskDeepakAI home"><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><small>{screen==='cli'?'Remote workspace':screen==='login'?'Your next chapter starts here':'Your AI workspace'}</small></button>
+ <div className="app-header-actions">{screen!=='login'&&<><button className={'header-cli '+(screen==='cli'?'active':'')} onClick={screen==='cli'?goHome:openCLI}>{screen==='cli'?<MessageCircle/>:<Terminal/>}<span>{screen==='cli'?'Chat':'CLI'}</span></button><button className="account-button glass" onClick={signedIn?signOut:openLogin} aria-label={signedIn?'Sign out of demo':'Log in'}>{signedIn?<LogOut/>:<LogIn/>}<span>{signedIn?'Sign out':'Log in'}</span></button></>}</div>
+ </header>
+ {screen==='login'?<Login onComplete={completeLogin} onBack={goHome} reduceMotion={reduceMotion}/>:screen==='cli'?<RemoteTerminal/>:
+ screen==='home'?<div className="screen-content" key="home">
+ <section className="home-content"><h1>What are we<br/>building today?</h1><div className="suggestions" aria-label="Prompt suggestions">{SUGGESTIONS.map(text=><button className="suggestion" key={text} onClick={()=>{setDraft(text);textarea.current?.focus()}}><Sparkles/><span>{text}</span></button>)}</div></section>
+ <form className="home-composer" onSubmit={event=>{event.preventDefault();submit()}}>
+ <textarea ref={textarea} aria-label="Ask AI a question or describe your idea" placeholder="Ask AI a question or describe your idea" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit()}}}/>
+ {attachment&&<div className="attachment"><Paperclip/><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}
+ <div className="composer-actions"><button type="button" className="glass icon-button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><Select defaultValue="Opus 4.8"><SelectTrigger className="model-picker" aria-label="Model (demo)"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Opus 4.8">Opus 4.8</SelectItem></SelectContent></Select><button className="mic-button" type="submit" aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
+ <aside className="desktop-intro"><button className="desktop-orb-button" onClick={startVoice} aria-label="Start a voice conversation with Aira">{reduceMotion?<img src="/assets/orb.jpg" alt=""/>:<video src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay loop muted playsInline aria-hidden="true"/>}</button><span className="desktop-orb-caption">Meet Aira</span><h2>A thought away.</h2><p>Speak your next idea into life.</p><button className="desktop-voice-link" onClick={startVoice}><Mic/>Start a conversation<span aria-hidden="true">↗</span></button></aside>
+ </div>:<>
+ <button ref={closeButton} className="close-chat glass" onClick={goHome}><X/>Close chat</button>
+ {screen==='voice'?<section className="voice-screen screen-content" key="voice" aria-label="Voice demo">
+ <div className={'orb-wrap '+(paused?'is-paused':'')}><video ref={orbVideo} className="orb-video" src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay={!reduceMotion} loop muted playsInline preload="auto" aria-hidden="true"/><img className="orb-still" src="/assets/orb.jpg" alt="Glowing orange voice orb"/></div>
+ <p className="listening-status" aria-live="polite">{paused?'Aira is paused...':'Aira is listening...'}</p>
+ <p className="transcript" aria-label={TRANSCRIPT}>{words.map((word,index)=><span key={index} className={index<wordCount?'spoken':'unspoken'} aria-hidden="true">{word} </span>)}</p>
+ <div className="voice-actions"><button className="voice-secondary" aria-label={paused?'Resume voice demo':'Pause voice demo'} onClick={()=>setPaused(!paused)}>{paused?<PlayCircle/>:<PauseCircle/>}</button><div className="mic-orbit"><button className="mic-button voice-mic" onClick={()=>setPaused(!paused)} aria-label={paused?'Resume microphone demo':'Pause microphone demo'} aria-pressed={!paused}>{paused?<MicOff/>:<Mic/>}</button></div><button className="voice-secondary" onClick={()=>sendMessage(PROMPT,true)} aria-label="Send transcript"><Send/></button></div>
+ </section>:<section className="chat-screen screen-content" key="chat" aria-label="Chat demo">
+ <div className="messages" ref={scrollRegion} role="log" aria-live="polite" aria-relevant="additions text">{messages.map((message,index)=><div key={index} className={'message-row '+message.role}>{message.role==='assistant'&&<img src="/assets/orb.jpg" className="avatar" alt="Aira"/>}<p className="message-bubble">{message.text}</p></div>)}{(busy||demoSequence)&&<p className="working-status">{busy?'Aira is thinking...':'Aira is working...'}</p>}</div>
+ <form className="chat-composer" onSubmit={e=>{e.preventDefault();submit()}}>{attachment&&<div className="attachment"><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}<div className="chat-input-row"><button className="chat-icon" type="button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><input aria-label="Ask AI a question" placeholder="Ask AI a question" value={draft} onChange={e=>setDraft(e.target.value)}/><button className="chat-icon" type="submit" disabled={busy} aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
+ </section>}
+ </>}
+ <div className="home-indicator" aria-hidden="true"/>
+ </div></div></main></div>
+}
+
+
+
