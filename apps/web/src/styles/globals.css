@@ -288,3 +288,8 @@
 .login-card input:disabled{opacity:.55}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spin{animation:spin 1s linear infinite}
+/* The picker now holds real model names instead of a fixed placeholder. Pinned
+   to the exact width the reference rendered ("Opus 4.8" at 12px), so a short
+   label like "Auto" does not shrink the composer row and the layout matches the
+   original pixel for pixel; longer model names still expand it. */
+@container app (min-width:761px){.model-picker{min-width:102.703px}}

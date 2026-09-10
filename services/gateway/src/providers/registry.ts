@@ -13,6 +13,8 @@ export interface ModelPricing {
 
 export interface ModelSpec {
   id: string;
+  /** Human name for the picker. Raw ids read like build artefacts. */
+  label: string;
   provider: ProviderId;
   contextWindow: number;
   /** Undefined means "not verified yet" — cost is reported as null downstream. */
@@ -29,6 +31,7 @@ export interface ModelSpec {
 const ANTHROPIC_MODELS: ModelSpec[] = [
   {
     id: 'claude-opus-5',
+    label: 'Opus 5',
     provider: 'anthropic',
     contextWindow: 1_000_000,
     pricing: { inputPerMTok: 5, outputPerMTok: 25 },
@@ -36,6 +39,7 @@ const ANTHROPIC_MODELS: ModelSpec[] = [
   },
   {
     id: 'claude-sonnet-5',
+    label: 'Sonnet 5',
     provider: 'anthropic',
     contextWindow: 1_000_000,
     pricing: { inputPerMTok: 2, outputPerMTok: 10 },
@@ -43,6 +47,7 @@ const ANTHROPIC_MODELS: ModelSpec[] = [
   },
   {
     id: 'claude-haiku-4-5',
+    label: 'Haiku 4.5',
     provider: 'anthropic',
     contextWindow: 200_000,
     pricing: { inputPerMTok: 1, outputPerMTok: 5 },
@@ -68,6 +73,7 @@ function parseOpenAIModels(raw: string | undefined): ModelSpec[] {
       if (!id) throw new Error(`OPENAI_MODELS entry missing an id: "${entry}"`);
       const spec: ModelSpec = {
         id,
+        label: prettifyOpenAIId(id),
         provider: 'openai',
         contextWindow: Number(ctx) || 128_000,
         tier: (tier as ModelSpec['tier']) || 'balanced',
@@ -77,6 +83,17 @@ function parseOpenAIModels(raw: string | undefined): ModelSpec[] {
       }
       return spec;
     });
+}
+
+/** "gpt-5.1-mini" -> "GPT-5.1 Mini". Ids are the only name OpenAI gives us. */
+function prettifyOpenAIId(id: string): string {
+  return id
+    .split('-')
+    .map((part) =>
+      /^gpt$/i.test(part) ? 'GPT' : part.charAt(0).toUpperCase() + part.slice(1),
+    )
+    .join(' ')
+    .replace('GPT ', 'GPT-');
 }
 
 let catalogue: ModelSpec[] = ANTHROPIC_MODELS;

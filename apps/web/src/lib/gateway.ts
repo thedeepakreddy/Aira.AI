@@ -134,3 +134,34 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
     yield { type: 'error', message: 'The connection dropped mid-response.', retryable: true };
   }
 }
+
+export interface ModelSpec {
+  id: string;
+  label: string;
+  provider: string;
+  tier: 'frontier' | 'balanced' | 'fast';
+  contextWindow: number;
+  pricing?: { inputPerMTok: number; outputPerMTok: number };
+}
+
+/**
+ * Model catalogue for the picker. Returns [] rather than throwing when the
+ * gateway is unreachable or the session has expired — an empty picker is a
+ * better failure than a blank screen.
+ */
+export async function listModels(): Promise<ModelSpec[]> {
+  const token = await getAccessToken();
+  try {
+    const response = await fetch(`${GATEWAY_URL}/v1/models`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(DEV_USER ? { 'x-aira-dev-user': DEV_USER } : {}),
+      },
+    });
+    if (!response.ok) return [];
+    const body = (await response.json()) as { models?: ModelSpec[] };
+    return body.models ?? [];
+  } catch {
+    return [];
+  }
+}

@@ -42,8 +42,12 @@ app.get('/health', (c) =>
 
 const auth = createAuthMiddleware(env);
 
-/** Catalogue for the model picker. Prices are included so the UI can show them. */
-app.get('/v1/models', auth, (c) => c.json({ models: listModels() }));
+/**
+ * Catalogue for the model picker. Deliberately unauthenticated: it is the same
+ * information a public pricing page carries, and requiring a session here would
+ * leave the picker an empty, dead control on the signed-out screen.
+ */
+app.get('/v1/models', (c) => c.json({ models: listModels() }));
 
 app.post('/v1/chat', auth, createChatRoute(providers));
 

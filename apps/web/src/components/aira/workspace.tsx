@@ -8,7 +8,7 @@ import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
 import RemoteTerminal from './terminal';
 import Login from './login';
 import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
-import {streamChat} from '@/lib/gateway';
+import {streamChat,listModels,type ModelSpec} from '@/lib/gateway';
 import {getSession,onAuthChange,signOut as authSignOut} from '@/lib/supabase';
 export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
 type View = 'auto'|'mobile'|'desktop';
@@ -26,6 +26,8 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  const [historyReady,setHistoryReady]=useState(false);
  const [storageNotice,setStorageNotice]=useState('');
  const [signedIn,setSignedIn]=useState(false);
+ const [models,setModels]=useState<ModelSpec[]>([]);
+ const [model,setModel]=useState('');
  const basePath=view==='auto'?'':'/'+view;
  function showScreen(next:Screen){
   setScreen(next);
@@ -80,7 +82,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   try{
    for await(const event of streamChat({
     messages:history.map(m=>({role:m.role,content:m.text})),
-    surface:'chat',conversationId,signal:controller.signal,
+    surface:'chat',model:model||undefined,conversationId,signal:controller.signal,
    })){
     if(controller.signal.aborted)return;
     if(event.type==='text'){
@@ -140,6 +142,16 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   return onAuthChange(session=>setSignedIn(Boolean(session)));
  },[]);
  useEffect(()=>{
+  let live=true;
+  void listModels().then(list=>{
+   if(!live)return;
+   setModels(list);
+   // Keep the user's choice if it survived; otherwise let the gateway route.
+   setModel(current=>list.some(m=>m.id===current)?current:'');
+  });
+  return()=>{live=false};
+ },[signedIn]);
+ useEffect(()=>{
   const query=window.matchMedia('(prefers-reduced-motion: reduce)');
   const update=()=>setReduceMotion(query.matches);update();query.addEventListener('change',update);
   return()=>{query.removeEventListener('change',update);clearTimers()}
@@ -179,10 +191,10 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   <Tabs defaultValue={screen==='cli'?'cli':'chat'} className="history-tabs"><TabsList aria-label="Workspace mode"><TabsTrigger value="chat"><MessageCircle/>Chat</TabsTrigger><TabsTrigger value="cli"><Terminal/>CLI</TabsTrigger></TabsList>
   <TabsContent value="chat"><button className="new-chat-button warm-button" onClick={newChat}><Plus/>New chat</button><p className="history-label">CHAT HISTORY</p><div className="history-list">{conversations.length?conversations.map(conversation=><button className={'history-item '+(currentId===conversation.id?'selected':'')} key={conversation.id} onClick={()=>openConversation(conversation)}><MessageCircle/><span><strong>{conversation.title}</strong><small>{new Date(conversation.updatedAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</small></span></button>):<div className="history-empty"><MessageCircle/><p>A little space for big ideas.</p><span>Your conversations will appear here.</span></div>}</div></TabsContent>
   <TabsContent value="cli"><div className="history-cli"><Terminal/><h3>Your remote workspace.</h3><p>Explore a terminal designed for your laptop and phone.</p><button className="warm-button" onClick={openCLI}>Open CLI<Send/></button><small>Front-end demo session</small></div></TabsContent></Tabs>
-  <footer className="history-footer"><p>{storageNotice||'Chat history is saved on this browser.'}</p><button className="history-account" onClick={signedIn?signOut:openLogin}>{signedIn?<LogOut/>:<LogIn/>}{signedIn?'Sign out of demo':'Log in'}<span>Demo</span></button></footer>
+  <footer className="history-footer"><p>{storageNotice||'Chat history is saved on this browser.'}</p><button className="history-account" onClick={signedIn?signOut:openLogin}>{signedIn?<LogOut/>:<LogIn/>}{signedIn?'Sign out':'Log in'}<span>Demo</span></button></footer>
  </SheetContent></Sheet>
  <button className="brand-home" onClick={goHome} aria-label="Aira by AskDeepakAI home"><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><small>{screen==='cli'?'Remote workspace':screen==='login'?'Your next chapter starts here':'Your AI workspace'}</small></button>
- <div className="app-header-actions">{screen!=='login'&&<><button className={'header-cli '+(screen==='cli'?'active':'')} onClick={screen==='cli'?goHome:openCLI}>{screen==='cli'?<MessageCircle/>:<Terminal/>}<span>{screen==='cli'?'Chat':'CLI'}</span></button><button className="account-button glass" onClick={signedIn?signOut:openLogin} aria-label={signedIn?'Sign out of demo':'Log in'}>{signedIn?<LogOut/>:<LogIn/>}<span>{signedIn?'Sign out':'Log in'}</span></button></>}</div>
+ <div className="app-header-actions">{screen!=='login'&&<><button className={'header-cli '+(screen==='cli'?'active':'')} onClick={screen==='cli'?goHome:openCLI}>{screen==='cli'?<MessageCircle/>:<Terminal/>}<span>{screen==='cli'?'Chat':'CLI'}</span></button><button className="account-button glass" onClick={signedIn?signOut:openLogin} aria-label={signedIn?'Sign out':'Log in'}>{signedIn?<LogOut/>:<LogIn/>}<span>{signedIn?'Sign out':'Log in'}</span></button></>}</div>
  </header>
  {screen==='login'?<Login onComplete={completeLogin} onBack={goHome} reduceMotion={reduceMotion}/>:screen==='cli'?<RemoteTerminal/>:
  screen==='home'?<div className="screen-content" key="home">
@@ -190,7 +202,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  <form className="home-composer" onSubmit={event=>{event.preventDefault();submit()}}>
  <textarea ref={textarea} aria-label="Ask AI a question or describe your idea" placeholder="Ask AI a question or describe your idea" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit()}}}/>
  {attachment&&<div className="attachment"><Paperclip/><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}
- <div className="composer-actions"><button type="button" className="glass icon-button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><Select defaultValue="Opus 4.8"><SelectTrigger className="model-picker" aria-label="Model (demo)"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Opus 4.8">Opus 4.8</SelectItem></SelectContent></Select><button className="mic-button" type="submit" aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
+ <div className="composer-actions"><button type="button" className="glass icon-button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><Select value={model} onValueChange={value=>setModel(String(value))}><SelectTrigger className="model-picker" aria-label="Model"><SelectValue>{(value:unknown)=>models.find(m=>m.id===value)?.label??(models.length?'Auto':'Model')}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">Auto</SelectItem>{models.map(m=><SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>)}</SelectContent></Select><button className="mic-button" type="submit" aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
  <aside className="desktop-intro"><button className="desktop-orb-button" onClick={startVoice} aria-label="Start a voice conversation with Aira">{reduceMotion?<img src="/assets/orb.jpg" alt=""/>:<video src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay loop muted playsInline aria-hidden="true"/>}</button><span className="desktop-orb-caption">Meet Aira</span><h2>A thought away.</h2><p>Speak your next idea into life.</p><button className="desktop-voice-link" onClick={startVoice}><Mic/>Start a conversation<span aria-hidden="true">↗</span></button></aside>
  </div>:<>
  <button ref={closeButton} className="close-chat glass" onClick={goHome}><X/>Close chat</button>
