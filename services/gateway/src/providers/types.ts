@@ -1,0 +1,73 @@
+/**
+ * Provider-agnostic contract.
+ *
+ * Every model provider is normalised to this interface so nothing above it —
+ * routes, routing rules, the frontend — ever needs to know which vendor served
+ * a request. Adding a provider means adding one adapter, not touching callers.
+ */
+
+export type Role = 'user' | 'assistant';
+
+export interface ChatMessage {
+  role: Role;
+  content: string;
+}
+
+/**
+ * The product surface a request came from. Routing keys off this rather than
+ * inspecting message content: each surface is a separate conversation with its
+ * own prompt cache, so choosing a model per surface costs nothing, while
+ * switching models mid-conversation would forfeit the cached prefix.
+ */
+export type Surface = 'chat' | 'voice' | 'code' | 'task';
+
+export interface ChatRequest {
+  messages: ChatMessage[];
+  system?: string;
+  surface: Surface;
+  /** Explicit model override from the UI picker. Wins over routing. */
+  model?: string;
+  maxTokens?: number;
+  signal?: AbortSignal;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Anthropic-only; 0 elsewhere. Tracked because it dominates cost at scale. */
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/**
+ * Normalised stream events. Both adapters emit exactly these, so the SSE layer
+ * and the client stay provider-neutral.
+ */
+export type StreamEvent =
+  | { type: 'start'; model: string; provider: ProviderId }
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'done'; usage: TokenUsage; stopReason: string | null }
+  | { type: 'error'; message: string; retryable: boolean };
+
+export type ProviderId = 'anthropic' | 'openai';
+
+export interface ChatProvider {
+  readonly id: ProviderId;
+  /** Resolves once the model id is known to belong to this provider. */
+  supports(model: string): boolean;
+  streamChat(request: ChatRequest & { model: string }): AsyncIterable<StreamEvent>;
+}
+
+/** Thrown when a provider fails in a way the caller may want to retry. */
+export class ProviderError extends Error {
+  readonly retryable: boolean;
+  readonly status?: number;
+
+  constructor(message: string, retryable: boolean, status?: number) {
+    super(message);
+    this.name = 'ProviderError';
+    this.retryable = retryable;
+    this.status = status;
+  }
+}
