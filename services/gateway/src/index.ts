@@ -8,6 +8,7 @@ import { OpenAIProvider } from './providers/openai.ts';
 import { listModels, loadCatalogue } from './providers/registry.ts';
 import type { ChatProvider } from './providers/types.ts';
 import { createChatRoute } from './routes/chat.ts';
+import { createOpenAIChatRoute, createOpenAIModelsRoute } from './routes/openai.ts';
 
 const env = loadEnv();
 loadCatalogue(env.openaiModels);
@@ -50,6 +51,13 @@ const auth = createAuthMiddleware(env);
 app.get('/v1/models', (c) => c.json({ models: listModels() }));
 
 app.post('/v1/chat', auth, createChatRoute(providers));
+
+/**
+ * OpenAI-compatible surface for tools that only speak that protocol (OpenCode).
+ * Kept off /v1 so it cannot collide with Aira's own model catalogue shape.
+ */
+app.get('/openai/v1/models', auth, createOpenAIModelsRoute());
+app.post('/openai/v1/chat/completions', auth, createOpenAIChatRoute(providers));
 
 serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.error(

@@ -121,7 +121,50 @@ Three ways to resolve it:
    the single-subscription story.
 
 Option 1 is the only one consistent with Aira paying for tokens and enforcing
-per-tier limits.
+per-tier limits, and it is the one implemented.
+
+## Routing opencode through the gateway (implemented, verified)
+
+The gateway exposes an OpenAI-compatible surface at `/openai/v1`, kept off
+`/v1` so it cannot collide with Aira's own catalogue shape:
+
+- `GET  /openai/v1/models`
+- `POST /openai/v1/chat/completions` (streaming and non-streaming)
+
+opencode is configured to use it as a custom provider:
+
+```json
+{
+  "provider": {
+    "aira": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Aira Gateway",
+      "options": { "baseURL": "<gateway>/openai/v1", "apiKey": "<token>" },
+      "models": { "claude-sonnet-5": { "name": "Sonnet 5" } }
+    }
+  },
+  "model": "aira/claude-sonnet-5"
+}
+```
+
+Verified end to end:
+
+- `opencode models` lists `aira/claude-opus-5`, `aira/claude-sonnet-5`,
+  `aira/claude-haiku-4-5`
+- `opencode run` reaches the gateway — the error it surfaced was Aira's own
+  humanised message coming back through opencode
+- the gateway emitted usage events tagged `surface=code` with the user id and
+  model, which is the point: **agent spend is metered like every other surface**
+
+The real OpenAI SDK was also pointed at the endpoint and parsed the model list,
+the non-streaming reply and the streaming reply, so the wire format is right.
+Seven protocol tests cover the success paths offline with a stub provider,
+including the `[DONE]` sentinel that OpenAI clients hang without.
+
+Still open: opencode holds the gateway token for its process lifetime, but a
+Supabase access token expires in an hour. The desktop shell will need either a
+longer-lived, revocable agent token or a local refresh proxy — decided when the
+process manager is built.
 
 ## Reproducing
 
