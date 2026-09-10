@@ -17,6 +17,15 @@ export interface Env {
   allowedOrigins: string[];
 }
 
+/**
+ * Origins the packaged desktop shell serves from. Tauri uses a custom protocol
+ * on macOS and Linux and a virtual host on Windows; both are fixed properties
+ * of the framework, not of a deployment. They are always allowed because the
+ * alternative is a failure that never appears in dev — the browser at
+ * localhost:5180 works fine while the bundled .app is silently blocked by CORS.
+ */
+const DESKTOP_ORIGINS = ['tauri://localhost', 'http://tauri.localhost'];
+
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   return value !== 'false' && value !== '0';
@@ -33,10 +42,15 @@ export function loadEnv(): Env {
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     // Defaults to on: a paid product must not ship with auth accidentally off.
     requireAuth: bool(process.env.AIRA_REQUIRE_AUTH, true),
-    allowedOrigins: (process.env.AIRA_ALLOWED_ORIGINS ?? 'http://localhost:5180')
-      .split(',')
-      .map((o) => o.trim())
-      .filter(Boolean),
+    allowedOrigins: [
+      ...new Set([
+        ...(process.env.AIRA_ALLOWED_ORIGINS ?? 'http://localhost:5180')
+          .split(',')
+          .map((o) => o.trim())
+          .filter(Boolean),
+        ...DESKTOP_ORIGINS,
+      ]),
+    ],
   };
 
   if (!env.anthropicApiKey && !env.openaiApiKey) {
