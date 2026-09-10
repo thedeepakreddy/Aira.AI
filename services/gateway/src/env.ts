@@ -10,6 +10,8 @@ export interface Env {
   anthropicApiKey: string | undefined;
   openaiApiKey: string | undefined;
   openaiModels: string | undefined;
+  openrouterApiKey: string | undefined;
+  openrouterModels: string | undefined;
   anthropicFallbacks: boolean;
   supabaseUrl: string | undefined;
   supabaseServiceKey: string | undefined;
@@ -37,6 +39,8 @@ export function loadEnv(): Env {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     openaiApiKey: process.env.OPENAI_API_KEY,
     openaiModels: process.env.OPENAI_MODELS,
+    openrouterApiKey: process.env.OPENROUTER_API_KEY,
+    openrouterModels: process.env.OPENROUTER_MODELS,
     anthropicFallbacks: bool(process.env.ANTHROPIC_ENABLE_FALLBACKS, true),
     supabaseUrl: process.env.SUPABASE_URL,
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -53,9 +57,10 @@ export function loadEnv(): Env {
     ],
   };
 
-  if (!env.anthropicApiKey && !env.openaiApiKey) {
+  if (!env.anthropicApiKey && !env.openaiApiKey && !env.openrouterApiKey) {
     throw new Error(
-      'No provider configured. Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY in services/gateway/.env',
+      'No provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY and/or ' +
+        'OPENROUTER_API_KEY in services/gateway/.env',
     );
   }
   if (env.requireAuth && (!env.supabaseUrl || !env.supabaseServiceKey)) {

@@ -56,25 +56,29 @@ const ANTHROPIC_MODELS: ModelSpec[] = [
 ];
 
 /**
- * OpenAI models are declared through OPENAI_MODELS rather than hardcoded, so
- * the catalogue never asserts a model id or price that has not been confirmed
- * against OpenAI's current pricing page. Format:
- *   OPENAI_MODELS="id:tier:ctx:inPerMTok:outPerMTok,..."
- * Price fields may be omitted: "id:tier:ctx".
+ * Models for OpenAI-compatible providers are declared through env rather than
+ * hardcoded, so the catalogue never asserts a model id or price that has not
+ * been confirmed against that provider's current pricing.
+ *
+ *   "id|tier|contextWindow|inPerMTok|outPerMTok, ..."
+ *
+ * Fields are pipe-separated because model ids routinely contain both slashes
+ * and colons (`nvidia/nemotron-3-ultra:free`), so a colon delimiter would split
+ * the id itself. Everything after the tier may be omitted: "id|tier".
  */
-function parseOpenAIModels(raw: string | undefined): ModelSpec[] {
+function parseCompatibleModels(raw: string | undefined, provider: ProviderId): ModelSpec[] {
   if (!raw?.trim()) return [];
   return raw
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => {
-      const [id, tier, ctx, input, output] = entry.split(':');
-      if (!id) throw new Error(`OPENAI_MODELS entry missing an id: "${entry}"`);
+      const [id, tier, ctx, input, output] = entry.split('|');
+      if (!id) throw new Error(`Model catalogue entry missing an id: "${entry}"`);
       const spec: ModelSpec = {
         id,
-        label: prettifyOpenAIId(id),
-        provider: 'openai',
+        label: prettifyModelId(id),
+        provider,
         contextWindow: Number(ctx) || 128_000,
         tier: (tier as ModelSpec['tier']) || 'balanced',
       };
@@ -85,9 +89,15 @@ function parseOpenAIModels(raw: string | undefined): ModelSpec[] {
     });
 }
 
-/** "gpt-5.1-mini" -> "GPT-5.1 Mini". Ids are the only name OpenAI gives us. */
-function prettifyOpenAIId(id: string): string {
+/**
+ * "gpt-5.1-mini" -> "GPT-5.1 Mini"; "vendor/model-x:free" -> "Model X".
+ * Ids are the only name these providers give us.
+ */
+function prettifyModelId(id: string): string {
   return id
+    .split('/')
+    .pop()!
+    .replace(/:free$/, '')
     .split('-')
     .map((part) =>
       /^gpt$/i.test(part) ? 'GPT' : part.charAt(0).toUpperCase() + part.slice(1),
@@ -98,8 +108,15 @@ function prettifyOpenAIId(id: string): string {
 
 let catalogue: ModelSpec[] = ANTHROPIC_MODELS;
 
-export function loadCatalogue(openAIModels: string | undefined): void {
-  catalogue = [...ANTHROPIC_MODELS, ...parseOpenAIModels(openAIModels)];
+export function loadCatalogue(sources: {
+  openai?: string;
+  openrouter?: string;
+}): void {
+  catalogue = [
+    ...ANTHROPIC_MODELS,
+    ...parseCompatibleModels(sources.openai, 'openai'),
+    ...parseCompatibleModels(sources.openrouter, 'openrouter'),
+  ];
 }
 
 export function listModels(): ModelSpec[] {

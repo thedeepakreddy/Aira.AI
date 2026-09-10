@@ -4,21 +4,32 @@ import { cors } from 'hono/cors';
 import { createAuthMiddleware, type AuthedVars } from './auth.ts';
 import { loadEnv } from './env.ts';
 import { AnthropicProvider } from './providers/anthropic.ts';
-import { OpenAIProvider } from './providers/openai.ts';
+import { OpenAICompatibleProvider } from './providers/openai.ts';
 import { listModels, loadCatalogue } from './providers/registry.ts';
 import type { ChatProvider } from './providers/types.ts';
 import { createChatRoute } from './routes/chat.ts';
 import { createOpenAIChatRoute, createOpenAIModelsRoute } from './routes/openai.ts';
 
 const env = loadEnv();
-loadCatalogue(env.openaiModels);
+loadCatalogue({ openai: env.openaiModels, openrouter: env.openrouterModels });
 
 const providers: ChatProvider[] = [];
 if (env.anthropicApiKey) {
   providers.push(new AnthropicProvider(env.anthropicApiKey, env.anthropicFallbacks));
 }
 if (env.openaiApiKey) {
-  providers.push(new OpenAIProvider(env.openaiApiKey));
+  providers.push(new OpenAICompatibleProvider({ id: 'openai', apiKey: env.openaiApiKey }));
+}
+if (env.openrouterApiKey) {
+  providers.push(
+    new OpenAICompatibleProvider({
+      id: 'openrouter',
+      apiKey: env.openrouterApiKey,
+      baseURL: 'https://openrouter.ai/api/v1',
+      // OpenRouter uses these for attribution in its dashboards.
+      headers: { 'HTTP-Referer': 'https://askdeepak.ai', 'X-Title': 'Aira' },
+    }),
+  );
 }
 
 const app = new Hono<{ Variables: AuthedVars }>();

@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { loadCatalogue } from '../src/providers/registry.ts';
 import { createOpenAIChatRoute, createOpenAIModelsRoute } from '../src/routes/openai.ts';
 
-loadCatalogue(undefined);
+loadCatalogue({});
 
 /** Stands in for a real provider so the wire format can be tested offline. */
 const stub = {

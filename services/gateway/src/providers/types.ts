@@ -50,7 +50,7 @@ export type StreamEvent =
   | { type: 'done'; usage: TokenUsage; stopReason: string | null }
   | { type: 'error'; message: string; retryable: boolean };
 
-export type ProviderId = 'anthropic' | 'openai';
+export type ProviderId = 'anthropic' | 'openai' | 'openrouter';
 
 export interface ChatProvider {
   readonly id: ProviderId;

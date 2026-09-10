@@ -1,25 +1,45 @@
 import OpenAI from 'openai';
 import { humanize } from './messages.ts';
 import { findModel } from './registry.ts';
-import { ProviderError, type ChatProvider, type ChatRequest, type StreamEvent } from './types.ts';
+import {
+  ProviderError,
+  type ChatProvider,
+  type ChatRequest,
+  type ProviderId,
+  type StreamEvent,
+} from './types.ts';
 
 /**
- * OpenAI adapter.
+ * Adapter for any OpenAI-compatible endpoint.
+ *
+ * OpenAI's wire format has become the de-facto interoperability layer, so one
+ * adapter covers OpenAI itself and every vendor that mirrors it (OpenRouter,
+ * Groq, and others) — a new vendor is a construction argument, not a new file.
  *
  * Usage totals only arrive when `stream_options.include_usage` is set — without
  * it the final chunk carries no token counts and every request meters as zero,
  * which would quietly under-bill.
  */
-export class OpenAIProvider implements ChatProvider {
-  readonly id = 'openai' as const;
+export class OpenAICompatibleProvider implements ChatProvider {
+  readonly id: ProviderId;
   private readonly client: OpenAI;
 
-  constructor(apiKey: string) {
-    this.client = new OpenAI({ apiKey });
+  constructor(options: {
+    id: ProviderId;
+    apiKey: string;
+    baseURL?: string;
+    headers?: Record<string, string>;
+  }) {
+    this.id = options.id;
+    this.client = new OpenAI({
+      apiKey: options.apiKey,
+      ...(options.baseURL ? { baseURL: options.baseURL } : {}),
+      ...(options.headers ? { defaultHeaders: options.headers } : {}),
+    });
   }
 
   supports(model: string): boolean {
-    return findModel(model)?.provider === 'openai';
+    return findModel(model)?.provider === this.id;
   }
 
   async *streamChat(request: ChatRequest & { model: string }): AsyncIterable<StreamEvent> {
@@ -78,10 +98,10 @@ function toProviderError(error: unknown): ProviderError {
     return new ProviderError('Model not found or unavailable.', false, 404);
   }
   if (error instanceof OpenAI.RateLimitError) {
-    return new ProviderError('Rate limited by OpenAI.', true, 429);
+    return new ProviderError('Rate limited by the model provider.', true, 429);
   }
   if (error instanceof OpenAI.APIConnectionError) {
-    return new ProviderError('Could not reach OpenAI.', true);
+    return new ProviderError('Could not reach the model provider.', true);
   }
   // Base class last: every error above extends it.
   if (error instanceof OpenAI.APIError) {
