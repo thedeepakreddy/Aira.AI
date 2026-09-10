@@ -276,3 +276,15 @@
  .back-link{margin-bottom:38px}
 }
 
+
+
+/* Real authentication states. New selectors only — no existing rule changes. */
+.login-message{margin:14px 0 0;padding:10px 12px;border-radius:11px;font-size:11px;line-height:1.55}
+.login-message.error{border:1px solid #ff8a6b38;background:#4a12081f;color:#ffb59f}
+.login-message.info{border:1px solid #ffc29622;background:#ffffff05;color:#dbbcaa}
+.login-toggle{display:block;width:100%;margin-top:16px;padding:0;border:0;background:none;text-align:left;font-size:11px;color:#dbbcaa}
+.login-toggle b{color:#ffb066;font-weight:500}
+.login-card .warm-button:disabled{opacity:.6}
+.login-card input:disabled{opacity:.55}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{animation:spin 1s linear infinite}

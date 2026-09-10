@@ -6,6 +6,8 @@
  * or the packaged desktop app.
  */
 
+import { getAccessToken } from './supabase';
+
 export type Surface = 'chat' | 'voice' | 'code' | 'task';
 
 export interface ChatMessage {
@@ -74,12 +76,17 @@ async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncGenerator<strin
 export async function* streamChat(options: StreamChatOptions): AsyncGenerator<StreamEvent> {
   const { messages, surface = 'chat', model, conversationId, signal } = options;
 
+  // The gateway pays for every token it forwards, so it needs to know who is
+  // asking. Without a session it answers 401 and nothing is spent.
+  const token = await getAccessToken();
+
   let response: Response;
   try {
     response = await fetch(`${GATEWAY_URL}/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(DEV_USER ? { 'x-aira-dev-user': DEV_USER } : {}),
       },
       body: JSON.stringify({ messages, surface, model, conversationId }),
@@ -93,6 +100,11 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
       message: `Can't reach Aira's gateway at ${GATEWAY_URL}. Is it running?`,
       retryable: true,
     };
+    return;
+  }
+
+  if (response.status === 401) {
+    yield { type: 'error', message: 'Please sign in to continue.', retryable: false };
     return;
   }
 

@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { humanize } from './messages.ts';
 import { findModel } from './registry.ts';
 import { ProviderError, type ChatProvider, type ChatRequest, type StreamEvent } from './types.ts';
 
@@ -85,7 +86,7 @@ function toProviderError(error: unknown): ProviderError {
   // Base class last: every error above extends it.
   if (error instanceof OpenAI.APIError) {
     const status = error.status ?? 500;
-    return new ProviderError(error.message, status >= 500, status);
+    return new ProviderError(humanize(error.message), status >= 500, status, error.message);
   }
   return new ProviderError(error instanceof Error ? error.message : 'Unknown provider error', false);
 }

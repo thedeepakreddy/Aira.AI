@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { humanize } from './messages.ts';
 import { findModel } from './registry.ts';
 import { ProviderError, type ChatProvider, type ChatRequest, type StreamEvent } from './types.ts';
 
@@ -105,7 +106,7 @@ function toProviderError(error: unknown): ProviderError {
   }
   if (error instanceof Anthropic.APIError) {
     const status = error.status ?? 500;
-    return new ProviderError(error.message, status >= 500, status);
+    return new ProviderError(humanize(error.message), status >= 500, status, error.message);
   }
   return new ProviderError(error instanceof Error ? error.message : 'Unknown provider error', false);
 }

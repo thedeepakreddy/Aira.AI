@@ -37,6 +37,8 @@ export interface ModelRequestPayload extends Record<string, unknown> {
   durationMs: number;
   stopReason: string | null;
   ok: boolean;
+  /** Raw vendor error text when the request failed; null otherwise. */
+  error?: string | null;
 }
 
 export type EventSink = (event: AiraEvent) => void | Promise<void>;

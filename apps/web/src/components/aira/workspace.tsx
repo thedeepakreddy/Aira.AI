@@ -9,6 +9,7 @@ import RemoteTerminal from './terminal';
 import Login from './login';
 import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
 import {streamChat} from '@/lib/gateway';
+import {getSession,onAuthChange,signOut as authSignOut} from '@/lib/supabase';
 export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
 type View = 'auto'|'mobile'|'desktop';
 type Message = {role:'user'|'assistant'; text:string};
@@ -35,8 +36,9 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  function openConversation(conversation:Conversation){clearTimers();setCurrentId(conversation.id);setMessages(conversation.messages);setDraft('');setAttachment('');setBusy(false);setDemoSequence(false);setHistoryOpen(false);showScreen('chat')}
  function openCLI(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('cli')}
  function openLogin(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
- function completeLogin(){setSignedIn(true);try{sessionStorage.setItem('askdeepakai.preview-session','true')}catch{}showScreen('home')}
- function signOut(){setSignedIn(false);try{sessionStorage.removeItem('askdeepakai.preview-session')}catch{}openLogin()}
+ // onAuthChange is the single source of truth for signedIn; these only navigate.
+ function completeLogin(){showScreen('home')}
+ function signOut(){void authSignOut();clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
 
  const [draft,setDraft]=useState('');
  const [paused,setPaused]=useState(false);
@@ -116,7 +118,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  }
  function submit(){if(busy)return;if(draft.trim())sendMessage(draft);else startVoice()}
  useEffect(()=>{
-  try{setConversations(parseHistory(localStorage.getItem(HISTORY_KEY)));setSignedIn(sessionStorage.getItem('askdeepakai.preview-session')==='true')}catch{setStorageNotice('History is available for this session only.')}
+  try{setConversations(parseHistory(localStorage.getItem(HISTORY_KEY)))}catch{setStorageNotice('History is available for this session only.')}
   setHistoryReady(true);
   function back(){
    clearTimers();setBusy(false);setHistoryOpen(false);
@@ -133,6 +135,10 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   if(!historyReady)return;
   try{localStorage.setItem(HISTORY_KEY,JSON.stringify(conversations))}catch{setStorageNotice('Browser storage is full or unavailable. New history stays in this session.')}
  },[conversations,historyReady]);
+ useEffect(()=>{
+  void getSession().then(session=>setSignedIn(Boolean(session)));
+  return onAuthChange(session=>setSignedIn(Boolean(session)));
+ },[]);
  useEffect(()=>{
   const query=window.matchMedia('(prefers-reduced-motion: reduce)');
   const update=()=>setReduceMotion(query.matches);update();query.addEventListener('change',update);

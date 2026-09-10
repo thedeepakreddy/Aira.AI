@@ -96,6 +96,7 @@ export function createChatRoute(providers: ChatProvider[]) {
       };
       let stopReason: string | null = null;
       let ok = false;
+      let failure: string | null = null;
 
       try {
         for await (const event of provider.streamChat({
@@ -114,7 +115,10 @@ export function createChatRoute(providers: ChatProvider[]) {
         const pe =
           error instanceof ProviderError
             ? error
-            : new ProviderError('Upstream provider failed.', false);
+            : new ProviderError('Something went wrong reaching the model. Please try again.', false);
+        // The user sees a clean message; the raw vendor text stays in the log.
+        failure = pe.raw ?? pe.message;
+        console.error(`[gateway] ${provider.id}/${decision.model} failed:`, failure);
         await sse.writeSSE({
           event: 'error',
           data: JSON.stringify({ type: 'error', message: pe.message, retryable: pe.retryable }),
@@ -129,6 +133,7 @@ export function createChatRoute(providers: ChatProvider[]) {
           durationMs: Date.now() - startedAt,
           stopReason,
           ok,
+          error: failure,
         };
         await emit({
           kind: 'model_request',

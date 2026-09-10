@@ -63,11 +63,14 @@ export interface ChatProvider {
 export class ProviderError extends Error {
   readonly retryable: boolean;
   readonly status?: number;
+  /** Original vendor text. Logged for diagnosis; never shown to a user. */
+  readonly raw?: string;
 
-  constructor(message: string, retryable: boolean, status?: number) {
+  constructor(message: string, retryable: boolean, status?: number, raw?: string) {
     super(message);
     this.name = 'ProviderError';
     this.retryable = retryable;
     this.status = status;
+    this.raw = raw;
   }
 }
