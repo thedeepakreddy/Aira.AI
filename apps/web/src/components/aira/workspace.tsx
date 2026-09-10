@@ -8,6 +8,7 @@ import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
 import RemoteTerminal from './terminal';
 import Login from './login';
 import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
+import {streamChat} from '@/lib/gateway';
 export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
 type View = 'auto'|'mobile'|'desktop';
 type Message = {role:'user'|'assistant'; text:string};
@@ -53,24 +54,65 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  const timers=useRef<ReturnType<typeof setTimeout>[]>([]);
  const screenRef=useRef(screen);
  screenRef.current=screen;
+ const messagesRef=useRef<Message[]>(messages);
+ messagesRef.current=messages;
+ const request=useRef<AbortController|null>(null);
  const words=TRANSCRIPT.split(' ');
 
- function clearTimers(){timers.current.forEach(clearTimeout);timers.current=[]}
+ function clearTimers(){timers.current.forEach(clearTimeout);timers.current=[];request.current?.abort();request.current=null}
  function later(fn:()=>void,ms:number){timers.current.push(setTimeout(fn,ms))}
  function goHome(){clearTimers();showScreen('home');setBusy(false);setPaused(false);setDemoSequence(false)}
  function startVoice(){clearTimers();showScreen('voice');setWordCount(0);setPaused(false);setBusy(false);setDemoSequence(true)}
+ /** Appends streamed text to the open assistant bubble, or opens one. */
+ function appendAssistant(text:string,started:boolean){
+  if(!started){setMessages(previous=>[...previous,{role:'assistant',text}]);return}
+  setMessages(previous=>{
+   const next=previous.slice();const last=next[next.length-1];
+   if(last?.role==='assistant')next[next.length-1]={...last,text:last.text+text};
+   return next;
+  });
+ }
+ async function runStream(history:Message[],conversationId:string){
+  const controller=new AbortController();request.current=controller;
+  let started=false;
+  try{
+   for await(const event of streamChat({
+    messages:history.map(m=>({role:m.role,content:m.text})),
+    surface:'chat',conversationId,signal:controller.signal,
+   })){
+    if(controller.signal.aborted)return;
+    if(event.type==='text'){
+     // The first token clears the thinking state and opens the bubble.
+     if(!started)setBusy(false);
+     appendAssistant(event.text,started);started=true;
+    }else if(event.type==='error'){
+     setBusy(false);appendAssistant(event.message,started);started=true;
+    }
+   }
+  }finally{
+   if(request.current===controller)request.current=null;
+   if(!controller.signal.aborted)setBusy(false);
+  }
+ }
  function sendMessage(text:string, reference=false){
   const clean=text.trim(); if(!clean)return;
-  clearTimers();if(screenRef.current!=='chat'||reference||!currentId)setCurrentId(crypto.randomUUID());setDemoSequence(reference);showScreen('chat');setDraft('');setAttachment('');setBusy(true);
-  setMessages(previous=>reference?[{role:'user',text:PROMPT}]:[...(screenRef.current==='chat'?previous:[]),{role:'user',text:clean}]);
-  later(()=>{
-   setMessages(previous=>[...previous,{role:'assistant',text:reference?REFERENCE_REPLY:/core parameters/i.test(clean)?'Core agent parameters initialized.':'This is the front-end demo. Your message was received; connect an AI backend to generate a live response.'}]);
-   setBusy(false);
-  },900);
+  const continuing=screenRef.current==='chat';
+  clearTimers();
+  const conversationId=(!continuing||reference||!currentId)?crypto.randomUUID():currentId;
+  if(conversationId!==currentId)setCurrentId(conversationId);
+  setDemoSequence(reference);showScreen('chat');setDraft('');setAttachment('');setBusy(true);
   if(reference){
+   // The voice screen still plays the scripted reference sequence; it is
+   // replaced when the voice surface is wired to the gateway.
+   setMessages([{role:'user',text:PROMPT}]);
+   later(()=>{setMessages(previous=>[...previous,{role:'assistant',text:REFERENCE_REPLY}]);setBusy(false)},900);
    later(()=>{setMessages(previous=>[...previous,{role:'user',text:'Show me the active core parameters.'}]);setBusy(true)},2300);
    later(()=>{setMessages(previous=>[...previous,{role:'assistant',text:'Core agent parameters initialized.'}]);setBusy(false)},3100);
+   return;
   }
+  const history:Message[]=[...(continuing?messagesRef.current:[]),{role:'user' as const,text:clean}];
+  setMessages(history);
+  void runStream(history,conversationId);
  }
  function submit(){if(busy)return;if(draft.trim())sendMessage(draft);else startVoice()}
  useEffect(()=>{
