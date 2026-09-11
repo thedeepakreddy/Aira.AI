@@ -19,6 +19,8 @@ export interface OpenCodeStatus {
   password: string | null;
   /** Path to the binary, or null when OpenCode is not installed. */
   binary: string | null;
+  /** Working directory of the running server, or null when it is not running. */
+  directory: string | null;
 }
 
 /** True inside the Tauri shell; false in a browser tab. */
@@ -105,6 +107,12 @@ export interface QuestionRequest {
   questions: QuestionInfo[];
 }
 
+/** One stored message, as the server replays it. */
+export interface MessageRecord {
+  info?: { role?: string };
+  parts?: { type?: string; text?: string; tool?: string; state?: { status?: string } }[];
+}
+
 /** What the agent is doing right now, so long steps are legible. */
 export interface ToolActivity {
   /** Stable per tool call, so updates replace rather than stack up. */
@@ -167,6 +175,16 @@ export class OpenCodeClient {
       throw new Error(`OpenCode ${path} returned ${response.status}`);
     }
     return (await response.json()) as T;
+  }
+
+  /** Sessions the server knows about, including ones from earlier runs. */
+  sessions() {
+    return this.request<(Session & { time?: { updated?: number } })[]>('/session');
+  }
+
+  /** Every message in a session, used to rebuild the log after a remount. */
+  messages(sessionID: string) {
+    return this.request<MessageRecord[]>(`/session/${sessionID}/message`);
   }
 
   health() {

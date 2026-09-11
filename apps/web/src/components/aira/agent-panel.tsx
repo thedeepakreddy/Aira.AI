@@ -29,6 +29,33 @@ type Entry =
   | {kind:'permission';request:PermissionRequest;resolved?:'once'|'always'|'reject'}
   | {kind:'question';request:QuestionRequest;answers?:string[][];skipped?:boolean};
 
+/**
+ * Rebuilds the log from what the server already stored.
+ *
+ * Only the turns worth reading come back: prompts, replies, and which tools
+ * ran. Permission and question cards are deliberately left out — they were
+ * answered in the run being replayed, and rendering them again would offer
+ * buttons that decide nothing.
+ */
+async function replay(c:OpenCodeClient,sessionID:string):Promise<Entry[]>{
+ const out:Entry[]=[];
+ for(const message of await c.messages(sessionID)){
+  const role=message.info?.role;
+  for(const part of message.parts??[]){
+   if(part.type==='text'&&part.text?.trim()){
+    out.push(role==='user'?{kind:'you',text:part.text}:{kind:'agent',text:part.text});
+   }else if(part.type==='tool'&&part.tool&&part.tool!=='question'){
+    out.push({kind:'tool',activity:{
+     partID:`replay-${out.length}`,tool:part.tool,
+     status:part.state?.status==='error'?'error':'completed',target:'',
+    }});
+   }
+  }
+ }
+ // A long session would otherwise push the live output off the top.
+ return out.slice(-120);
+}
+
 export default function AgentPanel(){
  const [status,setStatus]=useState<OpenCodeStatus|null>(null);
  const [entries,setEntries]=useState<Entry[]>([]);
@@ -54,11 +81,6 @@ export default function AgentPanel(){
  const busyRef=useRef(false);
  useEffect(()=>{busyRef.current=busy},[busy]);
 
- useEffect(()=>{
-  if(!isDesktop)return;
-  void supervisor.status().then(setStatus).catch(()=>{});
-  return()=>{stream.current?.abort()};
- },[]);
 
  const note=useCallback((text:string)=>setEntries(e=>[...e,{kind:'notice',text}]),[]);
  // `consume` is defined above `relaunch` and needs to call it when a queued
@@ -119,6 +141,43 @@ export default function AgentPanel(){
  },[appendAgent,note]);
 
  /**
+  * Reattaches to an agent that is already running.
+  *
+  * The panel unmounts whenever the user switches to Chat, but the server is
+  * supervised by the shell and keeps going. Without this, coming back showed an
+  * empty log and a "Not running" badge over a live agent — and pressing power
+  * then opened a second session, quietly abandoning the first.
+  */
+ useEffect(()=>{
+  if(!isDesktop)return;
+  let cancelled=false;
+  void (async()=>{
+   const current=await supervisor.status().catch(()=>null);
+   if(cancelled||!current)return;
+   setStatus(current);
+   if(!current.running||current.port==null||!current.password)return;
+   const c=new OpenCodeClient(current.port,current.password);
+   try{
+    // Sessions outlive processes, so the list holds old runs too. The server's
+    // own working directory is what identifies this one's.
+    const all=await c.sessions();
+    const mine=all
+     .filter(x=>!current.directory||x.directory===current.directory)
+     .sort((a,b)=>(b.time?.updated??0)-(a.time?.updated??0));
+    const found=mine[0];
+    if(cancelled||!found)return;
+    client.current=c;session.current=found.id;
+    setWorkdir(found.directory);
+    setEntries([...await replay(c,found.id),{kind:'notice',text:'Reattached to the running agent.'}]);
+    stream.current?.abort();
+    const controller=new AbortController();stream.current=controller;
+    void consume(c,controller.signal);
+   }catch{/* leave the panel in its stopped state; power still works */}
+  })();
+  return()=>{cancelled=true;stream.current?.abort()};
+ },[consume]);
+
+ /**
   * Spawns the agent server and connects to it.
   *
   * `resume` reattaches to an existing session instead of opening a new one.
@@ -145,7 +204,11 @@ export default function AgentPanel(){
   // Without this the next call fails with the webview's own opaque wording
   // ("Load failed"), which says nothing about what went wrong or what to do.
   if(!ready)throw new Error(`Started OpenCode on port ${next.port}, but it never answered. Try again, or check that nothing else is holding that port.`);
-  const created=resume?null:await c.createSession(dir);
+  // Always name the directory, even when the user picked none: a session
+  // created without one does not land in the server's working directory — it
+  // reopens whichever project the agent last worked in, which is a confusing
+  // place to find yourself. The supervisor reports where it actually started.
+  const created=resume?null:await c.createSession(dir??next.directory??undefined);
   const id=resume??created!.id;
   client.current=c;session.current=id;
   stream.current?.abort();

@@ -31,6 +31,9 @@ struct Running {
     child: Child,
     port: u16,
     password: String,
+    /// Where the server was started. The agent's tools inherit this, so the
+    /// panel needs it to tell which stored session belongs to this process.
+    directory: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -41,6 +44,8 @@ pub struct Status {
     pub password: Option<String>,
     /// Absolute path to the binary, or None when OpenCode is not installed.
     pub binary: Option<String>,
+    /// Working directory of the running server, if any.
+    pub directory: Option<String>,
 }
 
 /// Looks for the opencode binary on PATH and in the usual install locations.
@@ -106,12 +111,14 @@ pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
             port: Some(running.port),
             password: Some(running.password.clone()),
             binary: find_binary(),
+            directory: running.directory.clone(),
         },
         None => Status {
             running: false,
             port: None,
             password: None,
             binary: find_binary(),
+            directory: None,
         },
     }
 }
@@ -213,7 +220,7 @@ pub fn opencode_start(
         .filter(|d| !d.is_empty())
         .or_else(|| std::env::var("HOME").ok())
         .filter(|d| d != "/");
-    if let Some(dir) = workdir {
+    if let Some(dir) = &workdir {
         command.current_dir(dir);
     }
 
@@ -225,6 +232,7 @@ pub fn opencode_start(
         child,
         port,
         password: password.clone(),
+        directory: workdir.clone(),
     });
 
     Ok(Status {
@@ -232,6 +240,7 @@ pub fn opencode_start(
         port: Some(port),
         password: Some(password),
         binary: Some(binary),
+        directory: workdir,
     })
 }
 
