@@ -11,6 +11,7 @@ import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib
 import {streamChat,listModels,type ModelSpec} from '@/lib/gateway';
 import {getSession,onAuthChange,signOut as authSignOut} from '@/lib/supabase';
 import {playOrb} from '@/lib/orb';
+import Markdown from './markdown';
 export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
 type View = 'auto'|'mobile'|'desktop';
 type Message = {role:'user'|'assistant'; text:string};
@@ -215,7 +216,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  <p className="transcript" aria-label={TRANSCRIPT}>{words.map((word,index)=><span key={index} className={index<wordCount?'spoken':'unspoken'} aria-hidden="true">{word} </span>)}</p>
  <div className="voice-actions"><button className="voice-secondary" aria-label={paused?'Resume voice demo':'Pause voice demo'} onClick={()=>setPaused(!paused)}>{paused?<PlayCircle/>:<PauseCircle/>}</button><div className="mic-orbit"><button className="mic-button voice-mic" onClick={()=>setPaused(!paused)} aria-label={paused?'Resume microphone demo':'Pause microphone demo'} aria-pressed={!paused}>{paused?<MicOff/>:<Mic/>}</button></div><button className="voice-secondary" onClick={()=>sendMessage(PROMPT,true)} aria-label="Send transcript"><Send/></button></div>
  </section>:<section className="chat-screen screen-content" key="chat" aria-label="Chat demo">
- <div className="messages" ref={scrollRegion} role="log" aria-live="polite" aria-relevant="additions text">{messages.map((message,index)=><div key={index} className={'message-row '+message.role}>{message.role==='assistant'&&<img src="/assets/orb.jpg" className="avatar" alt="Aira"/>}<p className="message-bubble">{message.text}</p></div>)}{(busy||demoSequence)&&<p className="working-status">{busy?'Aira is thinking...':'Aira is working...'}</p>}</div>
+ <div className="messages" ref={scrollRegion} role="log" aria-live="polite" aria-relevant="additions text">{messages.map((message,index)=><div key={index} className={'message-row '+message.role}>{message.role==='assistant'&&<img src="/assets/orb.jpg" className="avatar" alt="Aira"/>}{message.role==="assistant"?<div className="message-bubble"><Markdown>{message.text}</Markdown></div>:<p className="message-bubble">{message.text}</p>}</div>)}{(busy||demoSequence)&&<p className="working-status">{busy?'Aira is thinking...':'Aira is working...'}</p>}</div>
  <form className="chat-composer" onSubmit={e=>{e.preventDefault();submit()}}>{attachment&&<div className="attachment"><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}<div className="chat-input-row"><button className="chat-icon" type="button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><input aria-label="Ask AI a question" placeholder="Ask AI a question" value={draft} onChange={e=>setDraft(e.target.value)}/><button className="chat-icon" type="submit" disabled={busy} aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
  </section>}
  </>}

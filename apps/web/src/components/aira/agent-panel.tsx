@@ -146,38 +146,37 @@ export default function AgentPanel(){
   catch{setError('Could not send that decision to the agent.')}
  }
 
+ // Surfaced in the log because the power button is otherwise a dead control
+ // with no explanation for why it will not do anything.
+ const missing=Boolean(status&&!status.binary);
+
  if(!isDesktop)return <section className="cli-page screen-content" aria-label="Agent">
   <div className="cli-heading"><div><span className="eyebrow">CODING AGENT</span><h1>Agent<span className="desktop-only"> workspace.</span></h1><p>Available in the desktop app.</p></div></div>
-  <div className="cli-grid"><aside className="connection-card"><div className="connection-icon"><Terminal/></div><span className="eyebrow">DESKTOP ONLY</span><h2>Runs where<br/>your code is.</h2><p>The agent reads and edits files on your machine, so it runs in the Aira desktop app rather than a browser tab.</p></aside>
-  <div className="terminal-window"><div className="terminal-title"><Terminal/><span>aira — agent</span></div><div className="terminal-log"><div className="terminal-welcome"><span>Agent</span><p>Open Aira on your Mac to use the coding agent.</p></div></div></div></div>
+  <div className="cli-grid agent-grid">
+  <div className="terminal-window"><div className="terminal-title"><Terminal/><span>aira — agent</span></div><div className="terminal-log"><div className="terminal-welcome"><span>Agent</span><p>The agent reads and edits files on your machine, so it runs in the Aira desktop app rather than a browser tab.</p></div></div></div></div>
  </section>;
 
  return <section className="cli-page screen-content" aria-label="Coding agent">
   <div className="cli-heading"><div><span className="eyebrow">CODING AGENT</span><h1>Agent<span className="desktop-only"> workspace.</span></h1><p>Give it a task. Approve what it does.</p></div>
-   <span className="session-badge" role="status"><span/>{connected?'Agent running':'Not running'}</span></div>
-
-  <div className="cli-grid">
-   <aside className="connection-card">
-    <div className="connection-icon"><Terminal/></div><span className="eyebrow">OPENCODE</span>
-    <h2>A real agent,<br/>on your files.</h2>
-    <p>OpenCode runs locally and asks before it edits anything or runs a command.</p>
-    <dl>
-     <div><dt>Engine</dt><dd>{status?.binary?'OpenCode':'Not installed'}</dd></div>
-     <div><dt>Server</dt><dd>{status?.running?`127.0.0.1:${status.port}`:'Stopped'}</dd></div>
-    </dl>
-    <button className="warm-button" onClick={connected?stop:start} disabled={starting||!status?.binary}>
-     <Power/>{starting?'Starting…':connected?'Stop agent':'Start agent'}
+   <div className="agent-controls">
+    <span className="session-badge" role="status"><span/>{connected?'Agent running':'Not running'}</span>
+    <button className={'agent-power '+(connected?'on':'')} onClick={connected?stop:start}
+     disabled={starting||!status?.binary}
+     aria-label={connected?'Stop the agent':'Start the agent'}
+     title={status?.binary?(connected?'Stop the agent':'Start the agent'):'OpenCode is not installed'}>
+     <Power/>
     </button>
-    <small>{status?.binary?'Runs on this machine, reachable only from it.':'Install with npm install -g opencode-ai'}</small>
-   </aside>
+   </div></div>
 
+  <div className="cli-grid agent-grid">
    <div className="terminal-window">
-    <div className="terminal-title"><Terminal/><span>aira — agent</span>{busy&&<span className="terminal-mode">WORKING</span>}</div>
+    <div className="terminal-title"><Terminal/><span>aira — agent</span>{busy&&<span className="terminal-mode">WORKING</span>}
+     {status?.running&&status.port&&<span className="terminal-endpoint">127.0.0.1:{status.port}</span>}</div>
     <div className="terminal-path"><Folder/><span>{workdir||(status?.running?'Local workspace':'No session')}</span></div>
 
     <div className="terminal-log" ref={log} role="log" aria-live="polite">
      <div className="terminal-welcome"><span>Aira Agent</span>
-      <p>{connected?'Describe a task. You approve every file edit and command.':'Start the agent to begin.'}</p>
+      <p>{connected?'Describe a task. You approve every file edit and command.':missing?'OpenCode is not installed. Install it with: brew install opencode':'Press power to start the agent.'}</p>
      </div>
      {entries.map((entry,i)=>{
       if(entry.kind==='you')return <div className="terminal-entry" key={i}><div className="terminal-command"><span>❯</span> {entry.text}</div></div>;

@@ -339,3 +339,79 @@
 .agent-permission-actions button.deny{background:none;border-color:#ffffff24;color:#dbbcaa}
 .agent-permission.resolved{opacity:.62;border-color:#ffffff1a;background:#ffffff04}
 .agent-permission-done{display:inline-block;margin-top:9px;font-size:11px;color:#c9a08a}
+
+/* ── Agent panel layout ───────────────────────────────────────────────────────
+   The agent screen drops the left card the CLI mock had: its content was a
+   description and two read-outs, which cost a 260px column that the terminal
+   uses better. The single control it held is now a power button in the header,
+   and the endpoint moved into the terminal's own title bar. */
+.agent-grid{grid-template-columns:minmax(0,1fr)}
+.agent-controls{display:flex;align-items:center;gap:14px;flex-shrink:0}
+
+.agent-power{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;padding:0;
+  border:1px solid #ffffff1f;background:#ffffff0a;color:#ffd9b8;transition:transform .3s,box-shadow .3s,background .3s}
+.agent-power svg{width:18px;height:18px}
+.agent-power:hover:not(:disabled){transform:translateY(-2px);background:#ffffff12}
+.agent-power.on{border-color:#ffa652;color:#fff6ea;
+  background:radial-gradient(circle at 30% 20%,#ffb423,#f87800 40%,#d42500 76%,#790200);
+  box-shadow:inset -3px -4px 7px #be1600,0 0 18px #f2570026}
+.agent-power:disabled{opacity:.4;cursor:not-allowed;transform:none}
+
+/* The port belongs with the connection it describes, not in a side panel. */
+.terminal-endpoint{margin-left:auto;font-size:10px;color:#a1806a;letter-spacing:.3px}
+
+@container app (max-width:760px){
+  .agent-controls{gap:10px}
+  .agent-power{width:40px;height:40px}
+  .terminal-endpoint{display:none}
+}
+
+/* ── Chat width ───────────────────────────────────────────────────────────────
+   The reference centred chat in an 800px column, which wastes most of a desktop
+   window and cramps code blocks badly. The column now runs to the edges; the
+   bubbles keep a readable measure so prose does not stretch into long lines
+   while code and tables get the room. */
+@container app (min-width:761px){
+  .messages{width:calc(100% - 96px);max-width:none}
+  .chat-composer{width:calc(100% - 96px);max-width:none}
+  .message-row.user .message-bubble{max-width:min(62ch,72%)}
+  .message-row.assistant .message-bubble{max-width:min(84ch,86%)}
+}
+
+/* ── Markdown in assistant replies ────────────────────────────────────────────
+   Models answer in Markdown, so the bubble has to render it rather than print
+   the syntax. Spacing collapses at the edges so a single paragraph — the common
+   case — looks identical to the plain text it replaced. */
+.md>*:first-child{margin-top:0}
+.md>*:last-child{margin-bottom:0}
+.md p{margin:0 0 .75em}
+.md h1,.md h2,.md h3,.md h4{margin:1.1em 0 .5em;font-weight:500;line-height:1.25;letter-spacing:-.4px}
+.md h1{font-size:1.32em}
+.md h2{font-size:1.18em}
+.md h3{font-size:1.06em}
+.md h4{font-size:1em;color:#f0d4c4}
+.md ul,.md ol{margin:0 0 .75em;padding-left:1.35em}
+.md ul{list-style:disc}
+.md ol{list-style:decimal}
+.md ul ul{list-style:circle}
+.md li{margin:.22em 0}
+.md li::marker{color:#e8945a}
+.md a{color:#ffb066;text-decoration:underline;text-underline-offset:2px}
+.md strong{font-weight:600;color:#fff6ea}
+.md em{font-style:italic}
+.md hr{border:0;border-top:1px solid #ffffff1a;margin:1.1em 0}
+.md blockquote{margin:.6em 0;padding:.15em 0 .15em .9em;border-left:2px solid #ffa65266;color:#d8bda9}
+
+/* Inline code sits inside a sentence, so it must not change the line height. */
+.md :not(pre)>code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.87em;
+  padding:.14em .38em;border-radius:5px;background:#ffffff12;color:#ffd0a4;overflow-wrap:anywhere}
+
+/* Code blocks scroll on their own rather than widening the bubble. */
+.md pre{margin:.7em 0;padding:12px 14px;border-radius:10px;background:#0c0503;
+  border:1px solid #ffffff12;overflow-x:auto;max-width:100%}
+.md pre code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+  line-height:1.55;color:#ffe6d0;background:none;padding:0;white-space:pre}
+
+.md table{border-collapse:collapse;margin:.7em 0;font-size:.92em;display:block;overflow-x:auto;max-width:100%}
+.md th,.md td{border:1px solid #ffffff1f;padding:6px 10px;text-align:left}
+.md th{background:#ffffff0a;font-weight:500;color:#ffe6d0}
