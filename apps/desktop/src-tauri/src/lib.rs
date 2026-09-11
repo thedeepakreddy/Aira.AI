@@ -1,4 +1,5 @@
 mod browser;
+mod webview;
 mod openclaw;
 mod opencode;
 
@@ -43,6 +44,12 @@ pub fn run() {
             browser::browser_log,
             browser::browser_run,
             browser::browser_api,
+            webview::webview_open,
+            webview::webview_bounds,
+            webview::webview_navigate,
+            webview::webview_url,
+            webview::webview_history,
+            webview::webview_close,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")

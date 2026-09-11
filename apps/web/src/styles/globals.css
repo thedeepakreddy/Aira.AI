@@ -749,3 +749,14 @@
    a screenshot. */
 .browse-view img{cursor:default}
 .browse-view img:focus{outline:1px solid #ffa65255;outline-offset:2px}
+
+/* The page area is deliberately empty: a native webview is composited over this
+   rectangle by the OS, so anything drawn here would be hidden behind a real
+   browser. The background only shows for the moment before it opens. */
+.browse-canvas{flex:1 1 auto;min-height:0;background:#0b0603}
+/* With a real page open the agent's trail is a footnote, not the content. */
+/* The agent's trail is a strip at the foot of the browser, not a second pane:
+   the browser is the screen, and the research notes are a footnote to it. */
+.browse-canvas + .terminal-log{flex:0 0 auto;max-height:118px;border-top:1px solid #ffffff0b;
+  background:#0d060399}
+

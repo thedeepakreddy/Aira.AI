@@ -28,6 +28,25 @@ export interface StartOptions {
   model: string;
 }
 
+/**
+ * The native page view — a real browser inside Aira's window.
+ *
+ * A child webview composited by the OS, not a stream of frames: scrolling has
+ * inertia, video plays, selection works, and nothing round-trips. It is drawn
+ * *over* the app's own webview in the rectangle it is given, which is why the
+ * panel measures its content area and why leaving the screen must close it.
+ */
+export const page = {
+  open: (url: string, r: DOMRect) =>
+    invoke<void>('webview_open', { url, x: r.x, y: r.y, width: r.width, height: r.height }),
+  bounds: (r: DOMRect) =>
+    invoke<void>('webview_bounds', { x: r.x, y: r.y, width: r.width, height: r.height }),
+  navigate: (url: string) => invoke<void>('webview_navigate', { url }),
+  url: () => invoke<string | null>('webview_url'),
+  history: (action: 'back' | 'forward' | 'reload') => invoke<void>('webview_history', { action }),
+  close: () => invoke<void>('webview_close'),
+};
+
 export const supervisor = {
   status: () => invoke<BrowserStatus>('browser_status'),
   start: (options: StartOptions) => invoke<BrowserStatus>('browser_start', { ...options }),

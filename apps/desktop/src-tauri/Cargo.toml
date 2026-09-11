@@ -14,7 +14,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `unstable` is what exposes Window::add_child — a native child webview,
+# which is how a real browser lives inside the app window rather than
+# being streamed into it as pictures.
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-dialog = "2"
 # Loopback HTTP only — no TLS stack is pulled in, because the only thing it
 # talks to is a local agent on 127.0.0.1.

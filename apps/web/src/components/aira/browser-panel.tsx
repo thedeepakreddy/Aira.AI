@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {Power,Globe,Send,Square,ArrowUpRight,Check,Loader2,ShieldAlert,Link2,Plus,X,Search,EyeOff,Puzzle} from 'lucide-react';
-import {isDesktop,supervisor,BrowserClient,type BrowseEvent,type BrowserStatus,type Tab} from '@/lib/browser';
+import {Power,Globe,Send,Square,ArrowUpRight,Check,Loader2,ShieldAlert,Link2,Plus,X,Search,EyeOff,Puzzle,ArrowLeft,ArrowRight,RotateCw} from 'lucide-react';
+import {isDesktop,supervisor,page,BrowserClient,type BrowseEvent,type BrowserStatus,type Tab} from '@/lib/browser';
 import {getAccessToken} from '@/lib/supabase';
 import {listCatalogue} from '@/lib/gateway';
 import Markdown from './markdown';
@@ -34,6 +34,8 @@ export default function BrowserPanel(){
  const client=useRef<BrowserClient|null>(null);
  const run=useRef<AbortController|null>(null);
  const trail=useRef<HTMLDivElement>(null);
+ const pageArea=useRef<HTMLDivElement>(null);
+ const opened=useRef(false);
 
  const connected=Boolean(status?.running&&client.current);
  const missing=Boolean(status&&!status.python);
@@ -70,27 +72,43 @@ export default function BrowserPanel(){
   void client.current?.input(event).catch(()=>{});
  },[]);
 
- // The page itself, drawn inside Aira. Chrome cannot render into this window —
- // it is a separate process with its own — so its frames are captured and shown
- // here instead, which is what makes the browsing visible in the app rather
- // than only in a window beside it.
+ /**
+  * Keeps the native page view exactly over the panel's content area.
+  *
+  * A child webview is positioned in window coordinates, not laid out by CSS, so
+  * nothing moves it when the window resizes or the toolbar changes height —
+  * which is what this does. And it is closed on the way out: the webview draws
+  * over its parent, so one left open would hang over whatever screen comes
+  * next.
+  */
  useEffect(()=>{
-  if(!connected)return;
+  if(!isDesktop||!connected)return;
+  const area=pageArea.current;
+  if(!area)return;
   let alive=true;
-  const tick=async()=>{
-   const c=client.current;
-   if(!c||!alive)return;
-   try{
-    const shot=await c.screen();
-    if(!alive)return;
-    if(shot.image)setFrame(shot.image);
-    setPageUrl(shot.url||'');
-   }catch{/* a missed frame is not worth surfacing */}
+
+  const place=()=>{
+   const rect=area.getBoundingClientRect();
+   if(rect.width<2||rect.height<2)return;
+   void (opened.current?page.bounds(rect):page.open('https://duckduckgo.com',rect).then(()=>{opened.current=true}))
+    .catch(()=>{});
   };
-  void tick();
-  const id=setInterval(()=>void tick(),busy?900:2500);
-  return()=>{alive=false;clearInterval(id)};
- },[connected,busy]);
+  place();
+  const observer=new ResizeObserver(()=>{if(alive)place()});
+  observer.observe(area);
+  window.addEventListener('resize',place);
+
+  // The address bar shows where the page actually went, including links the
+  // user followed inside it.
+  const poll=setInterval(()=>{void page.url().then(u=>{if(alive&&u)setPageUrl(u)}).catch(()=>{})},1200);
+
+  return()=>{
+   alive=false;observer.disconnect();window.removeEventListener('resize',place);
+   clearInterval(poll);
+   opened.current=false;
+   void page.close().catch(()=>{});
+  };
+ },[connected]);
 
  useEffect(()=>{
   if(!connected)return;
@@ -188,9 +206,19 @@ export default function BrowserPanel(){
  async function submit(){
   const text=task.trim();
   if(!text)return;
+  if(!looksLikeAddress(text)&&busy){
+   setError('The agent is still working. Stop it first, or type an address — those always go through.');
+   return;
+  }
+  // An address always goes through, even mid-research: the browser and the
+  // agent are doing different jobs, and a browser you cannot type into because
+  // something else is busy is not a browser.
   if(looksLikeAddress(text)){
    setTask('');
-   await openTab(/^[a-z]+:\/\//i.test(text)?text:`https://${text}`);
+   // Straight into the page view — this is the browser the person is looking
+   // at. The agent's Chrome is a separate thing and gets its own tasks.
+   await page.navigate(/^[a-z]+:\/\//i.test(text)?text:`https://${text}`).catch(
+    (e:unknown)=>setError(e instanceof Error?e.message:String(e)));
    return;
   }
   await go();
@@ -234,14 +262,11 @@ export default function BrowserPanel(){
      </button>
     </div>
    </div>
-   <p>Ask it to look something up. A Chrome window opens so you can watch it work.</p>
+   <p>A real browser, and an agent that can research for you.</p>
   </div>
 
   <div className="cli-grid agent-grid">
    <div className="terminal-window">
-    <div className="terminal-title"><Globe/><span>aira — browser</span>
-     {busy&&<span className="terminal-mode">BROWSING</span>}
-     {status?.running&&status.port&&<span className="terminal-endpoint">127.0.0.1:{status.port}</span>}</div>
 
     {connected&&<div className="browse-chrome">
      <div className="browse-tabstrip" role="tablist" aria-label="Open tabs">
@@ -252,9 +277,12 @@ export default function BrowserPanel(){
       <button className="browse-tab-new" onClick={()=>void openTab()} aria-label="New tab"><Plus/></button>
      </div>
      <form className="browse-bar" onSubmit={e=>{e.preventDefault();void submit()}}>
+      <button type="button" className="browse-icon" onClick={()=>void page.history('back')} aria-label="Back"><ArrowLeft/></button>
+      <button type="button" className="browse-icon" onClick={()=>void page.history('forward')} aria-label="Forward"><ArrowRight/></button>
+      <button type="button" className="browse-icon" onClick={()=>void page.history('reload')} aria-label="Reload"><RotateCw/></button>
       {isPrivate?<EyeOff/>:<Search/>}
-      <input aria-label="Address or question" value={task} disabled={busy}
-       placeholder={busy?'Working…':'Search, ask, or type a web address'}
+      <input aria-label="Address or question" value={task}
+       placeholder={pageUrl||'Search, ask, or type a web address'}
        autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
       {busy
        ? <button type="button" className="browse-bar-go" onClick={interrupt} aria-label="Stop"><Square/></button>
@@ -266,24 +294,14 @@ export default function BrowserPanel(){
       </form>
     </div>}
 
-    {connected&&frame&&<div className="browse-view">
-     <img src={frame} alt={pageUrl?`Page at ${pageUrl}`:'The page the agent is looking at'}
-      tabIndex={0}
-      onClick={e=>{const p=pagePoint(e);send({type:'click',...p})}}
-      onWheel={e=>{const p=pagePoint(e);send({type:'scroll',...p,deltaX:e.deltaX,deltaY:e.deltaY})}}
-      onKeyDown={e=>{
-       // Printable characters go as text; the rest have to be key events or
-       // the page never reacts to Enter, Backspace or the arrows.
-       if(e.key.length===1&&!e.metaKey&&!e.ctrlKey){e.preventDefault();send({type:'text',text:e.key})}
-       else if(['Enter','Backspace','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape'].includes(e.key)){
-        e.preventDefault();send({type:'key',key:e.key});
-       }
-      }}/>
-    </div>}
+    {/* The native page view sits over this rectangle. Nothing is drawn here:
+        the hole is the point, and its measured bounds are what the webview is
+        given. */}
+    <div className="browse-canvas" ref={pageArea}/>
 
-    <div className={'terminal-log '+(connected&&frame?'browse-trail':'')} ref={trail} role="log" aria-live="polite">
+    {(sent||busy||error)&&<div className={'terminal-log '+(connected&&frame?'browse-trail':'')} ref={trail} role="log" aria-live="polite">
      {!(connected&&frame)&&<div className="terminal-welcome"><span>Aira Browser</span>
-      <p>{connected?'Give it something to find. Chrome opens alongside Aira — the tabs above are that window, and every page is listed here as it goes.'
+      <p>{connected?'Browse above, or ask a question and the agent researches it — its own Chrome, with every page it opens listed here.'
        :!isDesktop?'The browsing agent drives a real browser on your machine, so it runs in the Aira desktop app rather than a browser tab.'
        :missing?'The browsing agent is not installed. Aira keeps it in its own virtualenv at ~/.aira/browser/venv.'
        :'Press power to start the browser.'}</p>
@@ -312,7 +330,7 @@ export default function BrowserPanel(){
      </div>}
 
      {error&&<div className="agent-notice error"><ShieldAlert/><span>{error}</span></div>}
-    </div>
+    </div>}
 
     {connected&&!sent&&<div className="terminal-shortcuts">
      {['Summarise the top story on Hacker News','Find the latest Tauri release notes','What is on example.com?'].map(s=>
