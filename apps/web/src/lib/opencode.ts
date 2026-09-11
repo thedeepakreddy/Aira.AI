@@ -62,6 +62,36 @@ export interface PermissionRequest {
   resources: string[];
 }
 
+/** One choice offered by the agent's `question` tool. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionInfo {
+  question: string;
+  /** Very short label — the server caps it at 30 characters. */
+  header: string;
+  options: QuestionOption[];
+  /** When true the user may pick several options. */
+  multiple?: boolean;
+  /** When true the user may type an answer of their own. */
+  custom?: boolean;
+}
+
+/**
+ * The agent asking the user something before it continues.
+ *
+ * This is not a permission prompt: the run blocks until every question is
+ * answered, and nothing in the session advances in the meantime. Without a UI
+ * for it a task like "build a calculator app" hangs forever on a spinner.
+ */
+export interface QuestionRequest {
+  id: string;
+  sessionID: string;
+  questions: QuestionInfo[];
+}
+
 /** What the agent is doing right now, so long steps are legible. */
 export interface ToolActivity {
   /** Stable per tool call, so updates replace rather than stack up. */
@@ -77,6 +107,8 @@ export type AgentEvent =
   | { kind: 'tool'; activity: ToolActivity }
   | { kind: 'permission'; request: PermissionRequest }
   | { kind: 'permission-resolved'; id: string; reply?: string }
+  | { kind: 'question'; request: QuestionRequest }
+  | { kind: 'question-resolved'; id: string; answers?: string[][] }
   | { kind: 'file-edited'; path: string }
   | { kind: 'idle'; sessionID: string }
   | { kind: 'other'; type: string };
@@ -159,6 +191,22 @@ export class OpenCodeClient {
   }
 
   /**
+   * Answers the agent's question. One entry per question, in order; each entry
+   * holds the labels the user picked (several only when `multiple` is set).
+   */
+  replyQuestion(requestID: string, answers: string[][]) {
+    return this.request<boolean>(`/question/${requestID}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
+    });
+  }
+
+  /** Declines to answer. The agent carries on with what it already knows. */
+  rejectQuestion(requestID: string) {
+    return this.request<boolean>(`/question/${requestID}/reject`, { method: 'POST' });
+  }
+
+  /**
    * Normalises the server's ~94 event types down to the handful the panel acts
    * on. Unrecognised events are surfaced as `other` rather than dropped, so a
    * new event type shows up in the log instead of vanishing.
@@ -234,9 +282,31 @@ export class OpenCodeClient {
           if (id) yield { kind: 'permission-resolved', id, reply: replied.reply };
           break;
         }
+        case 'question.asked':
+        case 'question.v2.asked': {
+          // Same two-generation split as permissions; the live server emits the
+          // unversioned names, the spec documents both. Their payloads match.
+          const raw = p as unknown as QuestionRequest;
+          if (raw.id && Array.isArray(raw.questions)) yield { kind: 'question', request: raw };
+          break;
+        }
+        case 'question.replied':
+        case 'question.v2.replied':
+        case 'question.rejected':
+        case 'question.v2.rejected': {
+          // As with permissions, the reply names the request `requestID` while
+          // the ask names it `id`.
+          const replied = p as unknown as { id?: string; requestID?: string; answers?: string[][] };
+          const id = replied.requestID ?? replied.id;
+          if (id) yield { kind: 'question-resolved', id, answers: replied.answers };
+          break;
+        }
         case 'message.part.updated': {
           const part = (p as unknown as { part?: ToolPart }).part;
           if (part?.type !== 'tool' || !part.id) break;
+          // The question tool gets its own card with the actual question in it;
+          // a spinner reading "question" next to it says nothing.
+          if (part.tool === 'question') break;
           yield {
             kind: 'tool',
             activity: {

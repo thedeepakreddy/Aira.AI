@@ -51,6 +51,44 @@ test('a permission reply is matched to the request it answers', async () => {
   assert.equal(event.reply, 'always');
 });
 
+test('a question from the agent carries its choices', async () => {
+  const [event] = await normalise([fixtures['question.asked']]);
+  assert.equal(event.kind, 'question');
+  // The run is blocked until this is answered, so an unhandled question is not
+  // a missing nicety — it is a task that hangs on a spinner forever.
+  assert.ok(event.request.id.startsWith('que_'));
+  assert.ok(event.request.questions.length > 0);
+  const [first] = event.request.questions;
+  assert.ok(first.question && first.header, 'the card needs both to render');
+  assert.ok(first.options.length > 0, 'options are what the user clicks');
+  assert.ok(first.options.every((o) => typeof o.label === 'string'));
+});
+
+test('an answered question is matched to the question it answers', async () => {
+  const asked = fixtures['question.asked'];
+  const [event] = await normalise([fixtures['question.replied']]);
+  assert.equal(event.kind, 'question-resolved');
+  // Same `requestID` vs `id` split as permissions, and the same failure if it
+  // is read wrong: the card keeps its buttons after being answered.
+  assert.equal(event.id, asked.properties.id);
+  assert.deepEqual(event.answers, [['Static site (HTML/CSS/JS)']]);
+});
+
+test('the question tool does not also render as an activity line', async () => {
+  const events = await normalise([
+    {
+      type: 'message.part.updated',
+      properties: {
+        sessionID: 'ses_x',
+        part: { id: 'prt_x', type: 'tool', tool: 'question', state: { status: 'running', input: {} } },
+      },
+    },
+  ]);
+  // The card holds the actual question; a spinner reading "question" beside it
+  // told the user nothing about why the agent had stopped.
+  assert.equal(events.length, 0);
+});
+
 test('tool activity reports what is happening, and to what', async () => {
   const [event] = await normalise([fixtures['tool:running']]);
   assert.equal(event.kind, 'tool');

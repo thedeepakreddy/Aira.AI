@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {Terminal,Power,Send,Folder,ChevronRight,ShieldAlert,FileEdit,Square,Check,Loader2,FileText,Search,SquareTerminal} from 'lucide-react';
-import {isDesktop,supervisor,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest,type ToolActivity} from '@/lib/opencode';
+import {Terminal,Power,Send,Folder,ChevronRight,ShieldAlert,FileEdit,Square,Check,Loader2,FileText,Search,SquareTerminal,MessageCircleQuestion} from 'lucide-react';
+import {isDesktop,supervisor,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest,type QuestionRequest,type ToolActivity} from '@/lib/opencode';
 import {getAccessToken} from '@/lib/supabase';
 import {listCatalogue} from '@/lib/gateway';
 
@@ -26,7 +26,8 @@ type Entry =
   | {kind:'you';text:string}
   | {kind:'agent';text:string}
   | {kind:'notice';text:string}
-  | {kind:'permission';request:PermissionRequest;resolved?:'once'|'always'|'reject'};
+  | {kind:'permission';request:PermissionRequest;resolved?:'once'|'always'|'reject'}
+  | {kind:'question';request:QuestionRequest;answers?:string[][];skipped?:boolean};
 
 export default function AgentPanel(){
  const [status,setStatus]=useState<OpenCodeStatus|null>(null);
@@ -85,6 +86,13 @@ export default function AgentPanel(){
       const chosen=event.reply==='reject'?'reject':event.reply==='always'?'always':'once';
       setEntries(e=>e.map(x=>x.kind==='permission'&&x.request.id===event.id&&!x.resolved?{...x,resolved:chosen}:x));
       break;}
+     case 'question':setEntries(e=>e.some(x=>x.kind==='question'&&x.request.id===event.request.id)?e:[...e,{kind:'question',request:event.request}]);break;
+     case 'question-resolved':
+      // Covers answers given from another client as well as our own, and the
+      // rejection case, where no answers come back.
+      setEntries(e=>e.map(x=>x.kind==='question'&&x.request.id===event.id&&!x.answers&&!x.skipped
+       ?(event.answers?{...x,answers:event.answers}:{...x,skipped:true}):x));
+      break;
      case 'file-edited':if(event.path)note(`edited ${event.path}`);break;
      case 'idle':setBusy(false);break;
      default:break;
@@ -164,6 +172,18 @@ export default function AgentPanel(){
   catch{setError('Could not send that decision to the agent.')}
  }
 
+ async function answer(request:QuestionRequest,answers:string[][]){
+  setEntries(e=>e.map(x=>x.kind==='question'&&x.request.id===request.id?{...x,answers}:x));
+  try{await client.current?.replyQuestion(request.id,answers)}
+  catch{setError('Could not send that answer to the agent.')}
+ }
+
+ async function skipQuestion(request:QuestionRequest){
+  setEntries(e=>e.map(x=>x.kind==='question'&&x.request.id===request.id?{...x,skipped:true}:x));
+  try{await client.current?.rejectQuestion(request.id)}
+  catch{setError('Could not skip that question.')}
+ }
+
  // Surfaced in the log because the power button is otherwise a dead control
  // with no explanation for why it will not do anything.
  const missing=Boolean(status&&!status.binary);
@@ -201,6 +221,8 @@ export default function AgentPanel(){
       if(entry.kind==='agent')return <div className="terminal-entry" key={i}><pre>{entry.text}</pre></div>;
       if(entry.kind==='tool')return <ToolLine key={i} activity={entry.activity}/>;
       if(entry.kind==='notice')return <div className="agent-notice" key={i}><FileEdit/><span>{entry.text}</span></div>;
+      if(entry.kind==='question')return <QuestionCard key={i} request={entry.request} answers={entry.answers} skipped={entry.skipped}
+       onAnswer={a=>void answer(entry.request,a)} onSkip={()=>void skipQuestion(entry.request)}/>;
       return <div className={'agent-permission '+(entry.resolved?'resolved':'')} key={i}>
        <div className="agent-permission-head"><ShieldAlert/><strong>{entry.request.action}</strong></div>
        {entry.request.resources?.length>0&&<ul>{entry.request.resources.map((r,n)=><li key={n}>{r}</li>)}</ul>}
@@ -233,6 +255,72 @@ export default function AgentPanel(){
    </div>
   </div>
  </section>;
+}
+
+/**
+ * The agent's question, answered in place.
+ *
+ * The run is blocked while this is on screen — OpenCode holds the tool call
+ * open until every question has an answer — so the card stays until the user
+ * either answers it or skips it. Selections live here rather than in the log so
+ * that clicking an option does not rebuild every other entry.
+ */
+function QuestionCard({request,answers,skipped,onAnswer,onSkip}:{
+ request:QuestionRequest;answers?:string[][];skipped?:boolean;
+ onAnswer:(answers:string[][])=>void;onSkip:()=>void;
+}){
+ const [picked,setPicked]=useState<string[][]>(()=>request.questions.map(()=>[]));
+ const [typed,setTyped]=useState<string[]>(()=>request.questions.map(()=>''));
+ const done=Boolean(answers)||skipped;
+
+ function toggle(index:number,label:string,multiple:boolean){
+  setPicked(current=>current.map((selected,n)=>{
+   if(n!==index)return selected;
+   if(!multiple)return selected[0]===label?[]:[label];
+   return selected.includes(label)?selected.filter(l=>l!==label):[...selected,label];
+  }));
+ }
+
+ // A typed answer counts too, so a question with `custom` set can be answered
+ // without picking any of the offered options.
+ const final=picked.map((selected,n)=>{
+  const own=typed[n].trim();
+  if(!own)return selected;
+  return request.questions[n].multiple?[...selected,own]:[own];
+ });
+ const complete=final.every(selected=>selected.length>0);
+
+ return <div className={'agent-question '+(done?'resolved':'')}>
+  <div className="agent-question-head"><MessageCircleQuestion/><strong>The agent needs an answer</strong></div>
+  {request.questions.map((q,index)=>{
+   const chosen=answers?.[index];
+   return <div className="agent-question-item" key={index}>
+    <span className="agent-question-header">{q.header}</span>
+    <p>{q.question}</p>
+    {done
+     ? <span className="agent-question-answer">{skipped?'Skipped':(chosen?.join(', ')||'—')}</span>
+     : <>
+        <div className="agent-question-options">
+         {q.options.map(option=>{
+          const on=picked[index].includes(option.label);
+          return <button type="button" key={option.label} className={on?'on':''}
+           aria-pressed={on} onClick={()=>toggle(index,option.label,Boolean(q.multiple))}>
+           <span className="agent-question-label">{option.label}</span>
+           {option.description&&<span className="agent-question-hint">{option.description}</span>}
+          </button>;
+         })}
+        </div>
+        {q.custom&&<input className="agent-question-custom" value={typed[index]} placeholder="Or type your own answer…"
+         aria-label={q.header} spellCheck={false}
+         onChange={e=>setTyped(t=>t.map((v,n)=>n===index?e.target.value:v))}/>}
+       </>}
+   </div>;
+  })}
+  {!done&&<div className="agent-question-actions">
+   <button disabled={!complete} onClick={()=>onAnswer(final)}>Send answer</button>
+   <button className="skip" onClick={onSkip}>Skip</button>
+  </div>}
+ </div>;
 }
 
 /** Verbs read better than tool names: "Writing calc.py", not "write". */
