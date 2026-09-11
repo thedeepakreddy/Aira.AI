@@ -124,11 +124,13 @@ let catalogue: ModelSpec[] = ANTHROPIC_MODELS;
 export function loadCatalogue(sources: {
   openai?: string;
   openrouter?: string;
+  gemini?: string;
 }): void {
   catalogue = [
     ...ANTHROPIC_MODELS,
     ...parseCompatibleModels(sources.openai, 'openai'),
     ...parseCompatibleModels(sources.openrouter, 'openrouter'),
+    ...parseCompatibleModels(sources.gemini, 'gemini'),
   ];
 }
 

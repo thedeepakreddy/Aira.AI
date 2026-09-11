@@ -12,6 +12,8 @@ export interface Env {
   openaiModels: string | undefined;
   openrouterApiKey: string | undefined;
   openrouterModels: string | undefined;
+  geminiApiKey: string | undefined;
+  geminiModels: string | undefined;
   anthropicFallbacks: boolean;
   supabaseUrl: string | undefined;
   supabaseServiceKey: string | undefined;
@@ -41,6 +43,9 @@ export function loadEnv(): Env {
     openaiModels: process.env.OPENAI_MODELS,
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     openrouterModels: process.env.OPENROUTER_MODELS,
+    // GOOGLE_API_KEY is accepted too; it is the name Google's own tooling uses.
+    geminiApiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY,
+    geminiModels: process.env.GEMINI_MODELS,
     anthropicFallbacks: bool(process.env.ANTHROPIC_ENABLE_FALLBACKS, true),
     supabaseUrl: process.env.SUPABASE_URL,
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -57,10 +62,10 @@ export function loadEnv(): Env {
     ],
   };
 
-  if (!env.anthropicApiKey && !env.openaiApiKey && !env.openrouterApiKey) {
+  if (!env.anthropicApiKey && !env.openaiApiKey && !env.openrouterApiKey && !env.geminiApiKey) {
     throw new Error(
-      'No provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY and/or ' +
-        'OPENROUTER_API_KEY in services/gateway/.env',
+      'No provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, ' +
+        'OPENROUTER_API_KEY and/or GEMINI_API_KEY in services/gateway/.env',
     );
   }
   if (env.requireAuth && (!env.supabaseUrl || !env.supabaseServiceKey)) {

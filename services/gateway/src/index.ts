@@ -12,7 +12,11 @@ import { createChatRoute } from './routes/chat.ts';
 import { createOpenAIChatRoute, createOpenAIModelsRoute } from './routes/openai.ts';
 
 const env = loadEnv();
-loadCatalogue({ openai: env.openaiModels, openrouter: env.openrouterModels });
+loadCatalogue({
+  openai: env.openaiModels,
+  openrouter: env.openrouterModels,
+  gemini: env.geminiModels,
+});
 
 const providers: ChatProvider[] = [];
 if (env.anthropicApiKey) {
@@ -29,6 +33,19 @@ if (env.openrouterApiKey) {
       baseURL: 'https://openrouter.ai/api/v1',
       // OpenRouter uses these for attribution in its dashboards.
       headers: { 'HTTP-Referer': 'https://askdeepak.ai', 'X-Title': 'Aira' },
+    }),
+  );
+}
+
+if (env.geminiApiKey) {
+  providers.push(
+    new OpenAICompatibleProvider({
+      id: 'gemini',
+      apiKey: env.geminiApiKey,
+      // Google mirrors the OpenAI wire format at this path, so Gemini needs no
+      // adapter of its own — only a base URL. The trailing segment matters:
+      // the SDK appends /chat/completions to whatever it is given.
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
     }),
   );
 }
