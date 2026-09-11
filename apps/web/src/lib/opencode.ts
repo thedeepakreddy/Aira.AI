@@ -30,9 +30,19 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
   return call<T>(command, args);
 }
 
+export interface StartOptions {
+  directory?: string;
+  /** Base URL of the Aira gateway the agent should bill through. */
+  gatewayUrl: string;
+  /** Current session token. Passed to the agent's environment, never to disk. */
+  token: string;
+  /** Model id as the gateway knows it; the shell qualifies it as `aira/<id>`. */
+  model: string;
+}
+
 export const supervisor = {
   status: () => invoke<OpenCodeStatus>('opencode_status'),
-  start: (directory?: string) => invoke<OpenCodeStatus>('opencode_start', { directory }),
+  start: (options: StartOptions) => invoke<OpenCodeStatus>('opencode_start', { ...options }),
   stop: () => invoke<void>('opencode_stop'),
 };
 

@@ -104,10 +104,59 @@ pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
     }
 }
 
+/// Builds the config OpenCode runs under.
+///
+/// Passed through `OPENCODE_CONFIG_CONTENT` rather than a file, for two
+/// reasons: writing `opencode.json` into the user's repository would litter
+/// their project, and the gateway token would then sit on disk. In the
+/// environment it lives only as long as the process.
+///
+/// Two things this config is responsible for:
+///
+///  * Pointing the agent at Aira's gateway, so agent spend is metered and
+///    capped like every other surface instead of billing somewhere invisible.
+///  * Setting `edit` and `bash` to "ask". OpenCode allows everything by
+///    default, so without this the approval prompts in Aira's UI would never
+///    fire and the agent would edit files unannounced.
+fn build_config(gateway_url: &str, token: &str, model: &str) -> String {
+    let qualified = format!("aira/{model}");
+    serde_json::json!({
+        "provider": {
+            "aira": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Aira Gateway",
+                "options": {
+                    "baseURL": format!("{}/openai/v1", gateway_url.trim_end_matches('/')),
+                    "apiKey": token,
+                },
+                "models": { model: { "name": "Aira Agent" } },
+            }
+        },
+        "model": qualified,
+        "permission": {
+            "read": "allow",
+            "list": "allow",
+            "glob": "allow",
+            "grep": "allow",
+            "lsp": "allow",
+            "edit": "ask",
+            "bash": "ask",
+            "task": "ask",
+            "webfetch": "deny",
+            "websearch": "deny",
+            "external_directory": "deny",
+        },
+    })
+    .to_string()
+}
+
 #[tauri::command]
 pub fn opencode_start(
     state: State<'_, OpenCodeState>,
     directory: Option<String>,
+    gateway_url: String,
+    token: String,
+    model: String,
 ) -> Result<Status, String> {
     {
         let guard = state.inner.lock().unwrap();
@@ -134,6 +183,12 @@ pub fn opencode_start(
         .arg("--hostname")
         .arg("127.0.0.1")
         .env("OPENCODE_SERVER_PASSWORD", &password)
+        // Config by environment: nothing is written into the user's project,
+        // and the gateway token never reaches disk.
+        .env(
+            "OPENCODE_CONFIG_CONTENT",
+            build_config(&gateway_url, &token, &model),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());

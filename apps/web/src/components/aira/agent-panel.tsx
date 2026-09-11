@@ -1,6 +1,8 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {Terminal,Power,Send,Folder,ChevronRight,ShieldAlert,FileEdit,Square} from 'lucide-react';
 import {isDesktop,supervisor,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest} from '@/lib/opencode';
+import {getAccessToken} from '@/lib/supabase';
+import {listModels} from '@/lib/gateway';
 
 /**
  * The OpenCode agent panel.
@@ -81,7 +83,16 @@ export default function AgentPanel(){
  async function start(){
   setError('');setStarting(true);
   try{
-   const next=await supervisor.start();
+   // The agent bills through Aira's gateway, so it needs the session token and
+   // a model the gateway actually serves. Agent work routes to the `code`
+   // surface, which is the frontier tier.
+   const token=await getAccessToken();
+   if(!token)throw new Error('Sign in before starting the agent.');
+   const models=await listModels();
+   const model=models.find(m=>m.tier==='frontier')?.id??models[0]?.id;
+   if(!model)throw new Error('No models available from the gateway.');
+   const gatewayUrl=(import.meta.env?.VITE_GATEWAY_URL as string|undefined)??'http://localhost:8787';
+   const next=await supervisor.start({gatewayUrl,token,model});
    setStatus(next);
    if(!next.running||next.port==null||!next.password)throw new Error('OpenCode did not start.');
    const c=new OpenCodeClient(next.port,next.password);
