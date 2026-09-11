@@ -37,7 +37,13 @@ MAX_STEPS = int(os.environ.get("AIRA_BROWSER_MAX_STEPS", "12"))
 PROFILE_DIR = os.environ.get(
     "AIRA_BROWSER_PROFILE", os.path.expanduser("~/.aira/browser/profile")
 )
-HEADLESS = os.environ.get("AIRA_BROWSER_HEADLESS", "1") not in ("0", "false")
+# Visible by default.
+#
+# Headless is the obvious choice for an agent service and the wrong one for a
+# surface a person opens expecting a browser: the agent was loading pages
+# perfectly well and there was simply nothing to look at. A window you can watch
+# is also the only honest way to see what an agent is doing on your behalf.
+HEADLESS = os.environ.get("AIRA_BROWSER_HEADLESS", "0") not in ("0", "false")
 # Unpacked Chrome extensions, one folder each. Loaded by path because a profile
 # that has never visited the Web Store has nothing installed.
 EXTENSIONS_DIR = os.environ.get(

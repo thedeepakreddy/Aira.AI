@@ -188,7 +188,7 @@ export default function BrowserPanel(){
      </button>
     </div>
    </div>
-   <p>Ask it to look something up. It browses in its own profile, signed out.</p>
+   <p>Ask it to look something up. A Chrome window opens so you can watch it work.</p>
   </div>
 
   <div className="cli-grid agent-grid">
@@ -222,7 +222,7 @@ export default function BrowserPanel(){
 
     <div className="terminal-log" ref={trail} role="log" aria-live="polite">
      <div className="terminal-welcome"><span>Aira Browser</span>
-      <p>{connected?'Give it something to find. Every page it opens is listed as it goes.'
+      <p>{connected?'Give it something to find. Chrome opens alongside Aira — the tabs above are that window, and every page is listed here as it goes.'
        :!isDesktop?'The browsing agent drives a real browser on your machine, so it runs in the Aira desktop app rather than a browser tab.'
        :missing?'The browsing agent is not installed. Aira keeps it in its own virtualenv at ~/.aira/browser/venv.'
        :'Press power to start the browser.'}</p>
