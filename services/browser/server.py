@@ -38,6 +38,11 @@ PROFILE_DIR = os.environ.get(
     "AIRA_BROWSER_PROFILE", os.path.expanduser("~/.aira/browser/profile")
 )
 HEADLESS = os.environ.get("AIRA_BROWSER_HEADLESS", "1") not in ("0", "false")
+# Unpacked Chrome extensions, one folder each. Loaded by path because a profile
+# that has never visited the Web Store has nothing installed.
+EXTENSIONS_DIR = os.environ.get(
+    "AIRA_BROWSER_EXTENSIONS", os.path.expanduser("~/.aira/browser/extensions")
+)
 
 
 def clear_profile_lock() -> None:
@@ -98,14 +103,78 @@ class Handler(BaseHTTPRequestHandler):
             # whether the process is up before it has anything to authenticate.
             self._json(200, {"ok": True, "ready": READY.is_set()})
             return
+        if self.path == "/tabs":
+            if not self._authorised():
+                self._json(401, {"error": "unauthorized"})
+                return
+            self._json(200, self._tabs())
+            return
         self._json(404, {"error": "not found"})
 
+    def _tabs(self) -> dict:
+        """Open tabs, or an empty list when no browser is running yet.
+
+        Reported rather than errored: "no tabs" is a real state, and a panel
+        that shows an error before the first browse would be wrong.
+        """
+        if SESSION["browser"] is None:
+            # Not an error: "no browser yet" is a real state, and listing tabs
+            # should never be the thing that launches Chrome.
+            return {"tabs": [], "private": SESSION["private"], "running": False}
+        try:
+            tabs = asyncio.run(self._list_tabs())
+        except Exception as error:  # noqa: BLE001
+            return {"tabs": [], "private": SESSION["private"], "running": True, "error": str(error)[:200]}
+        return {"tabs": tabs, "private": SESSION["private"], "running": True}
+
+    async def _list_tabs(self) -> list[dict]:
+        browser = await session()
+        return [
+            {
+                "id": str(getattr(t, "target_id", "") or ""),
+                "url": getattr(t, "url", "") or "",
+                "title": getattr(t, "title", "") or "",
+            }
+            for t in await browser.get_tabs()
+        ]
+
     def do_POST(self) -> None:
-        if self.path != "/run":
-            self._json(404, {"error": "not found"})
-            return
         if not self._authorised():
             self._json(401, {"error": "unauthorized"})
+            return
+
+        if self.path == "/tabs/open":
+            body = self._body()
+            try:
+                asyncio.run(self._open_tab((body or {}).get("url") or "about:blank"))
+                self._json(200, self._tabs())
+            except Exception as error:  # noqa: BLE001
+                self._json(500, {"error": str(error)[:300]})
+            return
+
+        if self.path == "/tabs/close":
+            body = self._body()
+            try:
+                asyncio.run(self._close_tab(str((body or {}).get("id") or "")))
+                self._json(200, self._tabs())
+            except Exception as error:  # noqa: BLE001
+                self._json(500, {"error": str(error)[:300]})
+            return
+
+        if self.path == "/mode":
+            body = self._body() or {}
+            want = bool(body.get("private"))
+            try:
+                # Switching modes means a different profile, so the browser is
+                # replaced rather than reconfigured.
+                asyncio.run(self._set_mode(want))
+                self._json(200, {"private": SESSION["private"]})
+            except Exception as error:  # noqa: BLE001
+                self._json(500, {"error": str(error)[:300]})
+            return
+
+        if self.path != "/run":
+            self._json(404, {"error": "not found"})
             return
 
         length = int(self.headers.get("Content-Length") or 0)
@@ -132,8 +201,34 @@ class Handler(BaseHTTPRequestHandler):
             self._event({"type": "error", "message": str(error)[:400]})
         self._event({"type": "done"})
 
+    def _body(self) -> dict | None:
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            return json.loads(self.rfile.read(length) or "{}")
+        except json.JSONDecodeError:
+            return None
+
+    async def _open_tab(self, url: str) -> None:
+        browser = await session()
+        await browser.new_page(url)
+
+    async def _close_tab(self, target_id: str) -> None:
+        browser = await session()
+        await browser.close_page(target_id)
+
+    async def _set_mode(self, private: bool) -> None:
+        """Switches profile, lazily.
+
+        The browser is dropped and the next request starts a fresh one in the
+        new mode. Starting it here instead made the mode toggle wait on a whole
+        Chrome launch — long enough that the caller gave up first and the reply
+        was written to a closed socket.
+        """
+        await drop_session()
+        SESSION["private"] = private
+
     async def _browse(self, task: str, max_steps: int) -> None:
-        from browser_use import Agent, BrowserProfile, ChatOpenAI
+        from browser_use import Agent, ChatOpenAI
 
         # Through Aira's gateway, never a vendor directly: that is what keeps a
         # browsing run metered, capped, and attributable like every other
@@ -144,20 +239,13 @@ class Handler(BaseHTTPRequestHandler):
             api_key=GATEWAY_TOKEN or "aira-local",
         )
 
-        # A separate profile, deliberately. browser-use can reuse the user's own
-        # Chrome profile, which would put the agent inside every session they
-        # are signed into — their mail, their bank — on a surface whose whole
-        # job is to follow instructions found on web pages. Aira browses logged
-        # out unless the user chooses otherwise.
-        profile = BrowserProfile(
-            user_data_dir=PROFILE_DIR,
-            headless=HEADLESS,
-            downloads_path=os.path.join(PROFILE_DIR, "downloads"),
+        # The shared browser, so tabs the agent opens are still there when the
+        # run ends and the panel can show them.
+        browser = await session()
+
+        self._event(
+            {"type": "start", "task": task, "model": MODEL, "private": SESSION["private"]}
         )
-
-        clear_profile_lock()
-
-        self._event({"type": "start", "task": task, "model": MODEL})
         step = 0
 
         async def on_step(agent) -> None:
@@ -177,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
                 url, name = "", ""
             self._event({"type": "step", "n": step, "url": url, "action": name})
 
-        agent = Agent(task=task, llm=llm, browser_profile=profile, max_actions_per_step=3)
+        agent = Agent(task=task, llm=llm, browser_session=browser, max_actions_per_step=3)
         history = await agent.run(max_steps=max_steps, on_step_end=on_step)
 
         self._event(
@@ -186,11 +274,88 @@ class Handler(BaseHTTPRequestHandler):
                 "text": (history.final_result() or "").strip(),
                 "steps": step,
                 "urls": [u for u in (history.urls() or []) if u][-8:],
+                "tabs": await self._list_tabs(),
             }
         )
 
 
 READY = threading.Event()
+
+# One browser, held open across requests.
+#
+# Without this each request would start and kill its own Chrome, and "tabs"
+# would mean nothing: every list would be empty and every tab the agent opened
+# would die with the run that opened it.
+SESSION: dict = {"browser": None, "private": False, "lock": threading.Lock()}
+
+
+def extension_args() -> list[str]:
+    """Chrome flags for whatever the user has dropped in the extensions folder."""
+    try:
+        folders = [
+            os.path.join(EXTENSIONS_DIR, name)
+            for name in sorted(os.listdir(EXTENSIONS_DIR))
+            if os.path.isdir(os.path.join(EXTENSIONS_DIR, name))
+        ]
+    except OSError:
+        return []
+    if not folders:
+        return []
+    joined = ",".join(folders)
+    log(f"loading {len(folders)} extension(s)")
+    # Both flags: the first installs them, the second stops Chrome disabling
+    # unpacked extensions on startup.
+    return [f"--load-extension={joined}", f"--disable-extensions-except={joined}"]
+
+
+def build_profile(private: bool):
+    """The profile a session runs under.
+
+    Private mode gets no `user_data_dir` at all, so Chrome runs on a throwaway
+    profile: nothing it browses — history, cookies, storage — outlives the
+    session. That is a stronger guarantee than an incognito window inside a
+    persistent profile, which still shares the profile directory on disk.
+    """
+    from browser_use import BrowserProfile
+
+    args = list(extension_args())
+    if private:
+        return BrowserProfile(headless=HEADLESS, args=args, keep_alive=True)
+    clear_profile_lock()
+    return BrowserProfile(
+        user_data_dir=PROFILE_DIR,
+        headless=HEADLESS,
+        downloads_path=os.path.join(PROFILE_DIR, "downloads"),
+        args=args,
+        keep_alive=True,
+    )
+
+
+async def session(private: bool | None = None):
+    """The live browser, started on first use and reused after."""
+    from browser_use import BrowserSession
+
+    want = SESSION["private"] if private is None else private
+    if SESSION["browser"] is not None and want == SESSION["private"]:
+        return SESSION["browser"]
+    await drop_session()
+    browser = BrowserSession(browser_profile=build_profile(want))
+    await browser.start()
+    SESSION["browser"] = browser
+    SESSION["private"] = want
+    log(f"browser started ({'private' if want else 'normal'})")
+    return browser
+
+
+async def drop_session() -> None:
+    browser = SESSION["browser"]
+    SESSION["browser"] = None
+    if browser is None:
+        return
+    try:
+        await browser.kill()
+    except Exception as error:  # noqa: BLE001 - shutting down must not raise
+        log(f"could not close the browser cleanly: {error}")
 
 
 def main() -> None:

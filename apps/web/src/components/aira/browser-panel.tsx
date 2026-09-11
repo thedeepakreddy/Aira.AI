@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {Power,Globe,Send,Square,ArrowUpRight,Check,Loader2,ShieldAlert,Link2} from 'lucide-react';
-import {isDesktop,supervisor,BrowserClient,type BrowseEvent,type BrowserStatus} from '@/lib/browser';
+import {Power,Globe,Send,Square,ArrowUpRight,Check,Loader2,ShieldAlert,Link2,Plus,X,Search,EyeOff,Puzzle} from 'lucide-react';
+import {isDesktop,supervisor,BrowserClient,type BrowseEvent,type BrowserStatus,type Tab} from '@/lib/browser';
 import {getAccessToken} from '@/lib/supabase';
 import {listCatalogue} from '@/lib/gateway';
 import Markdown from './markdown';
@@ -27,6 +27,10 @@ export default function BrowserPanel(){
  const [starting,setStarting]=useState(false);
  const [error,setError]=useState('');
  const [model,setModel]=useState('');
+ const [tabs,setTabs]=useState<Tab[]>([]);
+ const [tabQuery,setTabQuery]=useState('');
+ const [isPrivate,setPrivate]=useState(false);
+ const [newTab,setNewTab]=useState('');
  const client=useRef<BrowserClient|null>(null);
  const run=useRef<AbortController|null>(null);
  const trail=useRef<HTMLDivElement>(null);
@@ -35,6 +39,23 @@ export default function BrowserPanel(){
  const missing=Boolean(status&&!status.python);
 
  useEffect(()=>{trail.current?.scrollTo({top:trail.current.scrollHeight,behavior:'instant'})},[steps,result]);
+
+ const refreshTabs=useCallback(async()=>{
+  const c=client.current;
+  if(!c)return;
+  // Listing must never be what launches Chrome, so a quiet failure here
+  // just leaves the strip empty rather than showing an error.
+  try{const state=await c.tabs();setTabs(state.tabs);setPrivate(state.private)}catch{/* not up yet */}
+ },[]);
+
+ useEffect(()=>{
+  if(!connected)return;
+  void refreshTabs();
+  // While a browse runs the agent opens and closes tabs of its own, so the
+  // strip is polled rather than only read once.
+  const id=setInterval(()=>void refreshTabs(),busy?2500:8000);
+  return()=>clearInterval(id);
+ },[connected,busy,refreshTabs]);
 
  useEffect(()=>{
   if(!isDesktop)return;
@@ -104,6 +125,43 @@ export default function BrowserPanel(){
   run.current?.abort();run.current=null;setBusy(false);
  }
 
+ async function openTab(){
+  const c=client.current;
+  const raw=newTab.trim();
+  if(!c)return;
+  // A bare host is what people type; without a scheme Chrome treats it as a
+  // search term rather than an address.
+  const url=raw?(/^[a-z]+:\/\//i.test(raw)?raw:`https://${raw}`):'about:blank';
+  setNewTab('');
+  try{const state=await c.openTab(url);setTabs(state.tabs)}
+  catch(e){setError(e instanceof Error?e.message:String(e))}
+ }
+
+ async function closeTab(id:string){
+  const c=client.current;
+  if(!c)return;
+  try{const state=await c.closeTab(id);setTabs(state.tabs)}
+  catch(e){setError(e instanceof Error?e.message:String(e))}
+ }
+
+ async function togglePrivate(){
+  const c=client.current;
+  if(!c)return;
+  const want=!isPrivate;
+  try{
+   const state=await c.setPrivate(want);
+   setPrivate(state.private);
+   // The swap is a different Chrome, so whatever was open belonged to the old
+   // one. Clearing the strip now beats showing tabs that no longer exist.
+   setTabs([]);
+  }catch(e){setError(e instanceof Error?e.message:String(e))}
+ }
+
+ const shown=tabs.filter(t=>{
+  const q=tabQuery.trim().toLowerCase();
+  return !q||t.title.toLowerCase().includes(q)||t.url.toLowerCase().includes(q);
+ });
+
  return <section className="cli-page agent-page browse-page screen-content" aria-label="Browsing agent">
   <div className="cli-heading">
    <span className="eyebrow">BROWSING AGENT</span>
@@ -129,7 +187,36 @@ export default function BrowserPanel(){
      {busy&&<span className="terminal-mode">BROWSING</span>}
      {status?.running&&status.port&&<span className="terminal-endpoint">127.0.0.1:{status.port}</span>}</div>
     <div className="terminal-path"><Link2/><span>{model||'No session'}</span>
-     {connected&&<span className="browse-profile">its own Chrome profile · signed out</span>}</div>
+     {connected&&<span className="browse-profile">{isPrivate?'throwaway profile · nothing kept':'its own Chrome profile · signed out'}</span>}</div>
+
+    {connected&&<div className="browse-tabs">
+     <div className="browse-tabstrip" role="tablist" aria-label="Open tabs">
+      {shown.map(tab=><span className="browse-tab" key={tab.id} title={tab.url}>
+       <span className="browse-tab-title">{tab.title||tab.url||'New tab'}</span>
+       <button onClick={()=>void closeTab(tab.id)} aria-label={`Close ${tab.title||tab.url}`}><X/></button>
+      </span>)}
+      {!shown.length&&<span className="browse-tab empty">{tabs.length?'No tab matches':'No tabs open'}</span>}
+     </div>
+     <div className="browse-tabtools">
+      <label className="browse-tabsearch">
+       <Search/>
+       <input value={tabQuery} onChange={e=>setTabQuery(e.target.value)}
+        placeholder="Search tabs" aria-label="Search open tabs" spellCheck={false}/>
+      </label>
+      <form className="browse-newtab" onSubmit={e=>{e.preventDefault();void openTab()}}>
+       <input value={newTab} onChange={e=>setNewTab(e.target.value)}
+        placeholder="Open a URL" aria-label="Open a new tab" spellCheck={false}/>
+       <button type="submit" aria-label="Open tab"><Plus/></button>
+      </form>
+      <button className={'browse-private '+(isPrivate?'on':'')} onClick={()=>void togglePrivate()}
+       title={isPrivate?'Private: nothing is kept. Click to use the saved profile.':'Switch to a throwaway profile — applies to the next browser'}>
+       <EyeOff/>{isPrivate?'Private':'Private off'}
+      </button>
+      <span className="browse-ext" title="Unpacked extensions in ~/.aira/browser/extensions are loaded at start">
+       <Puzzle/>Extensions
+      </span>
+     </div>
+    </div>}
 
     <div className="terminal-log" ref={trail} role="log" aria-live="polite">
      <div className="terminal-welcome"><span>Aira Browser</span>

@@ -43,11 +43,54 @@ export type BrowseEvent =
   | { type: 'error'; message: string }
   | { type: 'done' };
 
+/** One open tab in the agent's browser. */
+export interface Tab {
+  id: string;
+  url: string;
+  title: string;
+}
+
+export interface TabState {
+  tabs: Tab[];
+  /** True when the browser is on a throwaway profile. */
+  private: boolean;
+  running: boolean;
+  error?: string;
+}
+
 export class BrowserClient {
   constructor(
     private readonly port: number,
     private readonly token: string,
   ) {}
+
+  private api<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+    return invoke<T>('browser_api', { port: this.port, token: this.token, method, path, body });
+  }
+
+  /** Open tabs. Never starts the browser just because someone looked. */
+  tabs(): Promise<TabState> {
+    return this.api<TabState>('GET', '/tabs');
+  }
+
+  openTab(url: string): Promise<TabState> {
+    return this.api<TabState>('POST', '/tabs/open', { url });
+  }
+
+  closeTab(id: string): Promise<TabState> {
+    return this.api<TabState>('POST', '/tabs/close', { id });
+  }
+
+  /**
+   * Switches between the saved profile and a throwaway one.
+   *
+   * Applies to the next browser rather than the current one: the swap is a
+   * different Chrome, and doing that inside the request took long enough that
+   * the caller gave up before it answered.
+   */
+  setPrivate(isPrivate: boolean): Promise<{ private: boolean }> {
+    return this.api<{ private: boolean }>('POST', '/mode', { private: isPrivate });
+  }
 
   /**
    * Runs a browsing task, reporting each step as it happens.

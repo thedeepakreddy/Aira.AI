@@ -42,6 +42,7 @@ pub fn run() {
             browser::browser_stop,
             browser::browser_log,
             browser::browser_run,
+            browser::browser_api,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")

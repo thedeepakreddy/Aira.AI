@@ -225,6 +225,47 @@ pub fn browser_log(state: State<'_, BrowserState>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// One call into the browsing service, for everything that is not a stream.
+///
+/// Tabs, mode, and anything added later go through here rather than each
+/// getting a command of its own. The webview cannot call the service directly —
+/// it sends no CORS headers, like every other loopback service Aira supervises
+/// — so the shell forwards, and the shape of the call stays the service's
+/// business rather than being re-declared on both sides.
+#[tauri::command]
+pub async fn browser_api(
+    port: u16,
+    token: String,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let client = reqwest::Client::new();
+    let request = match method.as_str() {
+        "POST" => client.post(&url).json(&body.unwrap_or(serde_json::json!({}))),
+        _ => client.get(&url),
+    };
+    let response = request
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the browsing agent: {e}"))?;
+    let status = response.status();
+    let parsed: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("the browsing agent sent something unreadable: {e}"))?;
+    if !status.is_success() {
+        let message = parsed
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("the browsing agent refused that");
+        return Err(message.to_string());
+    }
+    Ok(parsed)
+}
+
 /// Runs a browsing task, streaming progress back as Tauri events.
 ///
 /// Same reason as the task agent: the webview cannot read this stream itself,
