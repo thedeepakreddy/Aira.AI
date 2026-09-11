@@ -75,6 +75,19 @@ function parseCompatibleModels(raw: string | undefined, provider: ProviderId): M
     .map((entry) => {
       const [id, tier, ctx, input, output] = entry.split('|');
       if (!id) throw new Error(`Model catalogue entry missing an id: "${entry}"`);
+      // An entry written with the old colon delimiter parses as an id with the
+      // tier stuck on the end — "gpt-5-nano:fast" — which the provider then
+      // rejects as an unknown model. The catalogue looks right, every request
+      // fails, and nothing says why, so it is rejected here instead.
+      const TIERS = ['frontier', 'balanced', 'fast'];
+      const misdelimited = TIERS.some((t) => id.endsWith(`:${t}`));
+      if (misdelimited || (tier !== undefined && !TIERS.includes(tier))) {
+        throw new Error(
+          `Model catalogue entry "${entry}" is not pipe-separated. ` +
+            'Expected id|tier|contextWindow|inPerMTok|outPerMTok, where tier is ' +
+            'frontier, balanced or fast — model ids contain colons of their own.',
+        );
+      }
       const spec: ModelSpec = {
         id,
         label: prettifyModelId(id),
