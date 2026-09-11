@@ -40,6 +40,19 @@ export interface StartOptions {
   model: string;
 }
 
+/**
+ * Native folder picker, so the agent can be pointed at a project.
+ *
+ * Imported lazily for the same reason as the supervisor bridge: the web bundle
+ * must not pull in the desktop plugin. Returns null when the user cancels.
+ */
+export async function pickDirectory(current?: string): Promise<string | null> {
+  if (!isDesktop) return null;
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const chosen = await open({ directory: true, multiple: false, defaultPath: current || undefined });
+  return typeof chosen === 'string' ? chosen : null;
+}
+
 export const supervisor = {
   status: () => invoke<OpenCodeStatus>('opencode_status'),
   start: (options: StartOptions) => invoke<OpenCodeStatus>('opencode_start', { ...options }),
@@ -160,11 +173,17 @@ export class OpenCodeClient {
     return this.request<{ healthy: boolean; version: string }>('/global/health');
   }
 
+  /**
+   * Opens a session, optionally in a specific folder.
+   *
+   * The directory goes in the query string. Sending it in the body — the
+   * obvious guess, and what the body schema seems to invite — is accepted and
+   * silently ignored: the session comes back rooted at the server process's own
+   * working directory instead.
+   */
   createSession(directory?: string) {
-    return this.request<Session>('/session', {
-      method: 'POST',
-      body: JSON.stringify(directory ? { directory } : {}),
-    });
+    const path = directory ? `/session?directory=${encodeURIComponent(directory)}` : '/session';
+    return this.request<Session>(path, { method: 'POST', body: '{}' });
   }
 
   /**

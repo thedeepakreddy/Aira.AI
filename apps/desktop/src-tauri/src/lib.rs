@@ -14,6 +14,10 @@ use tauri::{Manager, RunEvent};
 /// makes sense on the desktop, where the user's files are.
 pub fn run() {
     tauri::Builder::default()
+        // Only for the folder picker: the agent needs to be pointed at a
+        // project, and a native picker is the one way to choose a directory
+        // the sandbox will then actually let it read.
+        .plugin(tauri_plugin_dialog::init())
         .manage(OpenCodeState::default())
         .invoke_handler(tauri::generate_handler![
             opencode::opencode_status,

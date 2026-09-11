@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {Terminal,Power,Send,Folder,ChevronRight,ShieldAlert,FileEdit,Square,Check,Loader2,FileText,Search,SquareTerminal,MessageCircleQuestion} from 'lucide-react';
-import {isDesktop,supervisor,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest,type QuestionRequest,type ToolActivity} from '@/lib/opencode';
-import {getAccessToken} from '@/lib/supabase';
+import {Terminal,Power,Send,Folder,FolderOpen,ChevronRight,ShieldAlert,FileEdit,Square,Check,Loader2,FileText,Search,SquareTerminal,MessageCircleQuestion} from 'lucide-react';
+import {isDesktop,supervisor,pickDirectory,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest,type QuestionRequest,type ToolActivity} from '@/lib/opencode';
+import {getAccessToken,onAuthChange} from '@/lib/supabase';
 import {listCatalogue} from '@/lib/gateway';
 
 /**
@@ -41,10 +41,18 @@ export default function AgentPanel(){
  const session=useRef<string|null>(null);
  const stream=useRef<AbortController|null>(null);
  const log=useRef<HTMLDivElement>(null);
+ // Read inside callbacks that outlive a render, where `workdir` would be stale.
+ const workdirRef=useRef('');
+ // A token that arrived mid-task. Swapping credentials means replacing the
+ // process, which would kill the run, so it waits for the agent to go idle.
+ const pendingToken=useRef<string|null>(null);
 
  const connected=Boolean(status?.running&&session.current);
 
  useEffect(()=>{log.current?.scrollTo({top:log.current.scrollHeight,behavior:'instant'})},[entries]);
+ useEffect(()=>{workdirRef.current=workdir},[workdir]);
+ const busyRef=useRef(false);
+ useEffect(()=>{busyRef.current=busy},[busy]);
 
  useEffect(()=>{
   if(!isDesktop)return;
@@ -53,6 +61,9 @@ export default function AgentPanel(){
  },[]);
 
  const note=useCallback((text:string)=>setEntries(e=>[...e,{kind:'notice',text}]),[]);
+ // `consume` is defined above `relaunch` and needs to call it when a queued
+ // token is waiting; a ref breaks the cycle without reordering the component.
+ const relaunchRef=useRef<((token:string)=>Promise<void>)|null>(null);
 
  /** Appends a streamed delta to the open agent block, or starts a new one. */
  const appendAgent=useCallback((delta:string)=>{
@@ -94,7 +105,11 @@ export default function AgentPanel(){
        ?(event.answers?{...x,answers:event.answers}:{...x,skipped:true}):x));
       break;
      case 'file-edited':if(event.path)note(`edited ${event.path}`);break;
-     case 'idle':setBusy(false);break;
+     case 'idle':{
+      setBusy(false);
+      const queued=pendingToken.current;
+      if(queued){pendingToken.current=null;void relaunchRef.current?.(queued)}
+      break;}
      default:break;
     }
    }
@@ -102,6 +117,44 @@ export default function AgentPanel(){
    if(!signal.aborted)setError('Lost the connection to the agent.');
   }
  },[appendAgent,note]);
+
+ /**
+  * Spawns the agent server and connects to it.
+  *
+  * `resume` reattaches to an existing session instead of opening a new one.
+  * OpenCode keeps sessions in its own database, so a session outlives the
+  * process that created it — which is what makes a token refresh invisible.
+  */
+ const launch=useCallback(async(token:string,dir?:string,resume?:string)=>{
+  // Ask the gateway what the `code` surface routes to rather than picking a
+  // model here: choosing locally would quietly bypass the routing rules and
+  // could land on a provider the gateway would not have used.
+  const {models,routing}=await listCatalogue();
+  const model=routing.code??models[0]?.id;
+  if(!model)throw new Error('No models available from the gateway.');
+  const gatewayUrl=(import.meta.env?.VITE_GATEWAY_URL as string|undefined)??'http://localhost:8787';
+  const next=await supervisor.start({gatewayUrl,token,model,directory:dir});
+  setStatus(next);
+  if(!next.running||next.port==null||!next.password)throw new Error('OpenCode did not start.');
+  const c=new OpenCodeClient(next.port,next.password);
+  // The process is spawned but the port takes a moment to accept connections.
+  let ready=false;
+  for(let attempt=0;attempt<25;attempt++){
+   try{await c.health();ready=true;break}catch{await new Promise(r=>setTimeout(r,300))}
+  }
+  // Without this the next call fails with the webview's own opaque wording
+  // ("Load failed"), which says nothing about what went wrong or what to do.
+  if(!ready)throw new Error(`Started OpenCode on port ${next.port}, but it never answered. Try again, or check that nothing else is holding that port.`);
+  const created=resume?null:await c.createSession(dir);
+  const id=resume??created!.id;
+  client.current=c;session.current=id;
+  stream.current?.abort();
+  const controller=new AbortController();stream.current=controller;
+  void consume(c,controller.signal);
+  // A new session reports where it actually landed, which is what the path bar
+  // shows when the user has not chosen a folder.
+  return {sessionID:id,directory:created?.directory};
+ },[consume]);
 
  async function start(){
   setError('');setStarting(true);
@@ -111,40 +164,86 @@ export default function AgentPanel(){
    // surface, which is the frontier tier.
    const token=await getAccessToken();
    if(!token)throw new Error('Sign in before starting the agent.');
-   // Ask the gateway what the `code` surface routes to rather than picking a
-   // model here: choosing locally would quietly bypass the routing rules and
-   // could land on a provider the gateway would not have used.
-   const {models,routing}=await listCatalogue();
-   const model=routing.code??models[0]?.id;
-   if(!model)throw new Error('No models available from the gateway.');
-   const gatewayUrl=(import.meta.env?.VITE_GATEWAY_URL as string|undefined)??'http://localhost:8787';
-   const next=await supervisor.start({gatewayUrl,token,model});
-   setStatus(next);
-   if(!next.running||next.port==null||!next.password)throw new Error('OpenCode did not start.');
-   const c=new OpenCodeClient(next.port,next.password);
-   // The process is spawned but the port takes a moment to accept connections.
-   let ready=false;
-   for(let attempt=0;attempt<25;attempt++){
-    try{await c.health();ready=true;break}catch{await new Promise(r=>setTimeout(r,300))}
-   }
-   // Without this the next call fails with the webview's own opaque wording
-   // ("Load failed"), which says nothing about what went wrong or what to do.
-   if(!ready)throw new Error(`Started OpenCode on port ${next.port}, but it never answered. Try again, or check that nothing else is holding that port.`);
-   const s=await c.createSession();
-   client.current=c;session.current=s.id;
-   stream.current?.abort();
-   const controller=new AbortController();stream.current=controller;
-   void consume(c,controller.signal);
-   setWorkdir(s.directory);
-   setEntries([{kind:'notice',text:`Agent ready in ${s.directory}`}]);
+   const dir=workdir||undefined;
+   const {directory}=await launch(token,dir);
+   const here=dir??directory??'';
+   setWorkdir(here);
+   setEntries([{kind:'notice',text:`Agent ready in ${here}`}]);
   }catch(e){
    setError(e instanceof Error?e.message:'Could not start the agent.');
   }finally{setStarting(false)}
  }
 
+ /**
+  * Swaps in a freshly refreshed token without losing the conversation.
+  *
+  * Supabase access tokens last an hour, and OpenCode reads its credentials once
+  * at startup — its config comes in on an environment variable, and neither
+  * PATCH /config nor PUT /auth/{provider} overrides it on a running process
+  * (both return success and change nothing). So the process is replaced and the
+  * session resumed, which the agent's own database makes seamless.
+  */
+ const relaunch=useCallback(async(token:string)=>{
+  const resume=session.current;
+  if(!resume)return;
+  try{
+   await supervisor.stop().catch(()=>{});
+   await launch(token,workdirRef.current||undefined,resume);
+  }catch(e){
+   setError(e instanceof Error?e.message:'Lost the agent while renewing its credentials.');
+  }
+ },[launch]);
+
+ useEffect(()=>{relaunchRef.current=relaunch},[relaunch]);
+
+ /**
+  * Supabase refreshes the access token roughly every fifty minutes. Without
+  * this the agent keeps presenting the token it was handed at launch, and every
+  * model call starts coming back 401 — with nothing in the panel to say why.
+  */
+ useEffect(()=>{
+  if(!isDesktop)return;
+  return onAuthChange(next=>{
+   const token=next?.access_token;
+   if(!token||!session.current)return;
+   if(busyRef.current){pendingToken.current=token;return}
+   void relaunch(token);
+  });
+ },[relaunch]);
+
+ /**
+  * Points the agent at a different project.
+  *
+  * A workspace change is a new session, not a resumed one: the old session's
+  * history is about other files, and carrying it over would have the agent
+  * reasoning about a tree that is no longer there.
+  *
+  * The process is restarted rather than just opening a session elsewhere.
+  * `?directory=` does move the session, but the server's own working directory
+  * is what the agent's tools inherit, and having the two disagree would mean a
+  * picker that looks like it worked while the agent edited the old tree.
+  */
+ async function chooseFolder(){
+  const chosen=await pickDirectory(workdir).catch(()=>null);
+  if(!chosen||chosen===workdir)return;
+  if(!session.current){setWorkdir(chosen);return}
+  setError('');setStarting(true);
+  try{
+   const token=await getAccessToken();
+   if(!token)throw new Error('Sign in before starting the agent.');
+   await supervisor.stop().catch(()=>{});
+   session.current=null;pendingToken.current=null;setBusy(false);
+   setWorkdir(chosen);
+   await launch(token,chosen);
+   setEntries([{kind:'notice',text:`Agent ready in ${chosen}`}]);
+  }catch(e){
+   setError(e instanceof Error?e.message:'Could not move the agent to that folder.');
+  }finally{setStarting(false)}
+ }
+
  async function stop(){
   stream.current?.abort();stream.current=null;
-  client.current=null;session.current=null;
+  client.current=null;session.current=null;pendingToken.current=null;
   setWorkdir('');setBusy(false);
   try{await supervisor.stop()}catch{}
   setStatus(await supervisor.status().catch(()=>null));
@@ -221,7 +320,10 @@ export default function AgentPanel(){
    <div className="terminal-window">
     <div className="terminal-title"><Terminal/><span>aira — agent</span>{busy&&<span className="terminal-mode">WORKING</span>}
      {status?.running&&status.port&&<span className="terminal-endpoint">127.0.0.1:{status.port}</span>}</div>
-    <div className="terminal-path"><Folder/><span>{workdir||(status?.running?'Local workspace':'No session')}</span></div>
+    <div className="terminal-path"><Folder/><span>{workdir||(status?.running?'Local workspace':'No session')}</span>
+     {isDesktop&&<button type="button" className="terminal-path-pick" onClick={()=>void chooseFolder()}
+      disabled={starting||busy} title={busy?'Wait for the current task to finish':'Choose the folder the agent works in'}>
+      <FolderOpen/>{workdir?'Change folder':'Choose folder'}</button>}</div>
 
     <div className="terminal-log" ref={log} role="log" aria-live="polite">
      <div className="terminal-welcome"><span>Aira Agent</span>

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core APIs, plus the folder picker the agent panel uses to choose a workspace.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
