@@ -33,6 +33,7 @@ export default function AgentPanel(){
  const [task,setTask]=useState('');
  const [busy,setBusy]=useState(false);
  const [error,setError]=useState('');
+ const [workdir,setWorkdir]=useState('');
  const [starting,setStarting]=useState(false);
  const client=useRef<OpenCodeClient|null>(null);
  const session=useRef<string|null>(null);
@@ -108,6 +109,7 @@ export default function AgentPanel(){
    stream.current?.abort();
    const controller=new AbortController();stream.current=controller;
    void consume(c,controller.signal);
+   setWorkdir(s.directory);
    setEntries([{kind:'notice',text:`Agent ready in ${s.directory}`}]);
   }catch(e){
    setError(e instanceof Error?e.message:'Could not start the agent.');
@@ -117,7 +119,7 @@ export default function AgentPanel(){
  async function stop(){
   stream.current?.abort();stream.current=null;
   client.current=null;session.current=null;
-  setBusy(false);
+  setWorkdir('');setBusy(false);
   try{await supervisor.stop()}catch{}
   setStatus(await supervisor.status().catch(()=>null));
   note('Agent stopped.');
@@ -171,7 +173,7 @@ export default function AgentPanel(){
 
    <div className="terminal-window">
     <div className="terminal-title"><Terminal/><span>aira — agent</span>{busy&&<span className="terminal-mode">WORKING</span>}</div>
-    <div className="terminal-path"><Folder/><span>{status?.running?'Local workspace':'No session'}</span></div>
+    <div className="terminal-path"><Folder/><span>{workdir||(status?.running?'Local workspace':'No session')}</span></div>
 
     <div className="terminal-log" ref={log} role="log" aria-live="polite">
      <div className="terminal-welcome"><span>Aira Agent</span>

@@ -193,7 +193,14 @@ pub fn opencode_start(
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    if let Some(dir) = directory.as_ref().filter(|d| !d.is_empty()) {
+    // A GUI app launched from Finder inherits "/" as its working directory, and
+    // the agent would then treat the filesystem root as the project. Fall back
+    // to the user's home instead, which is at least somewhere they own.
+    let workdir = directory
+        .filter(|d| !d.is_empty())
+        .or_else(|| std::env::var("HOME").ok())
+        .filter(|d| d != "/");
+    if let Some(dir) = workdir {
         command.current_dir(dir);
     }
 
