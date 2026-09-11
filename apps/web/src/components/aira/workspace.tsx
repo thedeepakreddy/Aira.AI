@@ -12,12 +12,10 @@ import {streamChat,listModels,type ModelSpec} from '@/lib/gateway';
 import {getSession,onAuthChange,signOut as authSignOut} from '@/lib/supabase';
 import {playOrb} from '@/lib/orb';
 import Markdown from './markdown';
+import VoiceScreen from './voice-screen';
 export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
 type View = 'auto'|'mobile'|'desktop';
 type Message = {role:'user'|'assistant'; text:string};
-const PROMPT = 'Deploy an autonomous AI agent to monitor liquidity pools';
-const TRANSCRIPT = PROMPT + '. Make it a tactical trading bot.';
-const REFERENCE_REPLY = 'Deployed AlphaRaptor.sh to your agent network. The automation loop is active. Need to configure risk mitigation parameters?';
 const SUGGESTIONS = ['Deploy autonomous agent','Optimize gas for ZK-proofs','Audit my protocol'];
 
 export default function Workspace({view='auto',initialScreen='home'}:{view?:View;initialScreen?:Screen}) {
@@ -36,8 +34,8 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   const path=basePath+(next==='cli'?'/cli':next==='login'?'/login':'')||'/';
   if(typeof window!=='undefined'&&window.location.pathname!==path)window.history.pushState({},'',path);
  }
- function newChat(){clearTimers();setCurrentId(null);setMessages([]);setDraft('');setAttachment('');setBusy(false);setDemoSequence(false);setHistoryOpen(false);showScreen('home')}
- function openConversation(conversation:Conversation){clearTimers();setCurrentId(conversation.id);setMessages(conversation.messages);setDraft('');setAttachment('');setBusy(false);setDemoSequence(false);setHistoryOpen(false);showScreen('chat')}
+ function newChat(){clearTimers();setCurrentId(null);setMessages([]);setDraft('');setAttachment('');setBusy(false);setHistoryOpen(false);showScreen('home')}
+ function openConversation(conversation:Conversation){clearTimers();setCurrentId(conversation.id);setMessages(conversation.messages);setDraft('');setAttachment('');setBusy(false);setHistoryOpen(false);showScreen('chat')}
  function openCLI(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('cli')}
  function openLogin(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
  // onAuthChange is the single source of truth for signedIn; these only navigate.
@@ -45,18 +43,14 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  function signOut(){void authSignOut();clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
 
  const [draft,setDraft]=useState('');
- const [paused,setPaused]=useState(false);
- const [wordCount,setWordCount]=useState(0);
  const [messages,setMessages]=useState<Message[]>([]);
  const [busy,setBusy]=useState(false);
  const [attachment,setAttachment]=useState('');
  const [reduceMotion,setReduceMotion]=useState(false);
- const [demoSequence,setDemoSequence]=useState(false);
  const fileInput=useRef<HTMLInputElement>(null);
  const textarea=useRef<HTMLTextAreaElement>(null);
  const scrollRegion=useRef<HTMLDivElement>(null);
  const closeButton=useRef<HTMLButtonElement>(null);
- const orbVideo=useRef<HTMLVideoElement>(null);
  const heroVideo=useRef<HTMLVideoElement>(null);
  const timers=useRef<ReturnType<typeof setTimeout>[]>([]);
  const screenRef=useRef(screen);
@@ -64,12 +58,11 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  const messagesRef=useRef<Message[]>(messages);
  messagesRef.current=messages;
  const request=useRef<AbortController|null>(null);
- const words=TRANSCRIPT.split(' ');
 
  function clearTimers(){timers.current.forEach(clearTimeout);timers.current=[];request.current?.abort();request.current=null}
  function later(fn:()=>void,ms:number){timers.current.push(setTimeout(fn,ms))}
- function goHome(){clearTimers();showScreen('home');setBusy(false);setPaused(false);setDemoSequence(false)}
- function startVoice(){clearTimers();showScreen('voice');setWordCount(0);setPaused(false);setBusy(false);setDemoSequence(true)}
+ function goHome(){clearTimers();showScreen('home');setBusy(false)}
+ function startVoice(){clearTimers();showScreen('voice');setBusy(false)}
  /** Appends streamed text to the open assistant bubble, or opens one. */
  function appendAssistant(text:string,started:boolean){
   if(!started){setMessages(previous=>[...previous,{role:'assistant',text}]);return}
@@ -101,22 +94,13 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
    if(!controller.signal.aborted)setBusy(false);
   }
  }
- function sendMessage(text:string, reference=false){
+ function sendMessage(text:string){
   const clean=text.trim(); if(!clean)return;
   const continuing=screenRef.current==='chat';
   clearTimers();
-  const conversationId=(!continuing||reference||!currentId)?crypto.randomUUID():currentId;
+  const conversationId=(!continuing||!currentId)?crypto.randomUUID():currentId;
   if(conversationId!==currentId)setCurrentId(conversationId);
-  setDemoSequence(reference);showScreen('chat');setDraft('');setAttachment('');setBusy(true);
-  if(reference){
-   // The voice screen still plays the scripted reference sequence; it is
-   // replaced when the voice surface is wired to the gateway.
-   setMessages([{role:'user',text:PROMPT}]);
-   later(()=>{setMessages(previous=>[...previous,{role:'assistant',text:REFERENCE_REPLY}]);setBusy(false)},900);
-   later(()=>{setMessages(previous=>[...previous,{role:'user',text:'Show me the active core parameters.'}]);setBusy(true)},2300);
-   later(()=>{setMessages(previous=>[...previous,{role:'assistant',text:'Core agent parameters initialized.'}]);setBusy(false)},3100);
-   return;
-  }
+  showScreen('chat');setDraft('');setAttachment('');setBusy(true);
   const history:Message[]=[...(continuing?messagesRef.current:[]),{role:'user' as const,text:clean}];
   setMessages(history);
   void runStream(history,conversationId);
@@ -160,21 +144,6 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   return()=>{query.removeEventListener('change',update);clearTimers()}
  },[]);
  useEffect(()=>{
-  if(screen!=='voice'||paused)return;
-  const tick=setInterval(()=>setWordCount(n=>Math.min(n+1,words.length)),145);
-  return()=>clearInterval(tick);
- },[screen,paused,words.length]);
- useEffect(()=>{
-  if(screen!=='voice'||paused||wordCount<words.length)return;
-  const timer=setTimeout(()=>sendMessage(PROMPT,true),1600);
-  return()=>clearTimeout(timer);
- },[screen,paused,wordCount,words.length]);
- useEffect(()=>playOrb(heroVideo.current,reduceMotion),[screen,reduceMotion]);
- useEffect(()=>{
-  if(!orbVideo.current)return;
-  if(paused||reduceMotion)orbVideo.current.pause();else void orbVideo.current.play().catch(()=>{});
- },[screen,paused,reduceMotion]);
- useEffect(()=>{
   if(screen==='voice'||screen==='chat')closeButton.current?.focus({preventScroll:true});
  },[screen]);
  useEffect(()=>{
@@ -185,7 +154,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  useEffect(()=>{scrollRegion.current?.scrollTo({top:scrollRegion.current.scrollHeight,behavior:reduceMotion?'instant':'smooth'})},[messages,busy,reduceMotion]);
 
  return <div className={'viewport-frame view-'+view}><main className="stage"><div className="device"><div className={'surface '+screen}>
- <p className="sr-only">Interactive front-end demonstration. Voice transcription and agent responses are simulated from the reference video. No microphone audio is recorded.</p>
+ <p className="sr-only">Aira workspace. Chat and voice are answered by a live model; the voice screen listens to your microphone while it is open.</p>
  <div className="status-bar" aria-hidden="true"><span>9:41</span><div className="island"/><div className="status-icons"><Signal/><Wifi/><BatteryFull/></div></div>
  <input ref={fileInput} className="sr-only" type="file" tabIndex={-1} onChange={event=>{setAttachment(event.target.files?.[0]?.name??'');event.target.value=''}}/>
  <header className={'home-header app-header '+(screen!=='home'?'in-session':'')}>
@@ -209,14 +178,9 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  <div className="composer-actions"><button type="button" className="glass icon-button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><Select value={model} onValueChange={value=>setModel(String(value))}><SelectTrigger className="model-picker" aria-label="Model"><SelectValue>{(value:unknown)=>models.find(m=>m.id===value)?.label??(models.length?'Auto':'Model')}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">Auto</SelectItem>{models.map(m=><SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>)}</SelectContent></Select><button className="mic-button" type="submit" aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
  <aside className="desktop-intro"><button className="desktop-orb-button" onClick={startVoice} aria-label="Start a voice conversation with Aira">{reduceMotion?<img src="/assets/orb.jpg" alt=""/>:<video ref={heroVideo} src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay loop muted playsInline aria-hidden="true"/>}</button><span className="desktop-orb-caption">Meet Aira</span><h2>A thought away.</h2><p>Speak your next idea into life.</p><button className="desktop-voice-link" onClick={startVoice}><Mic/>Start a conversation<span aria-hidden="true">↗</span></button></aside>
  </div>:<>
- <button ref={closeButton} className="close-chat glass" onClick={goHome}><X/>Close chat</button>
- {screen==='voice'?<section className="voice-screen screen-content" key="voice" aria-label="Voice demo">
- <div className={'orb-wrap '+(paused?'is-paused':'')}><video ref={orbVideo} className="orb-video" src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay={!reduceMotion} loop muted playsInline preload="auto" aria-hidden="true"/><img className="orb-still" src="/assets/orb.jpg" alt="Glowing orb"/></div>
- <p className="listening-status" aria-live="polite">{paused?'Aira is paused...':'Aira is listening...'}</p>
- <p className="transcript" aria-label={TRANSCRIPT}>{words.map((word,index)=><span key={index} className={index<wordCount?'spoken':'unspoken'} aria-hidden="true">{word} </span>)}</p>
- <div className="voice-actions"><button className="voice-secondary" aria-label={paused?'Resume voice demo':'Pause voice demo'} onClick={()=>setPaused(!paused)}>{paused?<PlayCircle/>:<PauseCircle/>}</button><div className="mic-orbit"><button className="mic-button voice-mic" onClick={()=>setPaused(!paused)} aria-label={paused?'Resume microphone demo':'Pause microphone demo'} aria-pressed={!paused}>{paused?<MicOff/>:<Mic/>}</button></div><button className="voice-secondary" onClick={()=>sendMessage(PROMPT,true)} aria-label="Send transcript"><Send/></button></div>
- </section>:<section className="chat-screen screen-content" key="chat" aria-label="Chat demo">
- <div className="messages" ref={scrollRegion} role="log" aria-live="polite" aria-relevant="additions text">{messages.map((message,index)=><div key={index} className={'message-row '+message.role}>{message.role==='assistant'&&<img src="/assets/orb.jpg" className="avatar" alt="Aira"/>}{message.role==="assistant"?<div className="message-bubble"><Markdown>{message.text}</Markdown></div>:<p className="message-bubble">{message.text}</p>}</div>)}{(busy||demoSequence)&&<p className="working-status">{busy?'Aira is thinking...':'Aira is working...'}</p>}</div>
+ <button ref={closeButton} className="close-chat glass" onClick={goHome}><X/>{screen==='voice'?'Close conversation':'Close chat'}</button>
+ {screen==='voice'?<VoiceScreen reduceMotion={reduceMotion}/>:<section className="chat-screen screen-content" key="chat" aria-label="Chat demo">
+ <div className="messages" ref={scrollRegion} role="log" aria-live="polite" aria-relevant="additions text">{messages.map((message,index)=><div key={index} className={'message-row '+message.role}>{message.role==='assistant'&&<img src="/assets/orb.jpg" className="avatar" alt="Aira"/>}{message.role==="assistant"?<div className="message-bubble"><Markdown>{message.text}</Markdown></div>:<p className="message-bubble">{message.text}</p>}</div>)}{busy&&<p className="working-status">Aira is thinking…</p>}</div>
  <form className="chat-composer" onSubmit={e=>{e.preventDefault();submit()}}>{attachment&&<div className="attachment"><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}<div className="chat-input-row"><button className="chat-icon" type="button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><input aria-label="Ask AI a question" placeholder="Ask AI a question" value={draft} onChange={e=>setDraft(e.target.value)}/><button className="chat-icon" type="submit" disabled={busy} aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
  </section>}
  </>}

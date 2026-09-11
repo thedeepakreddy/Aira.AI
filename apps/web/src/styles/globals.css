@@ -415,3 +415,18 @@
 .md table{border-collapse:collapse;margin:.7em 0;font-size:.92em;display:block;overflow-x:auto;max-width:100%}
 .md th,.md td{border:1px solid #ffffff1f;padding:6px 10px;text-align:left}
 .md th{background:#ffffff0a;font-weight:500;color:#ffe6d0}
+
+/* ── Voice conversation ───────────────────────────────────────────────────────
+   The reference screen animated a fixed transcript word by word, so `.spoken`
+   and `.unspoken` split a known sentence into revealed and blurred halves.
+   Live speech has no known sentence, so the transcript is plain text that
+   changes as the engine hears it. */
+.transcript.live{color:#fff8f0;filter:none;overflow-wrap:anywhere}
+/* Aira's own words read differently from the user's, so the speaker is never
+   ambiguous without a label. */
+.transcript.live.from-aira{color:#ffd6b0;font-weight:400}
+.listening-status.is-error{color:#ffb59f}
+
+/* The orb leans into whoever is talking. */
+.orb-wrap.is-speaking{box-shadow:0 0 70px #ff6a0040,0 0 140px #ff6a001f}
+.voice-phase svg{width:18px;height:18px;color:#e8af84}

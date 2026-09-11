@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macOS refuses microphone access outright unless the app declares why it
+       wants it, and the string here is what the user is shown in the prompt. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Aira uses your microphone so you can talk to it during a voice conversation.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Aira transcribes your speech on this device so it can respond to what you say.</string>
+</dict>
+</plist>
