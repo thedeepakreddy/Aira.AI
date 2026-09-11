@@ -7,6 +7,8 @@ import {
   type ChatMessage,
   type ChatProvider,
   type TokenUsage,
+  type ToolCall,
+  type ToolDefinition,
 } from '../providers/types.ts';
 import { routeModel } from '../routing/router.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
@@ -29,6 +31,46 @@ import { emit, type ModelRequestPayload } from '../usage/events.ts';
 interface OpenAIMessage {
   role: string;
   content: unknown;
+  tool_call_id?: unknown;
+  tool_calls?: unknown;
+}
+
+/**
+ * OpenAI wraps each tool in a `function` envelope. Anything without a usable
+ * name is dropped rather than forwarded half-formed.
+ */
+function parseTools(raw: unknown): ToolDefinition[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const tools: ToolDefinition[] = [];
+  for (const entry of raw) {
+    const fn = (entry as { function?: { name?: unknown; description?: unknown; parameters?: unknown } })
+      ?.function;
+    if (!fn || typeof fn.name !== 'string') continue;
+    tools.push({
+      name: fn.name,
+      ...(typeof fn.description === 'string' ? { description: fn.description } : {}),
+      parameters:
+        fn.parameters && typeof fn.parameters === 'object'
+          ? (fn.parameters as Record<string, unknown>)
+          : { type: 'object', properties: {} },
+    });
+  }
+  return tools.length ? tools : undefined;
+}
+
+function parseToolCalls(raw: unknown): ToolCall[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const calls: ToolCall[] = [];
+  for (const entry of raw) {
+    const c = entry as { id?: unknown; function?: { name?: unknown; arguments?: unknown } };
+    if (typeof c?.id !== 'string' || typeof c.function?.name !== 'string') continue;
+    calls.push({
+      id: c.id,
+      name: c.function.name,
+      arguments: typeof c.function.arguments === 'string' ? c.function.arguments : '{}',
+    });
+  }
+  return calls.length ? calls : undefined;
 }
 
 /** OpenAI allows content as a string or as an array of parts; both must work. */
@@ -65,6 +107,7 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
       stream?: unknown;
       max_tokens?: unknown;
       max_completion_tokens?: unknown;
+      tools?: unknown;
     };
     try {
       body = await c.req.json();
@@ -85,9 +128,20 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
     const messages: ChatMessage[] = [];
     for (const raw of body.messages as OpenAIMessage[]) {
       const text = flattenContent(raw?.content);
-      if (raw?.role === 'system' || raw?.role === 'developer') system.push(text);
-      else if (raw?.role === 'assistant') messages.push({ role: 'assistant', content: text });
-      else messages.push({ role: 'user', content: text });
+      if (raw?.role === 'system' || raw?.role === 'developer') {
+        system.push(text);
+      } else if (raw?.role === 'tool') {
+        messages.push({
+          role: 'tool',
+          content: text,
+          toolCallId: typeof raw.tool_call_id === 'string' ? raw.tool_call_id : undefined,
+        });
+      } else if (raw?.role === 'assistant') {
+        const toolCalls = parseToolCalls(raw.tool_calls);
+        messages.push({ role: 'assistant', content: text, ...(toolCalls ? { toolCalls } : {}) });
+      } else {
+        messages.push({ role: 'user', content: text });
+      }
     }
     if (messages.length === 0) {
       return c.json(
@@ -127,6 +181,9 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
       surface: 'code' as const,
       model: decision.model,
       maxTokens,
+      // Forwarding these is what separates an agent gateway from a chat proxy;
+      // dropping them leaves a model that can only describe actions.
+      tools: parseTools(body.tools),
     };
 
     async function record(usage: TokenUsage, stopReason: string | null, ok: boolean, failure: string | null) {
@@ -157,11 +214,13 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
     // ── non-streaming ────────────────────────────────────────────────────────
     if (body.stream !== true) {
       let text = '';
+      const calls: ToolCall[] = [];
       let usage = empty;
       let stopReason: string | null = null;
       try {
         for await (const event of provider.streamChat({ ...request, signal: undefined })) {
           if (event.type === 'text') text += event.text;
+          else if (event.type === 'tool_call') calls.push(event.call);
           else if (event.type === 'done') {
             usage = event.usage;
             stopReason = event.stopReason;
@@ -179,7 +238,16 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
         created,
         model: decision.model,
         choices: [
-          { index: 0, message: { role: 'assistant', content: text }, finish_reason: mapStop(stopReason) },
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              // OpenAI sends null content when the turn is purely tool calls.
+              content: text || (calls.length ? null : ''),
+              ...(calls.length ? { tool_calls: calls.map(toOpenAIToolCall) } : {}),
+            },
+            finish_reason: calls.length ? 'tool_calls' : mapStop(stopReason),
+          },
         ],
         usage: openAIUsage(usage),
       });
@@ -202,12 +270,21 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
       let stopReason: string | null = null;
       let ok = false;
       let failure: string | null = null;
+      let toolCalls = 0;
 
       try {
         await sse.writeSSE({ data: JSON.stringify(chunk({ role: 'assistant' }, null)) });
         for await (const event of provider.streamChat({ ...request, signal: abort.signal })) {
           if (event.type === 'text') {
             await sse.writeSSE({ data: JSON.stringify(chunk({ content: event.text }, null)) });
+          } else if (event.type === 'tool_call') {
+            // Emitted whole rather than as fragments; clients accept either.
+            await sse.writeSSE({
+              data: JSON.stringify(
+                chunk({ tool_calls: [{ index: toolCalls, ...toOpenAIToolCall(event.call) }] }, null),
+              ),
+            });
+            toolCalls += 1;
           } else if (event.type === 'done') {
             usage = event.usage;
             stopReason = event.stopReason;
@@ -217,7 +294,10 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
           }
         }
         await sse.writeSSE({
-          data: JSON.stringify({ ...chunk({}, mapStop(stopReason)), usage: openAIUsage(usage) }),
+          data: JSON.stringify({
+            ...chunk({}, toolCalls ? 'tool_calls' : mapStop(stopReason)),
+            usage: openAIUsage(usage),
+          }),
         });
       } catch (error) {
         const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false);
@@ -229,6 +309,14 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
         await record(usage, stopReason, ok, failure);
       }
     });
+  };
+}
+
+function toOpenAIToolCall(call: ToolCall) {
+  return {
+    id: call.id,
+    type: 'function' as const,
+    function: { name: call.name, arguments: call.arguments },
   };
 }
 

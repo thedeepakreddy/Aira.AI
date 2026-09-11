@@ -1,7 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { humanize } from './messages.ts';
 import { findModel } from './registry.ts';
-import { ProviderError, type ChatProvider, type ChatRequest, type StreamEvent } from './types.ts';
+import {
+  ProviderError,
+  type ChatMessage,
+  type ChatProvider,
+  type ChatRequest,
+  type StreamEvent,
+  type ToolDefinition,
+} from './types.ts';
 
 /**
  * Anthropic adapter.
@@ -30,7 +37,7 @@ export class AnthropicProvider implements ChatProvider {
   }
 
   async *streamChat(request: ChatRequest & { model: string }): AsyncIterable<StreamEvent> {
-    const { model, messages, system, maxTokens = 16000, signal } = request;
+    const { model, messages, system, maxTokens = 16000, tools, signal } = request;
 
     yield { type: 'start', model, provider: this.id };
 
@@ -41,7 +48,8 @@ export class AnthropicProvider implements ChatProvider {
       // fresh input tokens and dominate cost on long conversations.
       cache_control: { type: 'ephemeral' as const },
       ...(system ? { system } : {}),
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      ...(tools?.length ? { tools: toAnthropicTools(tools) } : {}),
+      messages: toAnthropicMessages(messages),
     };
 
     try {
@@ -52,12 +60,35 @@ export class AnthropicProvider implements ChatProvider {
           )
         : this.client.messages.stream(params, { signal });
 
+      // Tool calls stream as a start block naming the tool, then JSON
+      // fragments. They are accumulated per block index and emitted whole.
+      const pending = new Map<number, { id: string; name: string; json: string }>();
+
       for await (const event of stream) {
-        if (event.type !== 'content_block_delta') continue;
-        if (event.delta.type === 'text_delta') {
-          yield { type: 'text', text: event.delta.text };
-        } else if (event.delta.type === 'thinking_delta') {
-          yield { type: 'thinking', text: event.delta.thinking };
+        if (event.type === 'content_block_start') {
+          const block = event.content_block;
+          if (block.type === 'tool_use') {
+            pending.set(event.index, { id: block.id, name: block.name, json: '' });
+          }
+        } else if (event.type === 'content_block_delta') {
+          if (event.delta.type === 'text_delta') {
+            yield { type: 'text', text: event.delta.text };
+          } else if (event.delta.type === 'thinking_delta') {
+            yield { type: 'thinking', text: event.delta.thinking };
+          } else if (event.delta.type === 'input_json_delta') {
+            const open = pending.get(event.index);
+            if (open) open.json += event.delta.partial_json;
+          }
+        } else if (event.type === 'content_block_stop') {
+          const done = pending.get(event.index);
+          if (done) {
+            pending.delete(event.index);
+            yield {
+              type: 'tool_call',
+              // An empty argument object still has to be valid JSON.
+              call: { id: done.id, name: done.name, arguments: done.json || '{}' },
+            };
+          }
         }
       }
 
@@ -86,6 +117,73 @@ export class AnthropicProvider implements ChatProvider {
     } catch (error) {
       throw toProviderError(error);
     }
+  }
+}
+
+/** OpenAI calls the schema `parameters`; Anthropic calls it `input_schema`. */
+function toAnthropicTools(tools: ToolDefinition[]) {
+  return tools.map((t) => ({
+    name: t.name,
+    ...(t.description ? { description: t.description } : {}),
+    input_schema: t.parameters as Anthropic.Tool.InputSchema,
+  }));
+}
+
+/**
+ * Translates the neutral message shape into Anthropic's.
+ *
+ * Anthropic has no `tool` role: results come back as `tool_result` blocks
+ * inside a *user* message. Crucially, all results answering one assistant turn
+ * must share a single user message — splitting them across messages teaches the
+ * model to stop making parallel tool calls — so consecutive tool turns are
+ * merged here.
+ */
+function toAnthropicMessages(messages: ChatMessage[]): Anthropic.MessageParam[] {
+  const out: Anthropic.MessageParam[] = [];
+
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      const block = {
+        type: 'tool_result' as const,
+        tool_use_id: message.toolCallId ?? '',
+        content: message.content,
+      };
+      const previous = out.at(-1);
+      if (previous?.role === 'user' && Array.isArray(previous.content)) {
+        previous.content.push(block);
+      } else {
+        out.push({ role: 'user', content: [block] });
+      }
+      continue;
+    }
+
+    if (message.role === 'assistant' && message.toolCalls?.length) {
+      const blocks: Anthropic.ContentBlockParam[] = [];
+      if (message.content) blocks.push({ type: 'text', text: message.content });
+      for (const call of message.toolCalls) {
+        blocks.push({
+          type: 'tool_use',
+          id: call.id,
+          name: call.name,
+          input: safeParse(call.arguments),
+        });
+      }
+      out.push({ role: 'assistant', content: blocks });
+      continue;
+    }
+
+    out.push({ role: message.role, content: message.content });
+  }
+
+  return out;
+}
+
+/** Tool arguments come from a model, so malformed JSON is a real possibility. */
+function safeParse(json: string): unknown {
+  try {
+    return JSON.parse(json || '{}');
+  } catch {
+    return {};
   }
 }
 

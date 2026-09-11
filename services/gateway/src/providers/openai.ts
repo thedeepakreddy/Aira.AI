@@ -3,10 +3,12 @@ import { humanize } from './messages.ts';
 import { findModel } from './registry.ts';
 import {
   ProviderError,
+  type ChatMessage,
   type ChatProvider,
   type ChatRequest,
   type ProviderId,
   type StreamEvent,
+  type ToolDefinition,
 } from './types.ts';
 
 /**
@@ -43,7 +45,7 @@ export class OpenAICompatibleProvider implements ChatProvider {
   }
 
   async *streamChat(request: ChatRequest & { model: string }): AsyncIterable<StreamEvent> {
-    const { model, messages, system, maxTokens = 16000, signal } = request;
+    const { model, messages, system, maxTokens = 16000, tools, signal } = request;
 
     yield { type: 'start', model, provider: this.id };
 
@@ -54,9 +56,10 @@ export class OpenAICompatibleProvider implements ChatProvider {
           max_completion_tokens: maxTokens,
           stream: true,
           stream_options: { include_usage: true },
+          ...(tools?.length ? { tools: toOpenAITools(tools) } : {}),
           messages: [
             ...(system ? [{ role: 'system' as const, content: system }] : []),
-            ...messages.map((m) => ({ role: m.role, content: m.content })),
+            ...messages.map(toOpenAIMessage),
           ],
         },
         { signal },
@@ -64,6 +67,8 @@ export class OpenAICompatibleProvider implements ChatProvider {
 
       let stopReason: string | null = null;
       let usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      // Tool calls arrive as fragments keyed by index; accumulate and emit whole.
+      const pending = new Map<number, { id: string; name: string; args: string }>();
 
       for await (const chunk of stream) {
         // The usage-bearing chunk arrives last and has an empty choices array.
@@ -80,6 +85,21 @@ export class OpenAICompatibleProvider implements ChatProvider {
         if (choice.finish_reason) stopReason = choice.finish_reason;
         const text = choice.delta?.content;
         if (text) yield { type: 'text', text };
+
+        for (const fragment of choice.delta?.tool_calls ?? []) {
+          const open = pending.get(fragment.index) ?? { id: '', name: '', args: '' };
+          if (fragment.id) open.id = fragment.id;
+          if (fragment.function?.name) open.name = fragment.function.name;
+          if (fragment.function?.arguments) open.args += fragment.function.arguments;
+          pending.set(fragment.index, open);
+        }
+      }
+
+      for (const [, call] of [...pending].sort((a, b) => a[0] - b[0])) {
+        yield {
+          type: 'tool_call',
+          call: { id: call.id, name: call.name, arguments: call.args || '{}' },
+        };
       }
 
       // Cached prompt tokens are reported inside prompt_tokens; separating them
@@ -91,6 +111,36 @@ export class OpenAICompatibleProvider implements ChatProvider {
       throw toProviderError(error);
     }
   }
+}
+
+/** Anthropic calls the schema `input_schema`; OpenAI nests it under `function`. */
+function toOpenAITools(tools: ToolDefinition[]): OpenAI.Chat.ChatCompletionTool[] {
+  return tools.map((t) => ({
+    type: 'function',
+    function: {
+      name: t.name,
+      ...(t.description ? { description: t.description } : {}),
+      parameters: t.parameters as Record<string, unknown>,
+    },
+  }));
+}
+
+function toOpenAIMessage(message: ChatMessage): OpenAI.Chat.ChatCompletionMessageParam {
+  if (message.role === 'tool') {
+    return { role: 'tool', tool_call_id: message.toolCallId ?? '', content: message.content };
+  }
+  if (message.role === 'assistant' && message.toolCalls?.length) {
+    return {
+      role: 'assistant',
+      content: message.content || null,
+      tool_calls: message.toolCalls.map((call) => ({
+        id: call.id,
+        type: 'function' as const,
+        function: { name: call.name, arguments: call.arguments },
+      })),
+    };
+  }
+  return { role: message.role, content: message.content };
 }
 
 function toProviderError(error: unknown): ProviderError {

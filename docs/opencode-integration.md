@@ -75,30 +75,43 @@ per-launch secret. Every route then returns 401 without HTTP Basic auth,
 including `/session/{id}/shell`. Aira must generate this secret per launch,
 keep it in memory, bind to `127.0.0.1`, and never pass `--cors`.
 
-### 2. Permissions default to allow-everything, and the config did not gate it
+### 2. Permissions default to allow-everything, but the policy does work
 
 Every built-in agent (`build`, `plan`, `explore`, `general`, ...) resolves with
 `{"permission": "*", "pattern": "*", "action": "allow"}` as its first rule.
-Out of the box opencode edits files and runs shell commands **without asking**.
+**Out of the box opencode edits files and runs shell commands without asking.**
+A policy must be set explicitly.
 
-`opencode.json` accepts a permission policy, per action
-(`read`, `edit`, `bash`, `glob`, `grep`, `list`, `task`, `webfetch`,
-`websearch`, `external_directory`, `lsp`, ...) with values `ask | allow | deny`,
-both globally and per agent. `GET /config` confirms the policy is parsed and
-stored.
+`opencode.json` accepts one per action (`read`, `edit`, `bash`, `glob`, `grep`,
+`list`, `task`, `webfetch`, `websearch`, `external_directory`, `lsp`, ...) with
+values `ask | allow | deny`, globally or per agent.
 
-**But it did not take effect in the one path tested.** With
-`agent.build.permission.bash = "deny"`, `POST /session/{id}/shell` still
-executed the command and `GET /permission` stayed empty. The most likely reading
-is that `/session/{id}/shell` is a direct execution API outside the tool
-permission system, which only governs *agent-initiated* tool calls — but that
-was not proven, because exercising the agent loop needs model credit the test
-account does not have.
+**Verified working, both directions**, against a real agent run:
 
-**Consequence for Aira:** do not treat opencode's permission config as the
-safety boundary until it has been verified against a real agent run. Aira should
-gate destructive actions in its own UI and simply not call `/session/{id}/shell`
-except from an explicit user action.
+With `edit: "ask"`, asked to create a file:
+
+```
+! permission requested: edit (…/hello.txt); auto-rejecting
+✗ Write hello.txt failed
+Error: The user rejected permission to use this specific tool call.
+```
+
+The request names the exact file, and `run` auto-rejects when there is no UI to
+ask — a safe default. With `edit: "allow"`, the same task wrote the file.
+
+An earlier note here said the policy did not take effect. That was wrong, and
+the reason is worth keeping: the only path testable without model credit was
+`POST /session/{id}/shell`, which is a **direct execution API sitting outside
+the tool permission system**. Agent-initiated tool calls *are* gated; that one
+endpoint is not.
+
+So for Aira:
+
+- set `edit` and `bash` to `ask`
+- subscribe to `permission.v2.asked` on the event stream and render Allow/Deny
+- answer with `POST /permission/{requestID}/reply` -> `once | always | reject`
+- **never call `/session/{id}/shell` except from an explicit user action**, since
+  nothing gates it
 
 ## Credentials: opencode does not use Aira's gateway
 
@@ -160,6 +173,31 @@ The real OpenAI SDK was also pointed at the endpoint and parsed the model list,
 the non-streaming reply and the streaming reply, so the wire format is right.
 Seven protocol tests cover the success paths offline with a stub provider,
 including the `[DONE]` sentinel that OpenAI clients hang without.
+
+### The tools bug this surfaced
+
+The first real agent run failed in a way worth recording: opencode replied with
+a bash command as markdown instead of running it. The model was capable of tool
+calling — the gateway was **silently dropping `tools` from the request**, so the
+model never saw any. A gateway that loses tool definitions turns an agent into
+something that can only describe actions it cannot take.
+
+The fix extended the neutral contract with tool definitions, tool calls and tool
+results, and taught both adapters to translate: OpenAI nests the schema under
+`function.parameters`, Anthropic calls it `input_schema` and has no `tool` role
+at all — results come back as `tool_result` blocks inside a *user* message, and
+all results answering one turn must share a single message or the model learns
+to stop making parallel calls.
+
+Proven by the same A/B that exposed it: identical request, direct to the
+provider and through the gateway, now both return
+`write_file({"path":"hello.txt","content":"hi"})`.
+
+### Verified end to end
+
+`opencode run "Create a file named hello.txt containing exactly: hi from aira"`
+routed through the gateway to OpenRouter, made a real tool call, and wrote the
+file. The gateway metered it as `surface=code`.
 
 Still open: opencode holds the gateway token for its process lifetime, but a
 Supabase access token expires in an hour. The desktop shell will need either a

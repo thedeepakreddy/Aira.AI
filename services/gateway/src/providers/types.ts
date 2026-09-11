@@ -6,11 +6,33 @@
  * a request. Adding a provider means adding one adapter, not touching callers.
  */
 
-export type Role = 'user' | 'assistant';
+export type Role = 'user' | 'assistant' | 'tool';
+
+/** A tool the model may call. `parameters` is a JSON Schema object. */
+export interface ToolDefinition {
+  name: string;
+  description?: string;
+  parameters: Record<string, unknown>;
+}
+
+/**
+ * A model's request to call a tool. `arguments` stays a raw JSON string
+ * because that is how both providers emit it, and re-encoding it would risk
+ * changing what the model actually asked for.
+ */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
 
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Present on assistant turns that asked to call tools. */
+  toolCalls?: ToolCall[];
+  /** Present on `tool` turns; identifies the call being answered. */
+  toolCallId?: string;
 }
 
 /**
@@ -28,6 +50,12 @@ export interface ChatRequest {
   /** Explicit model override from the UI picker. Wins over routing. */
   model?: string;
   maxTokens?: number;
+  /**
+   * Tools the model may call. Agent surfaces depend on these: a gateway that
+   * drops them turns an agent into something that can only describe actions it
+   * cannot take, so adapters must either forward them or fail loudly.
+   */
+  tools?: ToolDefinition[];
   signal?: AbortSignal;
 }
 
@@ -47,6 +75,12 @@ export type StreamEvent =
   | { type: 'start'; model: string; provider: ProviderId }
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
+  /**
+   * Emitted once per call, complete. Providers stream argument fragments, but
+   * a partial call is useless to a caller and dangerous to act on, so adapters
+   * accumulate and emit only whole calls.
+   */
+  | { type: 'tool_call'; call: ToolCall }
   | { type: 'done'; usage: TokenUsage; stopReason: string | null }
   | { type: 'error'; message: string; retryable: boolean };
 
