@@ -6,6 +6,7 @@ import {
   ProviderError,
   type ChatMessage,
   type ChatProvider,
+  type Surface,
   type TokenUsage,
   type ToolCall,
   type ToolDefinition,
@@ -99,7 +100,13 @@ export function createOpenAIModelsRoute() {
     });
 }
 
-export function createOpenAIChatRoute(providers: ChatProvider[]) {
+/**
+ * @param surface Which Aira surface the caller is. OpenCode is `code`; the
+ * daily-task agent is `task`. It decides both the model the request routes to
+ * and how the spend is attributed, so a single hardcoded value would meter
+ * every agent's work as coding.
+ */
+export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surface = 'code') {
   return async (c: Context<{ Variables: AuthedVars }>) => {
     let body: {
       model?: unknown;
@@ -151,9 +158,9 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
     }
 
     const requested = typeof body.model === 'string' ? body.model : undefined;
-    // Anything reaching this surface is agent work, so it routes as `code`
-    // unless it named a model we actually have.
-    const decision = routeModel('code', requested && findModel(requested) ? requested : undefined);
+    // Agent work routes to the surface this endpoint was mounted for, unless it
+    // named a model we actually have.
+    const decision = routeModel(surface, requested && findModel(requested) ? requested : undefined);
     const spec = findModel(decision.model);
     const provider = spec && providers.find((p) => p.supports(decision.model));
     if (!spec || !provider) {
@@ -178,7 +185,7 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
     const request = {
       messages,
       system: system.length ? system.join('\n\n') : undefined,
-      surface: 'code' as const,
+      surface,
       model: decision.model,
       maxTokens,
       // Forwarding these is what separates an agent gateway from a chat proxy;
@@ -203,8 +210,8 @@ export function createOpenAIChatRoute(providers: ChatProvider[]) {
         at: new Date().toISOString(),
         userId,
         conversationId: null,
-        // Tagged so agent spend is separable from chat in the usage log.
-        surface: 'code',
+        // Tagged so each agent's spend is separable in the usage log.
+        surface,
         payload,
       });
     }

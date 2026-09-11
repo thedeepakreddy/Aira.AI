@@ -86,7 +86,18 @@ app.post('/v1/chat', auth, createChatRoute(providers));
  * Kept off /v1 so it cannot collide with Aira's own model catalogue shape.
  */
 app.get('/openai/v1/models', auth, createOpenAIModelsRoute());
-app.post('/openai/v1/chat/completions', auth, createOpenAIChatRoute(providers));
+app.post('/openai/v1/chat/completions', auth, createOpenAIChatRoute(providers, 'code'));
+
+/**
+ * The same protocol, mounted per surface.
+ *
+ * Which surface is calling has to come from the path, not a header: an agent
+ * configures this gateway by base URL alone, and not every client lets you add
+ * headers to a provider. Without it both agents route to the `code` model and
+ * their spend is indistinguishable in the usage log.
+ */
+app.get('/openai/task/v1/models', auth, createOpenAIModelsRoute());
+app.post('/openai/task/v1/chat/completions', auth, createOpenAIChatRoute(providers, 'task'));
 
 serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.error(
