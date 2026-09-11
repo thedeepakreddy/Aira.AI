@@ -166,6 +166,91 @@ class Handler(BaseHTTPRequestHandler):
             "title": info.get("title") or "",
         }
 
+    async def _input(self, event: dict) -> dict:
+        """Forwards a click, scroll or keystroke to the page.
+
+        This is what makes the view in Aira a browser rather than a picture of
+        one. The same Chrome the agent drives, so anything done here — a login,
+        a cookie banner, a search — is there for the agent too.
+        """
+        browser = SESSION["browser"]
+        if browser is None:
+            return {"ok": False}
+        info = await browser.get_current_target_info() or {}
+        target_id = info.get("targetId") if isinstance(info, dict) else None
+        if not target_id:
+            tabs = await browser.get_tabs()
+            if not tabs:
+                return {"ok": False}
+            target_id = getattr(tabs[0], "target_id", "")
+        cdp = await browser.cdp_client_for_target(str(target_id))
+        send = cdp.cdp_client.send_raw
+        sid = cdp.session_id
+        kind = event.get("type")
+        x, y = float(event.get("x") or 0), float(event.get("y") or 0)
+
+        if kind == "click":
+            button = event.get("button") or "left"
+            for phase in ("mousePressed", "mouseReleased"):
+                await send(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": phase,
+                        "x": x,
+                        "y": y,
+                        "button": button,
+                        "clickCount": int(event.get("clickCount") or 1),
+                        "buttons": 1,
+                    },
+                    session_id=sid,
+                )
+        elif kind == "scroll":
+            # Scrolled in the page rather than dispatched as a wheel event.
+            # Chrome accepts Input.dispatchMouseEvent with type mouseWheel and
+            # then never acknowledges it, so every scroll hung until it timed
+            # out. This returns immediately and moves the page.
+            dx = float(event.get("deltaX") or 0)
+            dy = float(event.get("deltaY") or 0)
+            await send(
+                "Runtime.evaluate",
+                {
+                    "expression": f"window.scrollBy({dx}, {dy})",
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+                session_id=sid,
+            )
+        elif kind == "text":
+            await send("Input.insertText", {"text": str(event.get("text") or "")}, session_id=sid)
+        elif kind == "key":
+            key = str(event.get("key") or "")
+            # Enter, Backspace and the arrows have to go as key events; typing
+            # them as text inserts nothing and the page never reacts.
+            codes = {
+                "Enter": (13, "Enter"),
+                "Backspace": (8, "Backspace"),
+                "Tab": (9, "Tab"),
+                "ArrowUp": (38, "ArrowUp"),
+                "ArrowDown": (40, "ArrowDown"),
+                "ArrowLeft": (37, "ArrowLeft"),
+                "ArrowRight": (39, "ArrowRight"),
+                "Escape": (27, "Escape"),
+            }
+            code, name = codes.get(key, (0, key))
+            for phase in ("keyDown", "keyUp"):
+                await send(
+                    "Input.dispatchKeyEvent",
+                    {
+                        "type": phase,
+                        "key": name,
+                        "code": name,
+                        "windowsVirtualKeyCode": code,
+                        "nativeVirtualKeyCode": code,
+                    },
+                    session_id=sid,
+                )
+        return {"ok": True}
+
     def _tabs(self) -> dict:
         """Open tabs, or an empty list when no browser is running yet.
 
@@ -214,6 +299,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, self._tabs())
             except Exception as error:  # noqa: BLE001
                 self._json(500, {"error": str(error)[:300]})
+            return
+
+        if self.path == "/input":
+            body = self._body() or {}
+            try:
+                self._json(200, run_on_loop(self._input(body), timeout=20))
+            except Exception as error:  # noqa: BLE001 - a dropped click is not fatal
+                # repr, not str: CDP rejections carry their detail in the type,
+                # and str() on one of those is the empty string.
+                self._json(200, {"ok": False, "error": repr(error)[:300]})
             return
 
         if self.path == "/mode":

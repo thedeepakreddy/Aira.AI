@@ -48,6 +48,28 @@ export default function BrowserPanel(){
   try{const state=await c.tabs();setTabs(state.tabs);setPrivate(state.private)}catch{/* not up yet */}
  },[]);
 
+ /**
+  * Turns a pointer event on the frame into page coordinates.
+  *
+  * The capture is the viewport at its own size and is drawn scaled to fit, so a
+  * click at panel coordinates has to be divided back by that ratio or every
+  * click lands somewhere else on the page.
+  */
+ function pagePoint(e:{clientX:number;clientY:number;currentTarget:HTMLImageElement}){
+  const img=e.currentTarget;
+  const box=img.getBoundingClientRect();
+  return {
+   x:(e.clientX-box.left)*(img.naturalWidth/box.width),
+   y:(e.clientY-box.top)*(img.naturalHeight/box.height),
+  };
+ }
+
+ const send=useCallback((event:Record<string,unknown>)=>{
+  // Fire and forget: a dropped click should not raise an error card, and the
+  // next frame shows whether it landed.
+  void client.current?.input(event).catch(()=>{});
+ },[]);
+
  // The page itself, drawn inside Aira. Chrome cannot render into this window —
  // it is a separate process with its own — so its frames are captured and shown
  // here instead, which is what makes the browsing visible in the app rather
@@ -245,7 +267,18 @@ export default function BrowserPanel(){
     </div>}
 
     {connected&&frame&&<div className="browse-view">
-     <img src={frame} alt={pageUrl?`Page at ${pageUrl}`:'The page the agent is looking at'}/>
+     <img src={frame} alt={pageUrl?`Page at ${pageUrl}`:'The page the agent is looking at'}
+      tabIndex={0}
+      onClick={e=>{const p=pagePoint(e);send({type:'click',...p})}}
+      onWheel={e=>{const p=pagePoint(e);send({type:'scroll',...p,deltaX:e.deltaX,deltaY:e.deltaY})}}
+      onKeyDown={e=>{
+       // Printable characters go as text; the rest have to be key events or
+       // the page never reacts to Enter, Backspace or the arrows.
+       if(e.key.length===1&&!e.metaKey&&!e.ctrlKey){e.preventDefault();send({type:'text',text:e.key})}
+       else if(['Enter','Backspace','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape'].includes(e.key)){
+        e.preventDefault();send({type:'key',key:e.key});
+       }
+      }}/>
     </div>}
 
     <div className={'terminal-log '+(connected&&frame?'browse-trail':'')} ref={trail} role="log" aria-live="polite">

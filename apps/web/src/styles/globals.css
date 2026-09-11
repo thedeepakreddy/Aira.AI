@@ -745,3 +745,7 @@
   box-shadow:0 14px 40px #0006}
 /* With a page on screen the trail becomes a footnote rather than the content. */
 .browse-trail{flex:0 0 auto;max-height:34%}
+/* The frame is interactive, so it should invite a click rather than look like
+   a screenshot. */
+.browse-view img{cursor:default}
+.browse-view img:focus{outline:1px solid #ffa65255;outline-offset:2px}

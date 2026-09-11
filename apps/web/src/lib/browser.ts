@@ -79,6 +79,16 @@ export class BrowserClient {
     return this.api<{ image: string | null; url: string; title: string }>('GET', '/screen');
   }
 
+  /**
+   * Sends a click, scroll or keystroke to the page.
+   *
+   * Coordinates are in page pixels, not panel pixels — the caller scales by the
+   * ratio between the captured frame and how large it is being drawn.
+   */
+  input(event: Record<string, unknown>): Promise<{ ok: boolean }> {
+    return this.api<{ ok: boolean }>('POST', '/input', event);
+  }
+
   /** Open tabs. Never starts the browser just because someone looked. */
   tabs(): Promise<TabState> {
     return this.api<TabState>('GET', '/tabs');
