@@ -315,3 +315,27 @@
 .login-orb video,.login-orb img,
 .orb-video,.orb-still,
 .avatar{transform:scale(1.06)}
+
+/* ── Agent panel ──────────────────────────────────────────────────────────────
+   The agent's approval prompts and file notices. Everything else on this screen
+   reuses the terminal styling it replaced, so only the genuinely new elements
+   are defined here. */
+.agent-notice{display:flex;gap:8px;align-items:flex-start;margin:10px 0;padding:8px 10px;
+  border-radius:9px;border:1px solid #ffc29622;background:#ffffff05;color:#dbbcaa;font-size:11px;line-height:1.5}
+.agent-notice svg{width:13px;height:13px;flex-shrink:0;margin-top:1px;color:#e8af84}
+.agent-notice.error{border-color:#ff8a6b38;background:#4a12081f;color:#ffb59f}
+.agent-notice.error svg{color:#ffb59f}
+
+/* An approval gate, so it should read as a stop rather than a log line. */
+.agent-permission{margin:12px 0;padding:12px;border-radius:12px;
+  border:1px solid #ffb04d4d;background:linear-gradient(140deg,#4a210233,#1a08001f)}
+.agent-permission-head{display:flex;gap:8px;align-items:center;font-size:12px;color:#ffd2a3}
+.agent-permission-head svg{width:14px;height:14px;color:#ffb066}
+.agent-permission ul{margin:8px 0 0;padding-left:22px;font-size:11px;color:#dbbcaa;line-height:1.6;
+  word-break:break-all}
+.agent-permission-actions{display:flex;gap:8px;margin-top:11px}
+.agent-permission-actions button{padding:6px 12px;border-radius:8px;font-size:11px;
+  border:1px solid #ffc57760;background:linear-gradient(125deg,#fa8f12,#d53a00);color:#fff9ef}
+.agent-permission-actions button.deny{background:none;border-color:#ffffff24;color:#dbbcaa}
+.agent-permission.resolved{opacity:.62;border-color:#ffffff1a;background:#ffffff04}
+.agent-permission-done{display:inline-block;margin-top:9px;font-size:11px;color:#c9a08a}

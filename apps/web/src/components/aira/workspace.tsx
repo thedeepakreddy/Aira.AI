@@ -5,7 +5,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 
 import {Sheet,SheetTrigger,SheetContent,SheetTitle,SheetDescription,SheetHeader} from '@/components/ui/sheet';
 import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
-import RemoteTerminal from './terminal';
+import AgentPanel from './agent-panel';
 import Login from './login';
 import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
 import {streamChat,listModels,type ModelSpec} from '@/lib/gateway';
@@ -199,7 +199,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  <button className="brand-home" onClick={goHome} aria-label="Aira by AskDeepakAI home"><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><small>{screen==='cli'?'Remote workspace':screen==='login'?'Your next chapter starts here':'Your AI workspace'}</small></button>
  <div className="app-header-actions">{screen!=='login'&&<><button className={'header-cli '+(screen==='cli'?'active':'')} onClick={screen==='cli'?goHome:openCLI}>{screen==='cli'?<MessageCircle/>:<Terminal/>}<span>{screen==='cli'?'Chat':'CLI'}</span></button><button className="account-button glass" onClick={signedIn?signOut:openLogin} aria-label={signedIn?'Sign out':'Log in'}>{signedIn?<LogOut/>:<LogIn/>}<span>{signedIn?'Sign out':'Log in'}</span></button></>}</div>
  </header>
- {screen==='login'?<Login onComplete={completeLogin} onBack={goHome} reduceMotion={reduceMotion}/>:screen==='cli'?<RemoteTerminal/>:
+ {screen==='login'?<Login onComplete={completeLogin} onBack={goHome} reduceMotion={reduceMotion}/>:screen==='cli'?<AgentPanel/>:
  screen==='home'?<div className="screen-content" key="home">
  <section className="home-content"><h1>What are we<br/>building today?</h1><div className="suggestions" aria-label="Prompt suggestions">{SUGGESTIONS.map(text=><button className="suggestion" key={text} onClick={()=>{setDraft(text);textarea.current?.focus()}}><Sparkles/><span>{text}</span></button>)}</div></section>
  <form className="home-composer" onSubmit={event=>{event.preventDefault();submit()}}>

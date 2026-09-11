@@ -6,6 +6,7 @@
  * or the packaged desktop app.
  */
 
+import { parseSSE } from './sse';
 import { getAccessToken } from './supabase';
 
 export type Surface = 'chat' | 'voice' | 'code' | 'task';
@@ -35,39 +36,6 @@ const GATEWAY_URL: string =
 
 /** Dev-only shim so the gateway can be exercised before Supabase auth is wired. */
 const DEV_USER = import.meta.env?.VITE_AIRA_DEV_USER as string | undefined;
-
-/**
- * Parses an SSE byte stream into discrete `data:` payloads.
- *
- * A chunk boundary can land anywhere, including mid-event, so bytes are held in
- * a buffer until a complete `\n\n`-delimited frame is present. Splitting on
- * chunk arrival instead would corrupt any event that spans two reads.
- */
-async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        for (const line of frame.split('\n')) {
-          if (line.startsWith('data:')) yield line.slice(5).trim();
-        }
-        boundary = buffer.indexOf('\n\n');
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
 
 /**
  * Streams a reply. Yields normalised events identical in shape across every
