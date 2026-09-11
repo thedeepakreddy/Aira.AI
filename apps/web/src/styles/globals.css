@@ -293,3 +293,15 @@
    label like "Auto" does not shrink the composer row and the layout matches the
    original pixel for pixel; longer model names still expand it. */
 @container app (min-width:761px){.model-picker{min-width:102.703px}}
+
+/* The orb now carries its own rendered edge, so the container's outline reads
+   as a second ring drawn around it. Removed on every orb surface. */
+.desktop-orb-button{border:0}
+
+/* The sphere occupies 83.7% of its frame (measured off the video), leaving a
+   dark halo of its own backdrop inside the circular mask — a second ring in
+   everything but name. Scaling to 1.2 makes the sphere meet the mask edge. */
+.desktop-orb-button video,.desktop-orb-button img,
+.login-orb video,.login-orb img,
+.orb-video,.orb-still,
+.avatar{transform:scale(1.2)}
