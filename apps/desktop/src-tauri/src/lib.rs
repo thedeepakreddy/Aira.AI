@@ -1,5 +1,7 @@
+mod openclaw;
 mod opencode;
 
+use openclaw::OpenClawState;
 use opencode::OpenCodeState;
 use tauri::{Manager, RunEvent};
 
@@ -19,10 +21,14 @@ pub fn run() {
         // the sandbox will then actually let it read.
         .plugin(tauri_plugin_dialog::init())
         .manage(OpenCodeState::default())
+        .manage(OpenClawState::default())
         .invoke_handler(tauri::generate_handler![
             opencode::opencode_status,
             opencode::opencode_start,
             opencode::opencode_stop,
+            openclaw::openclaw_status,
+            openclaw::openclaw_start,
+            openclaw::openclaw_stop,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")
@@ -31,6 +37,7 @@ pub fn run() {
             // the app that supervises it.
             if let RunEvent::Exit = event {
                 app.state::<OpenCodeState>().shutdown();
+                app.state::<OpenClawState>().shutdown();
             }
         });
 }
