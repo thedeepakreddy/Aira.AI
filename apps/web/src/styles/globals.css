@@ -734,3 +734,14 @@
 .browse-icon:hover{background:#ffffff12;color:#ffd9b8}
 .browse-icon.on{color:#ffd9b8;background:linear-gradient(125deg,#fa8f1233,#d53a0033)}
 .browse-icon.quiet{cursor:default;opacity:.55}
+
+/* The page, inside Aira.
+   Chrome is a separate process with its own window and cannot render into this
+   one, so what is shown here are frames captured from it. That is the
+   difference between watching the agent and merely reading about it. */
+.browse-view{flex:1;min-height:0;display:flex;align-items:flex-start;justify-content:center;
+  overflow:auto;background:#0b0603;padding:10px}
+.browse-view img{max-width:100%;border-radius:8px;border:1px solid #ffffff10;
+  box-shadow:0 14px 40px #0006}
+/* With a page on screen the trail becomes a footnote rather than the content. */
+.browse-trail{flex:0 0 auto;max-height:34%}

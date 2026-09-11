@@ -29,6 +29,8 @@ export default function BrowserPanel(){
  const [model,setModel]=useState('');
  const [tabs,setTabs]=useState<Tab[]>([]);
  const [isPrivate,setPrivate]=useState(false);
+ const [frame,setFrame]=useState<string|null>(null);
+ const [pageUrl,setPageUrl]=useState('');
  const client=useRef<BrowserClient|null>(null);
  const run=useRef<AbortController|null>(null);
  const trail=useRef<HTMLDivElement>(null);
@@ -45,6 +47,28 @@ export default function BrowserPanel(){
   // just leaves the strip empty rather than showing an error.
   try{const state=await c.tabs();setTabs(state.tabs);setPrivate(state.private)}catch{/* not up yet */}
  },[]);
+
+ // The page itself, drawn inside Aira. Chrome cannot render into this window —
+ // it is a separate process with its own — so its frames are captured and shown
+ // here instead, which is what makes the browsing visible in the app rather
+ // than only in a window beside it.
+ useEffect(()=>{
+  if(!connected)return;
+  let alive=true;
+  const tick=async()=>{
+   const c=client.current;
+   if(!c||!alive)return;
+   try{
+    const shot=await c.screen();
+    if(!alive)return;
+    if(shot.image)setFrame(shot.image);
+    setPageUrl(shot.url||'');
+   }catch{/* a missed frame is not worth surfacing */}
+  };
+  void tick();
+  const id=setInterval(()=>void tick(),busy?900:2500);
+  return()=>{alive=false;clearInterval(id)};
+ },[connected,busy]);
 
  useEffect(()=>{
   if(!connected)return;
@@ -220,13 +244,17 @@ export default function BrowserPanel(){
       </form>
     </div>}
 
-    <div className="terminal-log" ref={trail} role="log" aria-live="polite">
-     <div className="terminal-welcome"><span>Aira Browser</span>
+    {connected&&frame&&<div className="browse-view">
+     <img src={frame} alt={pageUrl?`Page at ${pageUrl}`:'The page the agent is looking at'}/>
+    </div>}
+
+    <div className={'terminal-log '+(connected&&frame?'browse-trail':'')} ref={trail} role="log" aria-live="polite">
+     {!(connected&&frame)&&<div className="terminal-welcome"><span>Aira Browser</span>
       <p>{connected?'Give it something to find. Chrome opens alongside Aira — the tabs above are that window, and every page is listed here as it goes.'
        :!isDesktop?'The browsing agent drives a real browser on your machine, so it runs in the Aira desktop app rather than a browser tab.'
        :missing?'The browsing agent is not installed. Aira keeps it in its own virtualenv at ~/.aira/browser/venv.'
        :'Press power to start the browser.'}</p>
-     </div>
+     </div>}
 
      {sent&&<div className="terminal-entry"><div className="terminal-command"><span>❯</span> {sent}</div></div>}
 

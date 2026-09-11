@@ -68,6 +68,17 @@ export class BrowserClient {
     return invoke<T>('browser_api', { port: this.port, token: this.token, method, path, body });
   }
 
+  /**
+   * A frame of whatever the agent is looking at.
+   *
+   * Polled rather than screencast: the efficient way needs an event
+   * subscription held open across the bridge, and a frame a second is enough to
+   * watch an agent work.
+   */
+  screen(): Promise<{ image: string | null; url: string; title: string }> {
+    return this.api<{ image: string | null; url: string; title: string }>('GET', '/screen');
+  }
+
   /** Open tabs. Never starts the browser just because someone looked. */
   tabs(): Promise<TabState> {
     return this.api<TabState>('GET', '/tabs');

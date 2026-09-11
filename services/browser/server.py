@@ -115,7 +115,56 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, self._tabs())
             return
+        if self.path == "/screen":
+            if not self._authorised():
+                self._json(401, {"error": "unauthorized"})
+                return
+            try:
+                self._json(200, run_on_loop(self._screen(), timeout=20))
+            except Exception as error:  # noqa: BLE001 - a missed frame is not fatal
+                self._json(200, {"image": None, "error": str(error)[:200]})
+            return
         self._json(404, {"error": "not found"})
+
+    async def _screen(self) -> dict:
+        """A JPEG of the page the agent is looking at.
+
+        Polled rather than screencast: `Page.startScreencast` is the efficient
+        way and needs an event subscription held open across requests, where one
+        `captureScreenshot` per second is enough to watch an agent work and
+        cannot get out of sync with what the page actually shows.
+        """
+        browser = SESSION["browser"]
+        if browser is None:
+            return {"image": None, "url": "", "title": ""}
+        # TargetInfo is a TypedDict — a plain dict at runtime — so reading it
+        # with getattr silently returns nothing and the frame comes back empty
+        # with no error to explain it.
+        info = await browser.get_current_target_info() or {}
+        if not isinstance(info, dict):
+            info = getattr(info, "__dict__", {}) or {}
+        target_id = info.get("targetId") or info.get("target_id")
+        if not target_id:
+            # Nothing focused yet: show whichever tab exists.
+            tabs = await browser.get_tabs()
+            if not tabs:
+                return {"image": None, "url": "", "title": ""}
+            target_id = getattr(tabs[0], "target_id", "")
+            info = {"url": getattr(tabs[0], "url", ""), "title": getattr(tabs[0], "title", "")}
+        if not target_id:
+            return {"image": None, "url": "", "title": ""}
+        cdp = await browser.cdp_client_for_target(str(target_id))
+        shot = await cdp.cdp_client.send_raw(
+            "Page.captureScreenshot",
+            {"format": "jpeg", "quality": 60},
+            session_id=cdp.session_id,
+        )
+        data = shot.get("data") if isinstance(shot, dict) else None
+        return {
+            "image": f"data:image/jpeg;base64,{data}" if data else None,
+            "url": info.get("url") or "",
+            "title": info.get("title") or "",
+        }
 
     def _tabs(self) -> dict:
         """Open tabs, or an empty list when no browser is running yet.
@@ -128,7 +177,7 @@ class Handler(BaseHTTPRequestHandler):
             # should never be the thing that launches Chrome.
             return {"tabs": [], "private": SESSION["private"], "running": False}
         try:
-            tabs = asyncio.run(self._list_tabs())
+            tabs = run_on_loop(self._list_tabs(), timeout=30)
         except Exception as error:  # noqa: BLE001
             return {"tabs": [], "private": SESSION["private"], "running": True, "error": str(error)[:200]}
         return {"tabs": tabs, "private": SESSION["private"], "running": True}
@@ -152,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/tabs/open":
             body = self._body()
             try:
-                asyncio.run(self._open_tab((body or {}).get("url") or "about:blank"))
+                run_on_loop(self._open_tab((body or {}).get("url") or "about:blank"), timeout=120)
                 self._json(200, self._tabs())
             except Exception as error:  # noqa: BLE001
                 self._json(500, {"error": str(error)[:300]})
@@ -161,7 +210,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/tabs/close":
             body = self._body()
             try:
-                asyncio.run(self._close_tab(str((body or {}).get("id") or "")))
+                run_on_loop(self._close_tab(str((body or {}).get("id") or "")), timeout=60)
                 self._json(200, self._tabs())
             except Exception as error:  # noqa: BLE001
                 self._json(500, {"error": str(error)[:300]})
@@ -173,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 # Switching modes means a different profile, so the browser is
                 # replaced rather than reconfigured.
-                asyncio.run(self._set_mode(want))
+                run_on_loop(self._set_mode(want), timeout=60)
                 self._json(200, {"private": SESSION["private"]})
             except Exception as error:  # noqa: BLE001
                 self._json(500, {"error": str(error)[:300]})
@@ -202,7 +251,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         try:
-            asyncio.run(self._browse(task, int(body.get("maxSteps") or MAX_STEPS)))
+            run_on_loop(self._browse(task, int(body.get("maxSteps") or MAX_STEPS)), timeout=900)
         except Exception as error:  # noqa: BLE001 - the client needs the reason
             self._event({"type": "error", "message": str(error)[:400]})
         self._event({"type": "done"})
@@ -286,6 +335,20 @@ class Handler(BaseHTTPRequestHandler):
 
 
 READY = threading.Event()
+
+# One event loop for the whole service.
+#
+# The browser session and its CDP websocket belong to the loop that created
+# them. Handling each request with its own `asyncio.run` gives every call a
+# fresh loop, and anything that touches the live connection — a screenshot, most
+# obviously — blocks until it times out sixty seconds later. So there is one
+# loop, on its own thread, and requests are submitted to it.
+LOOP = asyncio.new_event_loop()
+
+
+def run_on_loop(coro, timeout: float = 90.0):
+    """Runs a coroutine on the service loop and waits for it."""
+    return asyncio.run_coroutine_threadsafe(coro, LOOP).result(timeout)
 
 # One browser, held open across requests.
 #
@@ -380,6 +443,8 @@ def main() -> None:
 
     # Importing browser-use takes seconds; announcing readiness only after it
     # lands stops the panel sending a task into a half-loaded process.
+    threading.Thread(target=LOOP.run_forever, daemon=True).start()
+
     def warm() -> None:
         try:
             import browser_use  # noqa: F401
