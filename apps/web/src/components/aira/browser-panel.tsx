@@ -28,9 +28,7 @@ export default function BrowserPanel(){
  const [error,setError]=useState('');
  const [model,setModel]=useState('');
  const [tabs,setTabs]=useState<Tab[]>([]);
- const [tabQuery,setTabQuery]=useState('');
  const [isPrivate,setPrivate]=useState(false);
- const [newTab,setNewTab]=useState('');
  const client=useRef<BrowserClient|null>(null);
  const run=useRef<AbortController|null>(null);
  const trail=useRef<HTMLDivElement>(null);
@@ -125,16 +123,31 @@ export default function BrowserPanel(){
   run.current?.abort();run.current=null;setBusy(false);
  }
 
- async function openTab(){
+ async function openTab(url='about:blank'){
   const c=client.current;
-  const raw=newTab.trim();
   if(!c)return;
-  // A bare host is what people type; without a scheme Chrome treats it as a
-  // search term rather than an address.
-  const url=raw?(/^[a-z]+:\/\//i.test(raw)?raw:`https://${raw}`):'about:blank';
-  setNewTab('');
   try{const state=await c.openTab(url);setTabs(state.tabs)}
   catch(e){setError(e instanceof Error?e.message:String(e))}
+ }
+
+ /** An address goes to the browser; anything else goes to the agent. */
+ function looksLikeAddress(text:string):boolean{
+  if(/^[a-z]+:\/\//i.test(text))return true;
+  // A single token with a dot and no spaces is an address; "what is a .com"
+  // is not. Getting this wrong in the safe direction means a search, which is
+  // what a browser does with an ambiguous omnibox anyway.
+  return !/\s/.test(text)&&/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(text);
+ }
+
+ async function submit(){
+  const text=task.trim();
+  if(!text)return;
+  if(looksLikeAddress(text)){
+   setTask('');
+   await openTab(/^[a-z]+:\/\//i.test(text)?text:`https://${text}`);
+   return;
+  }
+  await go();
  }
 
  async function closeTab(id:string){
@@ -157,10 +170,7 @@ export default function BrowserPanel(){
   }catch(e){setError(e instanceof Error?e.message:String(e))}
  }
 
- const shown=tabs.filter(t=>{
-  const q=tabQuery.trim().toLowerCase();
-  return !q||t.title.toLowerCase().includes(q)||t.url.toLowerCase().includes(q);
- });
+
 
  return <section className="cli-page agent-page browse-page screen-content" aria-label="Browsing agent">
   <div className="cli-heading">
@@ -186,36 +196,28 @@ export default function BrowserPanel(){
     <div className="terminal-title"><Globe/><span>aira — browser</span>
      {busy&&<span className="terminal-mode">BROWSING</span>}
      {status?.running&&status.port&&<span className="terminal-endpoint">127.0.0.1:{status.port}</span>}</div>
-    <div className="terminal-path"><Link2/><span>{model||'No session'}</span>
-     {connected&&<span className="browse-profile">{isPrivate?'throwaway profile · nothing kept':'its own Chrome profile · signed out'}</span>}</div>
 
-    {connected&&<div className="browse-tabs">
+    {connected&&<div className="browse-chrome">
      <div className="browse-tabstrip" role="tablist" aria-label="Open tabs">
-      {shown.map(tab=><span className="browse-tab" key={tab.id} title={tab.url}>
+      {tabs.map(tab=><span className="browse-tab" key={tab.id} title={tab.url}>
        <span className="browse-tab-title">{tab.title||tab.url||'New tab'}</span>
        <button onClick={()=>void closeTab(tab.id)} aria-label={`Close ${tab.title||tab.url}`}><X/></button>
       </span>)}
-      {!shown.length&&<span className="browse-tab empty">{tabs.length?'No tab matches':'No tabs open'}</span>}
+      <button className="browse-tab-new" onClick={()=>void openTab()} aria-label="New tab"><Plus/></button>
      </div>
-     <div className="browse-tabtools">
-      <label className="browse-tabsearch">
-       <Search/>
-       <input value={tabQuery} onChange={e=>setTabQuery(e.target.value)}
-        placeholder="Search tabs" aria-label="Search open tabs" spellCheck={false}/>
-      </label>
-      <form className="browse-newtab" onSubmit={e=>{e.preventDefault();void openTab()}}>
-       <input value={newTab} onChange={e=>setNewTab(e.target.value)}
-        placeholder="Open a URL" aria-label="Open a new tab" spellCheck={false}/>
-       <button type="submit" aria-label="Open tab"><Plus/></button>
+     <form className="browse-bar" onSubmit={e=>{e.preventDefault();void submit()}}>
+      {isPrivate?<EyeOff/>:<Search/>}
+      <input aria-label="Address or question" value={task} disabled={busy}
+       placeholder={busy?'Working…':'Search, ask, or type a web address'}
+       autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
+      {busy
+       ? <button type="button" className="browse-bar-go" onClick={interrupt} aria-label="Stop"><Square/></button>
+       : <button type="submit" className="browse-bar-go" disabled={!task.trim()} aria-label="Go"><Send/></button>}
+      <button type="button" className={'browse-icon '+(isPrivate?'on':'')} onClick={()=>void togglePrivate()}
+       aria-label={isPrivate?'Private browsing on':'Private browsing off'}
+       title={isPrivate?'Private: nothing is kept. Click for the saved profile.':'Browse privately — applies to the next browser'}><EyeOff/></button>
+      <span className="browse-icon quiet" title="Unpacked extensions in ~/.aira/browser/extensions load at start"><Puzzle/></span>
       </form>
-      <button className={'browse-private '+(isPrivate?'on':'')} onClick={()=>void togglePrivate()}
-       title={isPrivate?'Private: nothing is kept. Click to use the saved profile.':'Switch to a throwaway profile — applies to the next browser'}>
-       <EyeOff/>{isPrivate?'Private':'Private off'}
-      </button>
-      <span className="browse-ext" title="Unpacked extensions in ~/.aira/browser/extensions are loaded at start">
-       <Puzzle/>Extensions
-      </span>
-     </div>
     </div>}
 
     <div className="terminal-log" ref={trail} role="log" aria-live="polite">
@@ -251,20 +253,10 @@ export default function BrowserPanel(){
      {error&&<div className="agent-notice error"><ShieldAlert/><span>{error}</span></div>}
     </div>
 
-    <form className="terminal-input-row" onSubmit={e=>{e.preventDefault();void go()}}>
-     <Globe/>
-     <input aria-label="What should Aira look up?" value={task} disabled={!connected||busy}
-      placeholder={connected?(busy?'Browsing…':'What should Aira look up?'):isDesktop?'Start the browser first':'Desktop app only'}
-      autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
-     {busy
-      ? <button type="button" onClick={interrupt} aria-label="Stop browsing"><Square/></button>
-      : <button type="submit" disabled={!connected||!task.trim()} aria-label="Start browsing"><Send/></button>}
-    </form>
-
-    <div className="terminal-shortcuts">
+    {connected&&!sent&&<div className="terminal-shortcuts">
      {['Summarise the top story on Hacker News','Find the latest Tauri release notes','What is on example.com?'].map(s=>
-      <button key={s} disabled={!connected||busy} onClick={()=>setTask(s)}>{s}</button>)}
-    </div>
+      <button key={s} disabled={busy} onClick={()=>setTask(s)}>{s}</button>)}
+    </div>}
    </div>
   </div>
  </section>;

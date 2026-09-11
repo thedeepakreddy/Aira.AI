@@ -693,34 +693,44 @@
 .browse-visited svg{width:10px;height:10px;flex-shrink:0}
 .browse-visited code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 
-/* The tab strip. These are the agent's tabs, so it is a view of what the
-   browser is doing as much as a control — the agent opens and closes its own
-   while it works, and the strip follows. */
-.browse-tabs{padding:9px 18px 11px;border-bottom:1px solid #ffffff0b;background:#ffffff03}
-.browse-tabstrip{display:flex;gap:6px;overflow-x:auto;padding-bottom:7px;scrollbar-width:thin;
-  scrollbar-color:#532c16 transparent}
-.browse-tab{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;max-width:190px;
-  padding:5px 8px 5px 10px;border-radius:8px;font-size:10.5px;color:#e8cdb8;
-  border:1px solid #ffffff14;background:#ffffff08}
+/* Browser chrome: a tab strip and one bar, which is all a browser really has.
+   The first version of this had a tab strip, a tab search box, a URL field, a
+   private toggle and an extensions badge stacked in two rows — a control panel
+   rather than a browser. An address bar that takes either an address or a
+   question is both simpler and closer to what people already use. */
+.browse-chrome{padding:8px 14px 10px;background:#ffffff03;border-bottom:1px solid #ffffff0b}
+.browse-tabstrip{display:flex;gap:3px;overflow-x:auto;scrollbar-width:none}
+.browse-tabstrip::-webkit-scrollbar{display:none}
+.browse-tab{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;max-width:190px;
+  padding:7px 8px 7px 12px;border-radius:9px 9px 0 0;font-size:11px;color:#e8cdb8;
+  background:#ffffff0a;border:1px solid #ffffff10;border-bottom:0}
 .browse-tab-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.browse-tab button{display:grid;place-items:center;width:15px;height:15px;padding:0;border:0;
-  border-radius:4px;background:none;color:#a1806a}
-.browse-tab button:hover{background:#ffffff14;color:#ffd9b8}
+.browse-tab button{display:grid;place-items:center;width:16px;height:16px;padding:0;border:0;
+  border-radius:50%;background:none;color:#a1806a;opacity:0;transition:opacity .15s}
+.browse-tab:hover button{opacity:1}
+.browse-tab button:hover{background:#ffffff18;color:#ffd9b8}
 .browse-tab button svg{width:10px;height:10px}
-.browse-tab.empty{color:#a1806a;border-style:dashed;background:none}
+.browse-tab-new{display:grid;place-items:center;width:28px;height:28px;flex-shrink:0;align-self:center;
+  margin-left:4px;padding:0;border:0;border-radius:50%;background:none;color:#a1806a}
+.browse-tab-new:hover{background:#ffffff12;color:#ffd9b8}
+.browse-tab-new svg{width:14px;height:14px}
 
-.browse-tabtools{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
-.browse-tabsearch,.browse-newtab{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;
-  border-radius:8px;border:1px solid #ffffff14;background:#ffffff07}
-.browse-tabsearch svg{width:12px;height:12px;color:#a1806a}
-.browse-tabsearch input,.browse-newtab input{border:0;background:none;color:#f0d9c8;font-size:10.5px;
-  width:118px;font-family:inherit}
-.browse-tabsearch input::placeholder,.browse-newtab input::placeholder{color:#a1806a}
-.browse-newtab button{display:grid;place-items:center;width:16px;height:16px;padding:0;border:0;
-  border-radius:4px;background:none;color:#e8945a}
-.browse-newtab button svg{width:12px;height:12px}
-.browse-private,.browse-ext{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;
-  border-radius:8px;font-size:10.5px;color:#c9a08a;border:1px solid #ffffff14;background:#ffffff07}
-.browse-private svg,.browse-ext svg{width:12px;height:12px}
-.browse-private.on{border-color:#ffa65266;color:#ffd9b8;background:linear-gradient(125deg,#fa8f1226,#d53a0026)}
-.browse-ext{margin-left:auto;cursor:default}
+/* One bar: an address, or a question. */
+.browse-bar{display:flex;align-items:center;gap:9px;margin:9px 0 0;padding:9px 13px;
+  border-radius:999px;border:1px solid #ffffff16;background:#ffffff08}
+.browse-bar:focus-within{border-color:#ffc57755;background:#ffffff0d}
+.browse-bar>svg{width:14px;height:14px;color:#a1806a;flex-shrink:0}
+.browse-bar input{flex:1;min-width:0;border:0;background:none;color:#f3dccb;font-size:12.5px;
+  font-family:inherit}
+.browse-bar input::placeholder{color:#9a7862}
+.browse-bar-go{display:grid;place-items:center;width:28px;height:28px;flex-shrink:0;padding:0;
+  border-radius:50%;border:1px solid #ffc57760;color:#fff6ea;
+  background:linear-gradient(125deg,#fa8f12,#d53a00)}
+.browse-bar-go svg{width:13px;height:13px}
+.browse-bar-go:disabled{opacity:.35;cursor:not-allowed;background:#ffffff0f;border-color:#ffffff1a}
+.browse-icon{display:grid;place-items:center;width:26px;height:26px;flex-shrink:0;padding:0;
+  border:0;border-radius:50%;background:none;color:#a1806a}
+.browse-icon svg{width:13px;height:13px}
+.browse-icon:hover{background:#ffffff12;color:#ffd9b8}
+.browse-icon.on{color:#ffd9b8;background:linear-gradient(125deg,#fa8f1233,#d53a0033)}
+.browse-icon.quiet{cursor:default;opacity:.55}
