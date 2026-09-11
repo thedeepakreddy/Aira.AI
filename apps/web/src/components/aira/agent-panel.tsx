@@ -188,13 +188,13 @@ export default function AgentPanel(){
  // with no explanation for why it will not do anything.
  const missing=Boolean(status&&!status.binary);
 
- if(!isDesktop)return <section className="cli-page screen-content" aria-label="Agent">
+ if(!isDesktop)return <section className="cli-page agent-page screen-content" aria-label="Agent">
   <div className="cli-heading"><div><span className="eyebrow">CODING AGENT</span><h1>Agent<span className="desktop-only"> workspace.</span></h1><p>Available in the desktop app.</p></div></div>
   <div className="cli-grid agent-grid">
   <div className="terminal-window"><div className="terminal-title"><Terminal/><span>aira — agent</span></div><div className="terminal-log"><div className="terminal-welcome"><span>Agent</span><p>The agent reads and edits files on your machine, so it runs in the Aira desktop app rather than a browser tab.</p></div></div></div></div>
  </section>;
 
- return <section className="cli-page screen-content" aria-label="Coding agent">
+ return <section className="cli-page agent-page screen-content" aria-label="Coding agent">
   <div className="cli-heading"><div><span className="eyebrow">CODING AGENT</span><h1>Agent<span className="desktop-only"> workspace.</span></h1><p>Give it a task. Approve what it does.</p></div>
    <div className="agent-controls">
     <span className="session-badge" role="status"><span/>{connected?'Agent running':'Not running'}</span>

@@ -476,3 +476,22 @@
 .agent-tool.done .agent-tool-icon{color:#7fc98a}
 .agent-tool.done .agent-tool-verb{color:#a1806a}
 .agent-tool.failed .agent-tool-icon{color:#ffb59f}
+
+/* ── Agent screen: centred heading, full-bleed panel ──────────────────────────
+   The terminal is the screen, so it takes the whole surface below the heading:
+   flush left, right and bottom, with the window's own 24px radius clipping the
+   bottom corners. The heading moves to the centre and carries the status badge
+   and power button under it, which is what frees the width the panel gains.
+   Desktop only — the narrow layout is a scrolling page with a fixed-height
+   terminal, and flattening it there would break the scroll. */
+@container app (min-width:761px){
+ .agent-page{padding:0;gap:0}
+ .agent-page .cli-heading{flex-direction:column;align-items:center;text-align:center;gap:13px;
+   padding:88px clamp(24px,5vw,72px) 20px}
+ .agent-page .cli-heading h1{margin:7px 0 0}
+ .agent-page .cli-heading p{margin:7px 0 0}
+ .agent-page .agent-controls{justify-content:center}
+ .agent-page .cli-grid{gap:0}
+ .agent-page .terminal-window{border-radius:0;border-left:0;border-right:0;border-bottom:0;
+   box-shadow:none}
+}
