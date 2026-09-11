@@ -65,7 +65,7 @@ export interface PermissionRequest {
 export type AgentEvent =
   | { kind: 'text'; sessionID: string; messageID: string; partID: string; delta: string }
   | { kind: 'permission'; request: PermissionRequest }
-  | { kind: 'permission-resolved'; id: string }
+  | { kind: 'permission-resolved'; id: string; reply?: string }
   | { kind: 'file-edited'; path: string }
   | { kind: 'idle'; sessionID: string }
   | { kind: 'other'; type: string };
@@ -191,9 +191,15 @@ export class OpenCodeClient {
           break;
         }
         case 'permission.replied':
-        case 'permission.v2.replied':
-          yield { kind: 'permission-resolved', id: p.id };
+        case 'permission.v2.replied': {
+          // The reply event names the request `requestID`, while the ask event
+          // names it `id`. Reading only `id` here left every prompt stuck
+          // showing its buttons after the user had already answered it.
+          const replied = p as unknown as { id?: string; requestID?: string; reply?: string };
+          const id = replied.requestID ?? replied.id;
+          if (id) yield { kind: 'permission-resolved', id, reply: replied.reply };
           break;
+        }
         case 'file.edited':
           yield { kind: 'file-edited', path: p.path ?? p.file ?? '' };
           break;

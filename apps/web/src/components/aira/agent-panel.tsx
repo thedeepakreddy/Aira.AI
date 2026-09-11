@@ -68,9 +68,11 @@ export default function AgentPanel(){
     switch(event.kind){
      case 'text':appendAgent(event.delta);break;
      case 'permission':setEntries(e=>[...e,{kind:'permission',request:event.request}]);break;
-     case 'permission-resolved':
-      setEntries(e=>e.map(x=>x.kind==='permission'&&x.request.id===event.id&&!x.resolved?{...x,resolved:'once'}:x));
-      break;
+     case 'permission-resolved':{
+      // Reflect what was actually chosen, including decisions made elsewhere.
+      const chosen=event.reply==='reject'?'reject':event.reply==='always'?'always':'once';
+      setEntries(e=>e.map(x=>x.kind==='permission'&&x.request.id===event.id&&!x.resolved?{...x,resolved:chosen}:x));
+      break;}
      case 'file-edited':if(event.path)note(`edited ${event.path}`);break;
      case 'idle':setBusy(false);break;
      default:break;
