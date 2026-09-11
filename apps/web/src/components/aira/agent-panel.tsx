@@ -2,7 +2,7 @@ import {useCallback,useEffect,useRef,useState} from 'react';
 import {Terminal,Power,Send,Folder,ChevronRight,ShieldAlert,FileEdit,Square} from 'lucide-react';
 import {isDesktop,supervisor,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest} from '@/lib/opencode';
 import {getAccessToken} from '@/lib/supabase';
-import {listModels} from '@/lib/gateway';
+import {listCatalogue} from '@/lib/gateway';
 
 /**
  * The OpenCode agent panel.
@@ -88,8 +88,11 @@ export default function AgentPanel(){
    // surface, which is the frontier tier.
    const token=await getAccessToken();
    if(!token)throw new Error('Sign in before starting the agent.');
-   const models=await listModels();
-   const model=models.find(m=>m.tier==='frontier')?.id??models[0]?.id;
+   // Ask the gateway what the `code` surface routes to rather than picking a
+   // model here: choosing locally would quietly bypass the routing rules and
+   // could land on a provider the gateway would not have used.
+   const {models,routing}=await listCatalogue();
+   const model=routing.code??models[0]?.id;
    if(!model)throw new Error('No models available from the gateway.');
    const gatewayUrl=(import.meta.env?.VITE_GATEWAY_URL as string|undefined)??'http://localhost:8787';
    const next=await supervisor.start({gatewayUrl,token,model});

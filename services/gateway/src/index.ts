@@ -6,6 +6,7 @@ import { loadEnv } from './env.ts';
 import { AnthropicProvider } from './providers/anthropic.ts';
 import { OpenAICompatibleProvider } from './providers/openai.ts';
 import { listModels, loadCatalogue } from './providers/registry.ts';
+import { routeModel } from './routing/router.ts';
 import type { ChatProvider } from './providers/types.ts';
 import { createChatRoute } from './routes/chat.ts';
 import { createOpenAIChatRoute, createOpenAIModelsRoute } from './routes/openai.ts';
@@ -55,11 +56,28 @@ app.get('/health', (c) =>
 const auth = createAuthMiddleware(env);
 
 /**
- * Catalogue for the model picker. Deliberately unauthenticated: it is the same
- * information a public pricing page carries, and requiring a session here would
- * leave the picker an empty, dead control on the signed-out screen.
+ * Catalogue for the model picker, plus what each surface currently routes to.
+ *
+ * Publishing the routing matters for callers that must name a model rather than
+ * a surface — the agent panel has to hand OpenCode a concrete model id, and
+ * without this it would have to guess, pick a different model than the gateway
+ * would have, and silently bypass the routing rules.
+ *
+ * Deliberately unauthenticated: it is the same information a public pricing
+ * page carries, and requiring a session would leave the picker an empty, dead
+ * control on the signed-out screen.
  */
-app.get('/v1/models', (c) => c.json({ models: listModels() }));
+app.get('/v1/models', (c) =>
+  c.json({
+    models: listModels(),
+    routing: {
+      chat: routeModel('chat').model,
+      voice: routeModel('voice').model,
+      code: routeModel('code').model,
+      task: routeModel('task').model,
+    },
+  }),
+);
 
 app.post('/v1/chat', auth, createChatRoute(providers));
 

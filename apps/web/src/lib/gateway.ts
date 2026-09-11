@@ -112,12 +112,15 @@ export interface ModelSpec {
   pricing?: { inputPerMTok: number; outputPerMTok: number };
 }
 
+/** What each surface currently routes to, as the gateway decides it. */
+export type SurfaceRouting = Partial<Record<'chat' | 'voice' | 'code' | 'task', string>>;
+
 /**
- * Model catalogue for the picker. Returns [] rather than throwing when the
- * gateway is unreachable or the session has expired — an empty picker is a
- * better failure than a blank screen.
+ * Model catalogue for the picker, plus the gateway's current routing. Returns
+ * empty values rather than throwing when the gateway is unreachable or the
+ * session has expired — an empty picker is a better failure than a blank screen.
  */
-export async function listModels(): Promise<ModelSpec[]> {
+export async function listCatalogue(): Promise<{ models: ModelSpec[]; routing: SurfaceRouting }> {
   const token = await getAccessToken();
   try {
     const response = await fetch(`${GATEWAY_URL}/v1/models`, {
@@ -126,10 +129,14 @@ export async function listModels(): Promise<ModelSpec[]> {
         ...(DEV_USER ? { 'x-aira-dev-user': DEV_USER } : {}),
       },
     });
-    if (!response.ok) return [];
-    const body = (await response.json()) as { models?: ModelSpec[] };
-    return body.models ?? [];
+    if (!response.ok) return { models: [], routing: {} };
+    const body = (await response.json()) as { models?: ModelSpec[]; routing?: SurfaceRouting };
+    return { models: body.models ?? [], routing: body.routing ?? {} };
   } catch {
-    return [];
+    return { models: [], routing: {} };
   }
+}
+
+export async function listModels(): Promise<ModelSpec[]> {
+  return (await listCatalogue()).models;
 }

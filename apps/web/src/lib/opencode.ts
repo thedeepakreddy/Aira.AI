@@ -159,17 +159,37 @@ export class OpenCodeClient {
           }
           break;
         case 'permission.asked':
-        case 'permission.v2.asked':
+        case 'permission.v2.asked': {
+          // The two event generations disagree, and the OpenAPI spec describes
+          // only the v2 shape: v1 sends `permission` + `patterns`, v2 sends
+          // `action` + `resources`. Reading only the documented names left the
+          // prompt with a blank action and no filenames, so both are accepted.
+          const raw = p as unknown as {
+            id: string;
+            sessionID: string;
+            permission?: string;
+            action?: string;
+            patterns?: string[];
+            resources?: string[];
+            metadata?: { filepath?: string };
+          };
+          const resources = raw.patterns ?? raw.resources ?? [];
           yield {
             kind: 'permission',
             request: {
-              id: p.id,
-              sessionID: p.sessionID,
-              action: p.action,
-              resources: (p.resources as unknown as string[]) ?? [],
+              id: raw.id,
+              sessionID: raw.sessionID,
+              action: raw.action ?? raw.permission ?? 'action',
+              // Absolute paths read better than the relative pattern form.
+              resources: resources.length
+                ? resources
+                : raw.metadata?.filepath
+                  ? [raw.metadata.filepath]
+                  : [],
             },
           };
           break;
+        }
         case 'permission.replied':
         case 'permission.v2.replied':
           yield { kind: 'permission-resolved', id: p.id };
