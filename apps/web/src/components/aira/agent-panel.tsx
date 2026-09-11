@@ -188,20 +188,23 @@ export default function AgentPanel(){
  // with no explanation for why it will not do anything.
  const missing=Boolean(status&&!status.binary);
 
- if(!isDesktop)return <section className="cli-page agent-page screen-content" aria-label="Agent">
-  <div className="cli-heading"><div><span className="eyebrow">CODING AGENT</span><h1>Agent<span className="desktop-only"> workspace.</span></h1><p>Available in the desktop app.</p></div></div>
-  <div className="cli-grid agent-grid">
-  <div className="terminal-window"><div className="terminal-title"><Terminal/><span>aira — agent</span></div><div className="terminal-log"><div className="terminal-welcome"><span>Agent</span><p>The agent reads and edits files on your machine, so it runs in the Aira desktop app rather than a browser tab.</p></div></div></div></div>
- </section>;
+ // The web build renders the same panel rather than a stripped-down stand-in.
+ // The agent needs the user's actual files, which a browser tab cannot reach,
+ // so the controls are disabled and the log says why — but the screen is the
+ // screen, and it should not change shape depending on how Aira was opened.
+ const reason=!isDesktop
+  ?'The agent reads and edits files on your machine, so it runs in the Aira desktop app rather than a browser tab.'
+  :missing?'OpenCode is not installed. Install it with: brew install opencode'
+  :'Press power to start the agent.';
 
  return <section className="cli-page agent-page screen-content" aria-label="Coding agent">
   <div className="cli-heading"><div><span className="eyebrow">CODING AGENT</span><h1>Agent<span className="desktop-only"> workspace.</span></h1><p>Give it a task. Approve what it does.</p></div>
    <div className="agent-controls">
-    <span className="session-badge" role="status"><span/>{connected?'Agent running':'Not running'}</span>
+    <span className="session-badge" role="status"><span/>{connected?'Agent running':isDesktop?'Not running':'Desktop app only'}</span>
     <button className={'agent-power '+(connected?'on':'')} onClick={connected?stop:start}
-     disabled={starting||!status?.binary}
+     disabled={starting||!isDesktop||!status?.binary}
      aria-label={connected?'Stop the agent':'Start the agent'}
-     title={status?.binary?(connected?'Stop the agent':'Start the agent'):'OpenCode is not installed'}>
+     title={!isDesktop?'The agent runs in the Aira desktop app':status?.binary?(connected?'Stop the agent':'Start the agent'):'OpenCode is not installed'}>
      <Power/>
     </button>
    </div></div>
@@ -214,7 +217,7 @@ export default function AgentPanel(){
 
     <div className="terminal-log" ref={log} role="log" aria-live="polite">
      <div className="terminal-welcome"><span>Aira Agent</span>
-      <p>{connected?'Describe a task. You approve every file edit and command.':missing?'OpenCode is not installed. Install it with: brew install opencode':'Press power to start the agent.'}</p>
+      <p>{connected?'Describe a task. You approve every file edit and command.':reason}</p>
      </div>
      {entries.map((entry,i)=>{
       if(entry.kind==='you')return <div className="terminal-entry" key={i}><div className="terminal-command"><span>❯</span> {entry.text}</div></div>;
@@ -241,7 +244,7 @@ export default function AgentPanel(){
     <form className="terminal-input-row" onSubmit={e=>{e.preventDefault();void send()}}>
      <ChevronRight/>
      <input aria-label="Task for the agent" value={task} disabled={!connected||busy}
-      placeholder={connected?(busy?'Working…':'Describe a task…'):'Start the agent first'}
+      placeholder={connected?(busy?'Working…':'Describe a task…'):isDesktop?'Start the agent first':'Available in the desktop app'}
       autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
      {busy
       ? <button type="button" onClick={()=>void interrupt()} aria-label="Interrupt the agent"><Square/></button>
