@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, Paperclip, Sparkles, Signal, Wifi, BatteryFull, X, Send, PauseCircle, PlayCircle, MessageCircle, Plus, Terminal, LogIn, LogOut } from 'lucide-react';
+import { Mic, MicOff, Paperclip, Sparkles, Signal, Wifi, BatteryFull, X, Send, PauseCircle, PlayCircle, MessageCircle, Plus, Terminal, LogIn, LogOut, Bot } from 'lucide-react';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 
 import {Sheet,SheetTrigger,SheetContent,SheetTitle,SheetDescription,SheetHeader} from '@/components/ui/sheet';
 import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
 import AgentPanel from './agent-panel';
+import TaskPanel from './task-panel';
 import Login from './login';
 import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
 import {streamChat,listModels,type ModelSpec} from '@/lib/gateway';
@@ -13,7 +14,7 @@ import {getSession,onAuthChange,signOut as authSignOut} from '@/lib/supabase';
 import {playOrb} from '@/lib/orb';
 import Markdown from './markdown';
 import VoiceScreen from './voice-screen';
-export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
+export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'tasks' | 'login';
 type View = 'auto'|'mobile'|'desktop';
 type Message = {role:'user'|'assistant'; text:string};
 const SUGGESTIONS = ['Deploy autonomous agent','Optimize gas for ZK-proofs','Audit my protocol'];
@@ -31,12 +32,13 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  const basePath=view==='auto'?'':'/'+view;
  function showScreen(next:Screen){
   setScreen(next);
-  const path=basePath+(next==='cli'?'/cli':next==='login'?'/login':'')||'/';
+  const path=basePath+(next==='cli'?'/cli':next==='tasks'?'/tasks':next==='login'?'/login':'')||'/';
   if(typeof window!=='undefined'&&window.location.pathname!==path)window.history.pushState({},'',path);
  }
  function newChat(){clearTimers();setCurrentId(null);setMessages([]);setDraft('');setAttachment('');setBusy(false);setHistoryOpen(false);showScreen('home')}
  function openConversation(conversation:Conversation){clearTimers();setCurrentId(conversation.id);setMessages(conversation.messages);setDraft('');setAttachment('');setBusy(false);setHistoryOpen(false);showScreen('chat')}
  function openCLI(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('cli')}
+ function openTasks(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('tasks')}
  function openLogin(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
  // onAuthChange is the single source of truth for signedIn; these only navigate.
  function completeLogin(){showScreen('home')}
@@ -167,9 +169,9 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   <footer className="history-footer"><p>{storageNotice||'Chat history is saved on this browser.'}</p><button className="history-account" onClick={signedIn?signOut:openLogin}>{signedIn?<LogOut/>:<LogIn/>}{signedIn?'Sign out':'Log in'}<span>Demo</span></button></footer>
  </SheetContent></Sheet>
  <button className="brand-home" onClick={goHome} aria-label="Aira by AskDeepakAI home"><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><small>{screen==='cli'?'Remote workspace':screen==='login'?'Your next chapter starts here':'Your AI workspace'}</small></button>
- <div className="app-header-actions">{screen!=='login'&&<><button className={'header-cli '+(screen==='cli'?'active':'')} onClick={screen==='cli'?goHome:openCLI}>{screen==='cli'?<MessageCircle/>:<Terminal/>}<span>{screen==='cli'?'Chat':'CLI'}</span></button><button className="account-button glass" onClick={signedIn?signOut:openLogin} aria-label={signedIn?'Sign out':'Log in'}>{signedIn?<LogOut/>:<LogIn/>}<span>{signedIn?'Sign out':'Log in'}</span></button></>}</div>
+ <div className="app-header-actions">{screen!=='login'&&<><button className={'header-cli '+(screen==='tasks'?'active':'')} onClick={screen==='tasks'?goHome:openTasks} title="Task agents"><Bot/><span className="desktop-only">Tasks</span></button><button className={'header-cli '+(screen==='cli'?'active':'')} onClick={screen==='cli'?goHome:openCLI}>{screen==='cli'?<MessageCircle/>:<Terminal/>}<span>{screen==='cli'?'Chat':'CLI'}</span></button><button className="account-button glass" onClick={signedIn?signOut:openLogin} aria-label={signedIn?'Sign out':'Log in'}>{signedIn?<LogOut/>:<LogIn/>}<span>{signedIn?'Sign out':'Log in'}</span></button></>}</div>
  </header>
- {screen==='login'?<Login onComplete={completeLogin} onBack={goHome} reduceMotion={reduceMotion}/>:screen==='cli'?<AgentPanel/>:
+ {screen==='login'?<Login onComplete={completeLogin} onBack={goHome} reduceMotion={reduceMotion}/>:screen==='cli'?<AgentPanel/>:screen==='tasks'?<TaskPanel/>:
  screen==='home'?<div className="screen-content" key="home">
  <section className="home-content"><h1>What are we<br/>building today?</h1><div className="suggestions" aria-label="Prompt suggestions">{SUGGESTIONS.map(text=><button className="suggestion" key={text} onClick={()=>{setDraft(text);textarea.current?.focus()}}><Sparkles/><span>{text}</span></button>)}</div></section>
  <form className="home-composer" onSubmit={event=>{event.preventDefault();submit()}}>

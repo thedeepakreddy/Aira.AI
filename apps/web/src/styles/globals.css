@@ -542,3 +542,126 @@
 .terminal-path-pick svg{width:12px;height:12px}
 .terminal-path-pick:hover:not(:disabled){background:#ffffff12;border-color:#ffc57755;color:#ffd9b8}
 .terminal-path-pick:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── Task agent canvas ────────────────────────────────────────────────────────
+   Agent cards arranged around the task, rather than a transcript: several
+   agents work at once, and a scrolling log makes concurrency look like a queue.
+   The reference this follows is lit in blue; Aira's accent is the orange the
+   rest of the app already uses, so the glow, the active border and the status
+   dots all come from that ramp. */
+.task-page .canvas{position:relative;flex:1;min-height:0;overflow:hidden;
+  background:radial-gradient(ellipse 70% 60% at 50% 45%,#ffffff07,transparent 70%),#070402}
+.task-page .canvas-stage{position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;gap:28px;padding:34px 30px 76px;overflow:auto;
+  zoom:var(--canvas-zoom,1)}
+
+.canvas-empty{display:flex;flex-direction:column;align-items:center;gap:14px;
+  max-width:420px;text-align:center;color:#b6977e;font-size:12.5px;line-height:1.65}
+.canvas-empty svg{width:26px;height:26px;color:#e8945a}
+.canvas-empty p{margin:0}
+
+.canvas-grid{display:flex;flex-direction:column;gap:20px;flex-shrink:0;max-height:100%}
+
+/* The task, centred, with the agents arranged around it. */
+.task-card{width:min(430px,42vw);flex-shrink:0;border-radius:16px;overflow:hidden;
+  border:1px solid #ffffff14;background:linear-gradient(150deg,#1a0c04e8,#0b0402f2);
+  box-shadow:0 30px 80px #0009}
+.task-card-head{padding:11px 14px 0}
+.task-chip{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:999px;
+  font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#e7c2a8;
+  border:1px solid #ffb26d25;background:#1c080055}
+.task-chip>span{width:5px;height:5px;border-radius:50%;background:#ffac5b}
+.task-card-body{padding:12px 15px 14px}
+.task-card-body p{margin:0;font-size:13px;line-height:1.6;color:#f3dccb}
+.task-card-body textarea{width:100%;resize:none;border:0;background:none;color:#f3dccb;
+  font-size:13px;line-height:1.6;font-family:inherit}
+.task-card-body textarea::placeholder{color:#9a7862}
+.task-card-status{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 15px;font-size:11px;color:#c9a08a;
+  background:linear-gradient(100deg,#ff8c2e2e,#ffffff05)}
+.task-card-status button{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#ffd0a4;
+  background:none;border:0;padding:0}
+.task-card-status button svg{width:12px;height:12px}
+.task-card-actions{display:flex;align-items:center;gap:9px;padding:11px 14px;
+  border-top:1px solid #ffffff0d}
+.task-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;padding:0;
+  border:1px solid #ffffff1a;background:#ffffff07;color:#dbbcaa}
+.task-icon svg{width:14px;height:14px}
+.task-icon.quiet{opacity:.45}
+.task-model{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:999px;
+  font-size:10.5px;color:#dbbcaa;border:1px solid #ffffff1a;background:#ffffff07;
+  max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-model svg{width:12px;height:12px;flex-shrink:0}
+.task-run{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;padding:0;
+  margin-left:auto;border:1px solid #ffa652;color:#fff6ea;
+  background:radial-gradient(circle at 30% 20%,#ffb423,#f87800 40%,#d42500 76%,#790200);
+  box-shadow:inset -3px -4px 7px #be1600,0 0 16px #f2570026}
+.task-run svg{width:14px;height:14px}
+.task-run:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+.task-run.stop{background:#ffffff0f;border-color:#ffffff24;box-shadow:none;color:#ffd0a4}
+
+/* An agent. Dark glass when idle; lit when it is the one doing the work. */
+.agent-node{width:248px;padding:13px 14px;border-radius:15px;
+  border:1px solid #ffffff12;background:linear-gradient(150deg,#16090330,#0a040226);
+  transition:border-color .3s,box-shadow .3s,background .3s;color:#f0d9c8}
+.agent-node.working{border-color:#ffa65273;
+  background:linear-gradient(150deg,#7a2f02cc,#3a1201e0);
+  box-shadow:0 0 34px #ff6a0033,inset 0 1px 0 #ffffff14}
+.agent-node.done{border-color:#7fc98a3d}
+.agent-node.error{border-color:#ff8a6b4a;background:linear-gradient(150deg,#4a120826,#160502cc)}
+.agent-node-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.agent-node-icon{display:grid;place-items:center;width:24px;height:24px;border-radius:8px;
+  border:1px solid #ffffff1a;background:#ffffff0a;color:#ffc689}
+.agent-node-icon svg{width:13px;height:13px}
+.agent-node-status{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;
+  font-size:9px;letter-spacing:.05em;color:#e7c2a8;border:1px solid #ffffff17;background:#ffffff08}
+.agent-node-status>span{width:5px;height:5px;border-radius:50%;background:#a1806a}
+.agent-node-status.working>span{background:#ffac5b;animation:node-pulse 1.4s ease-in-out infinite}
+.agent-node-status.done>span{background:#7fc98a}
+.agent-node-status.error>span{background:#ffb59f}
+@keyframes node-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.agent-node h2{margin:11px 0 2px;font-size:16px;font-weight:400;letter-spacing:-.4px;color:#fff6ea}
+.agent-node-sub{margin:0;font-size:10px;color:#a1806a}
+.agent-node-tags{list-style:none;margin:11px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+.agent-node-tags li{padding:5px 9px;border-radius:8px;font-size:10.5px;line-height:1.45;
+  color:#e8cdb8;background:#ffffff08;border:1px solid #ffffff0d;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-node-tags li.quiet{color:#a1806a;background:none;border-style:dashed}
+.agent-node-error{margin:11px 0 0;font-size:10.5px;line-height:1.5;color:#ffb59f}
+.agent-node-metrics{margin:12px 0 0;display:flex;flex-direction:column;gap:7px;font-size:10px}
+.agent-node-metrics>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.agent-node-metrics dt{display:inline-flex;align-items:center;gap:6px;color:#a1806a}
+.agent-node-metrics dt svg{width:11px;height:11px}
+.agent-node-metrics dd{margin:0;color:#f5c7a0}
+.agent-node-metrics dd.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9.5px}
+.agent-node-more{display:inline-flex;align-items:center;gap:3px;margin-top:11px;padding:0;
+  font-size:10px;color:#ffd0a4;background:none;border:0}
+.agent-node-more svg{width:11px;height:11px}
+.agent-node.open{width:330px}
+.agent-node.open .agent-node-tags li{white-space:normal}
+
+/* Canvas chrome: the two toolbars the reference floats over the board. */
+.canvas-tools,.canvas-meta{position:absolute;bottom:16px;display:flex;align-items:center;gap:6px;
+  padding:5px;border-radius:12px;border:1px solid #ffffff14;background:#0d060399;
+  backdrop-filter:blur(14px)}
+.canvas-tools{left:50%;transform:translateX(-50%)}
+.canvas-meta{right:16px;gap:8px;padding:5px 7px}
+.canvas-tools button{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;
+  padding:0;border:0;background:none;color:#c9a08a}
+.canvas-tools button:hover{background:#ffffff12;color:#ffd9b8}
+.canvas-tools button svg{width:14px;height:14px}
+.canvas-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:8px;
+  font-size:10px;color:#c9a08a}
+.canvas-pill svg{width:13px;height:13px}
+.canvas-pill.zoom button{padding:0 4px;background:none;border:0;color:#c9a08a;font-size:12px}
+.canvas-error{position:absolute;left:16px;bottom:16px;display:flex;align-items:center;gap:8px;
+  max-width:min(460px,60%);padding:9px 12px;border-radius:10px;font-size:11px;line-height:1.5;
+  border:1px solid #ff8a6b38;background:#4a1208e8;color:#ffb59f}
+.canvas-error svg{width:14px;height:14px;flex-shrink:0}
+
+@container app (max-width:760px){
+ .task-page .canvas-stage{flex-direction:column;padding:20px 14px 70px;zoom:1}
+ .task-card{width:100%}
+ .agent-node,.agent-node.open{width:100%}
+ .canvas-meta{display:none}
+}

@@ -149,6 +149,11 @@ fn build_config(gateway_url: &str, model: &str, port: u16, token: &str) -> serde
             "bind": "loopback",
             "port": port,
             "auth": { "token": token },
+            // Off by default. Aira drives the agent over this rather than the
+            // WebSocket control protocol: it is the same SSE shape the rest of
+            // the app already speaks, where the WS handshake is a challenge
+            // exchange with its own protocol versioning and device tokens.
+            "http": { "endpoints": { "chatCompletions": { "enabled": true } } },
         },
         // OpenClaw advertises the gateway over mDNS on start — "bonjour:
         // advertised gateway ... state=announcing" in its own log. Aira's
@@ -269,4 +274,94 @@ impl OpenClawState {
             let _ = running.child.wait();
         }
     }
+}
+
+// ── HTTP bridge ──────────────────────────────────────────────────────────────
+//
+// The webview cannot call OpenClaw directly. Its gateway sends no CORS headers
+// at all and answers 405 to a preflight, so from `tauri://localhost` every
+// response is discarded by the browser and every request that carries an
+// Authorization header never leaves. The server is reachable and healthy the
+// whole time, which makes it look like a hung agent rather than a blocked one.
+//
+// So the calls are made here, where the same-origin policy does not apply, and
+// only the result crosses back into the webview.
+
+fn client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .build()
+        .map_err(|e| format!("could not create an HTTP client: {e}"))
+}
+
+#[derive(Serialize)]
+pub struct AgentEntry {
+    pub id: String,
+    pub name: String,
+}
+
+#[tauri::command]
+pub async fn openclaw_agents(port: u16, token: String) -> Result<Vec<AgentEntry>, String> {
+    let body: serde_json::Value = client()?
+        .get(format!("http://127.0.0.1:{port}/v1/models"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the agent: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("the agent refused the request: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("the agent sent something unreadable: {e}"))?;
+
+    Ok(body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
+                // The bare "openclaw" entry is the same worker as the qualified
+                // default; both would put two cards on the canvas for one agent.
+                .filter(|id| id.contains('/'))
+                .map(|id| AgentEntry {
+                    id: id.to_string(),
+                    name: id.split('/').skip(1).collect::<Vec<_>>().join("/"),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn openclaw_run(
+    port: u16,
+    token: String,
+    agent: String,
+    message: String,
+) -> Result<String, String> {
+    let body: serde_json::Value = client()?
+        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "model": agent,
+            "messages": [{ "role": "user", "content": message }],
+            "stream": false,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the agent: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("the agent sent something unreadable: {e}"))?;
+
+    // A failed run comes back as a 200 with an error object: by the time an
+    // upstream provider gives up, the response has already started.
+    if let Some(error) = body.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+        return Err(error.to_string());
+    }
+    Ok(body
+        .pointer("/choices/0/message/content")
+        .and_then(|c| c.as_str())
+        .unwrap_or_default()
+        .to_string())
 }

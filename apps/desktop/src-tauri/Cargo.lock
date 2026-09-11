@@ -21,11 +21,13 @@ dependencies = [
 name = "aira"
 version = "0.1.0"
 dependencies = [
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tokio",
  "uuid",
 ]
 
