@@ -294,14 +294,24 @@
    original pixel for pixel; longer model names still expand it. */
 @container app (min-width:761px){.model-picker{min-width:102.703px}}
 
-/* The orb now carries its own rendered edge, so the container's outline reads
-   as a second ring drawn around it. Removed on every orb surface. */
+/* ── Orb ──────────────────────────────────────────────────────────────────────
+   The orb is a water-like sphere, which is the point: Aira is named for water.
+   The source was a white, glassy, iridescent render on a near-white backdrop,
+   so it is colour-graded to orange and cropped to the sphere *in the file*
+   rather than filtered in CSS.
+
+   That matters. Doing it with CSS filters meant five filters re-applied to
+   every frame of a scaled video, which stuttered playback and burned GPU
+   continuously on a hero element. Baking it into the asset costs nothing at
+   runtime, and dropped the file from 8.9 MB to 180 KB along the way.
+
+   The container's border is removed because the orb renders its own edge; an
+   outline around it reads as a second ring. */
 .desktop-orb-button{border:0}
 
-/* The sphere occupies 83.7% of its frame (measured off the video), leaving a
-   dark halo of its own backdrop inside the circular mask — a second ring in
-   everything but name. Scaling to 1.2 makes the sphere meet the mask edge. */
+/* The sphere is cropped to ~96% of the frame, so a hair of scale closes the
+   last of the backdrop inside the circular mask. */
 .desktop-orb-button video,.desktop-orb-button img,
 .login-orb video,.login-orb img,
 .orb-video,.orb-still,
-.avatar{transform:scale(1.2)}
+.avatar{transform:scale(1.06)}

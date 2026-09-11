@@ -10,6 +10,7 @@ import Login from './login';
 import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
 import {streamChat,listModels,type ModelSpec} from '@/lib/gateway';
 import {getSession,onAuthChange,signOut as authSignOut} from '@/lib/supabase';
+import {playOrb} from '@/lib/orb';
 export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'login';
 type View = 'auto'|'mobile'|'desktop';
 type Message = {role:'user'|'assistant'; text:string};
@@ -55,6 +56,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  const scrollRegion=useRef<HTMLDivElement>(null);
  const closeButton=useRef<HTMLButtonElement>(null);
  const orbVideo=useRef<HTMLVideoElement>(null);
+ const heroVideo=useRef<HTMLVideoElement>(null);
  const timers=useRef<ReturnType<typeof setTimeout>[]>([]);
  const screenRef=useRef(screen);
  screenRef.current=screen;
@@ -166,6 +168,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
   const timer=setTimeout(()=>sendMessage(PROMPT,true),1600);
   return()=>clearTimeout(timer);
  },[screen,paused,wordCount,words.length]);
+ useEffect(()=>playOrb(heroVideo.current,reduceMotion),[screen,reduceMotion]);
  useEffect(()=>{
   if(!orbVideo.current)return;
   if(paused||reduceMotion)orbVideo.current.pause();else void orbVideo.current.play().catch(()=>{});
@@ -203,7 +206,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  <textarea ref={textarea} aria-label="Ask AI a question or describe your idea" placeholder="Ask AI a question or describe your idea" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit()}}}/>
  {attachment&&<div className="attachment"><Paperclip/><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}
  <div className="composer-actions"><button type="button" className="glass icon-button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><Select value={model} onValueChange={value=>setModel(String(value))}><SelectTrigger className="model-picker" aria-label="Model"><SelectValue>{(value:unknown)=>models.find(m=>m.id===value)?.label??(models.length?'Auto':'Model')}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">Auto</SelectItem>{models.map(m=><SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>)}</SelectContent></Select><button className="mic-button" type="submit" aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
- <aside className="desktop-intro"><button className="desktop-orb-button" onClick={startVoice} aria-label="Start a voice conversation with Aira">{reduceMotion?<img src="/assets/orb.jpg" alt=""/>:<video src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay loop muted playsInline aria-hidden="true"/>}</button><span className="desktop-orb-caption">Meet Aira</span><h2>A thought away.</h2><p>Speak your next idea into life.</p><button className="desktop-voice-link" onClick={startVoice}><Mic/>Start a conversation<span aria-hidden="true">↗</span></button></aside>
+ <aside className="desktop-intro"><button className="desktop-orb-button" onClick={startVoice} aria-label="Start a voice conversation with Aira">{reduceMotion?<img src="/assets/orb.jpg" alt=""/>:<video ref={heroVideo} src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay loop muted playsInline aria-hidden="true"/>}</button><span className="desktop-orb-caption">Meet Aira</span><h2>A thought away.</h2><p>Speak your next idea into life.</p><button className="desktop-voice-link" onClick={startVoice}><Mic/>Start a conversation<span aria-hidden="true">↗</span></button></aside>
  </div>:<>
  <button ref={closeButton} className="close-chat glass" onClick={goHome}><X/>Close chat</button>
  {screen==='voice'?<section className="voice-screen screen-content" key="voice" aria-label="Voice demo">
