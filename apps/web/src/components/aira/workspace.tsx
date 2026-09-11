@@ -207,7 +207,7 @@ export default function Workspace({view='auto',initialScreen='home'}:{view?:View
  </div>:<>
  <button ref={closeButton} className="close-chat glass" onClick={goHome}><X/>Close chat</button>
  {screen==='voice'?<section className="voice-screen screen-content" key="voice" aria-label="Voice demo">
- <div className={'orb-wrap '+(paused?'is-paused':'')}><video ref={orbVideo} className="orb-video" src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay={!reduceMotion} loop muted playsInline preload="auto" aria-hidden="true"/><img className="orb-still" src="/assets/orb.jpg" alt="Glowing orange voice orb"/></div>
+ <div className={'orb-wrap '+(paused?'is-paused':'')}><video ref={orbVideo} className="orb-video" src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay={!reduceMotion} loop muted playsInline preload="auto" aria-hidden="true"/><img className="orb-still" src="/assets/orb.jpg" alt="Glowing orb"/></div>
  <p className="listening-status" aria-live="polite">{paused?'Aira is paused...':'Aira is listening...'}</p>
  <p className="transcript" aria-label={TRANSCRIPT}>{words.map((word,index)=><span key={index} className={index<wordCount?'spoken':'unspoken'} aria-hidden="true">{word} </span>)}</p>
  <div className="voice-actions"><button className="voice-secondary" aria-label={paused?'Resume voice demo':'Pause voice demo'} onClick={()=>setPaused(!paused)}>{paused?<PlayCircle/>:<PauseCircle/>}</button><div className="mic-orbit"><button className="mic-button voice-mic" onClick={()=>setPaused(!paused)} aria-label={paused?'Resume microphone demo':'Pause microphone demo'} aria-pressed={!paused}>{paused?<MicOff/>:<Mic/>}</button></div><button className="voice-secondary" onClick={()=>sendMessage(PROMPT,true)} aria-label="Send transcript"><Send/></button></div>
