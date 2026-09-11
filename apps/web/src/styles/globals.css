@@ -484,14 +484,52 @@
    and power button under it, which is what frees the width the panel gains.
    Desktop only — the narrow layout is a scrolling page with a fixed-height
    terminal, and flattening it there would break the scroll. */
+.agent-title-row{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+
 @container app (min-width:761px){
  .agent-page{padding:0;gap:0}
- .agent-page .cli-heading{flex-direction:column;align-items:center;text-align:center;gap:13px;
-   padding:88px clamp(24px,5vw,72px) 20px}
- .agent-page .cli-heading h1{margin:7px 0 0}
- .agent-page .cli-heading p{margin:7px 0 0}
- .agent-page .agent-controls{justify-content:center}
+ /* The heading is held to a fifth of the screen so the panel keeps the rest.
+    The title line starts level with the app header's buttons — the header is
+    brand-left and actions-right, so the centre of that band is free. */
+ .agent-page .cli-heading{flex-direction:column;align-items:center;text-align:center;gap:0;
+   padding:56px clamp(24px,5vw,72px) 12px}
+ /* A three-column grid rather than a centred flex row: centring the row as a
+    unit puts the title left of centre and leaves the eyebrow and subtitle
+    visibly out of line with it. Here the title owns the centre column and
+    the controls hang off its right. */
+ .agent-page .agent-title-row{display:grid;grid-template-columns:1fr auto 1fr;
+   align-items:center;width:100%;gap:0;margin-top:4px}
+ .agent-page .agent-title-row h1{grid-column:2}
+ .agent-page .agent-title-row .agent-controls{grid-column:3;justify-self:start;margin-left:22px}
+ .agent-page .cli-heading h1{font-size:clamp(27px,2.6vw,37px);letter-spacing:-1.4px;margin:0}
+ .agent-page .cli-heading p{margin:5px 0 0;font-size:12px}
  .agent-page .cli-grid{gap:0}
  .agent-page .terminal-window{border-radius:0;border-left:0;border-right:0;border-bottom:0;
    box-shadow:none}
+}
+
+/* Short windows: the app-header clearance plus three stacked lines stop fitting
+   in a fifth of a shorter screen, so the heading scales down rather than eating
+   into the panel. Everything stays on screen; it just gets smaller.
+
+   A media query, not a container one: `app` is declared `inline-size`, so it
+   answers width questions only. The window is the right frame here anyway —
+   the surface is the viewport height less the 20px stage padding. */
+/* Narrower than this, the title plus its controls reach under the app header's
+   own buttons. The badge is the part that goes: the power button's lit state
+   says the same thing, and the terminal's title bar carries the endpoint. */
+@media (max-width:1120px){
+ @container app (min-width:761px){
+  .agent-page .cli-heading .session-badge{display:none}
+ }
+}
+
+@media (max-height:800px){
+ @container app (min-width:761px){
+  .agent-page .cli-heading{padding-top:46px;padding-bottom:10px}
+  .agent-page .cli-heading h1{font-size:clamp(22px,2.2vw,29px);letter-spacing:-1px}
+  .agent-page .cli-heading p{font-size:11px;margin-top:3px}
+  .agent-page .agent-power{width:36px;height:36px}
+  .agent-page .agent-power svg{width:16px;height:16px}
+ }
 }

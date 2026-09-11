@@ -198,8 +198,13 @@ export default function AgentPanel(){
   :'Press power to start the agent.';
 
  return <section className="cli-page agent-page screen-content" aria-label="Coding agent">
-  <div className="cli-heading"><div><span className="eyebrow">CODING AGENT</span><h1>Agent<span className="desktop-only"> workspace.</span></h1><p>Give it a task. Approve what it does.</p></div>
-   <div className="agent-controls">
+  <div className="cli-heading">
+   <span className="eyebrow">CODING AGENT</span>
+   {/* Title and controls share a row: stacked, they cost the panel a fifth of
+       the screen for three lines of text. */}
+   <div className="agent-title-row">
+    <h1>Agent<span className="desktop-only"> workspace.</span></h1>
+    <div className="agent-controls">
     <span className="session-badge" role="status"><span/>{connected?'Agent running':isDesktop?'Not running':'Desktop app only'}</span>
     <button className={'agent-power '+(connected?'on':'')} onClick={connected?stop:start}
      disabled={starting||!isDesktop||!status?.binary}
@@ -207,7 +212,10 @@ export default function AgentPanel(){
      title={!isDesktop?'The agent runs in the Aira desktop app':status?.binary?(connected?'Stop the agent':'Start the agent'):'OpenCode is not installed'}>
      <Power/>
     </button>
-   </div></div>
+    </div>
+   </div>
+   <p>Give it a task. Approve what it does.</p>
+  </div>
 
   <div className="cli-grid agent-grid">
    <div className="terminal-window">
@@ -244,7 +252,7 @@ export default function AgentPanel(){
     <form className="terminal-input-row" onSubmit={e=>{e.preventDefault();void send()}}>
      <ChevronRight/>
      <input aria-label="Task for the agent" value={task} disabled={!connected||busy}
-      placeholder={connected?(busy?'Working…':'Describe a task…'):isDesktop?'Start the agent first':'Available in the desktop app'}
+      placeholder={connected?(busy?'Working…':'Describe a task…'):isDesktop?'Start the agent first':'Desktop app only'}
       autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
      {busy
       ? <button type="button" onClick={()=>void interrupt()} aria-label="Interrupt the agent"><Square/></button>
