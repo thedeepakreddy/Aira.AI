@@ -51,6 +51,11 @@ pub struct Status {
 /// tree, and installing that into a user's Python is a change to their machine
 /// that Aira has no business making.
 fn find_python() -> Option<String> {
+    if let Ok(path) = std::env::var("AIRA_BROWSER_PYTHON") {
+        if std::path::Path::new(&path).is_file() {
+            return Some(path);
+        }
+    }
     let home = std::env::var("HOME").ok()?;
     let path = format!("{home}/.aira/browser/venv/bin/python");
     std::path::Path::new(&path).exists().then_some(path)
@@ -59,15 +64,16 @@ fn find_python() -> Option<String> {
 /// The service script, which ships inside the app bundle.
 fn find_script() -> Option<String> {
     // Packaged: alongside the binary in Resources. Development: the repo.
-    let candidates = [
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|d| d.join("../Resources/browser/server.py"))),
-        Some(std::path::PathBuf::from("services/browser/server.py")),
-        std::env::var("HOME")
-            .ok()
-            .map(|h| std::path::PathBuf::from(h).join(".aira/browser/server.py")),
-    ];
+    let mut candidates = vec![std::env::current_exe().ok().and_then(|exe| {
+        exe.parent()
+            .map(|d| d.join("../Resources/browser/server.py"))
+    })];
+    if cfg!(debug_assertions) {
+        candidates.push(Some(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../services/browser/server.py"),
+        ));
+    }
     candidates
         .into_iter()
         .flatten()
@@ -91,7 +97,10 @@ fn drain(stderr: Option<std::process::ChildStderr>, log: Arc<Mutex<VecDeque<Stri
     let Some(stderr) = stderr else { return };
     std::thread::spawn(move || {
         use std::io::BufRead;
-        for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
             let mut guard = log.lock().unwrap();
             if guard.len() >= 60 {
                 guard.pop_front();
@@ -114,8 +123,23 @@ impl BrowserState {
     /// Called when the app exits, so a headless Chrome is never orphaned.
     pub fn shutdown(&self) {
         if let Some(mut running) = self.inner.lock().unwrap().take() {
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+            crate::runtime::terminate(&mut running.child);
+        }
+    }
+
+    pub fn connection(&self) -> Option<(u16, String)> {
+        self.reap();
+        self.inner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|r| (r.port, r.token.clone()))
+    }
+
+    fn authenticate(&self, port: u16, token: &str) -> Result<(), String> {
+        match self.connection() {
+            Some((owned_port, owned_token)) if owned_port == port && owned_token == token => Ok(()),
+            _ => Err("The browser session has ended. Reconnect the browser.".into()),
         }
     }
 }
@@ -147,13 +171,12 @@ pub fn browser_start(
     token: String,
     model: String,
 ) -> Result<Status, String> {
+    crate::runtime::validate_gateway(&gateway_url)?;
     state.reap();
-    {
-        let guard = state.inner.lock().unwrap();
-        if guard.is_some() {
-            drop(guard);
-            return Ok(browser_status(state));
-        }
+    let mut guard = state.inner.lock().unwrap();
+    if guard.is_some() {
+        drop(guard);
+        return Ok(browser_status(state));
     }
 
     let python = find_python().ok_or_else(|| {
@@ -180,9 +203,10 @@ pub fn browser_start(
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    if let Ok(home) = std::env::var("HOME") {
-        command.current_dir(home);
+    if let Some(parent) = std::path::Path::new(&script).parent() {
+        command.current_dir(parent);
     }
+    crate::runtime::prepare(&mut command);
 
     let child = command
         .spawn()
@@ -192,7 +216,7 @@ pub fn browser_start(
     let mut child = child;
     drain(child.stderr.take(), Arc::clone(&log));
 
-    *state.inner.lock().unwrap() = Some(Running {
+    *guard = Some(Running {
         child,
         port,
         token: service_token.clone(),
@@ -210,8 +234,7 @@ pub fn browser_start(
 #[tauri::command]
 pub fn browser_stop(state: State<'_, BrowserState>) -> Result<(), String> {
     if let Some(mut running) = state.inner.lock().unwrap().take() {
-        let _ = running.child.kill();
-        let _ = running.child.wait();
+        crate::runtime::terminate(&mut running.child);
     }
     Ok(())
 }
@@ -234,16 +257,40 @@ pub fn browser_log(state: State<'_, BrowserState>) -> Vec<String> {
 /// business rather than being re-declared on both sides.
 #[tauri::command]
 pub async fn browser_api(
+    state: State<'_, BrowserState>,
     port: u16,
     token: String,
     method: String,
     path: String,
     body: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
+    state.authenticate(port, &token)?;
+    let allowed = match method.as_str() {
+        "GET" => matches!(path.as_str(), "/health" | "/tabs" | "/screen"),
+        "POST" => matches!(
+            path.as_str(),
+            "/tabs/open"
+                | "/tabs/close"
+                | "/tabs/select"
+                | "/navigate"
+                | "/history"
+                | "/focus"
+                | "/input"
+                | "/mode"
+                | "/cancel"
+                | "/configure"
+        ),
+        _ => false,
+    };
+    if !allowed {
+        return Err("Unsupported browser operation".into());
+    }
     let url = format!("http://127.0.0.1:{port}{path}");
-    let client = reqwest::Client::new();
+    let client = crate::runtime::http_client(125)?;
     let request = match method.as_str() {
-        "POST" => client.post(&url).json(&body.unwrap_or(serde_json::json!({}))),
+        "POST" => client
+            .post(&url)
+            .json(&body.unwrap_or(serde_json::json!({}))),
         _ => client.get(&url),
     };
     let response = request
@@ -273,6 +320,7 @@ pub async fn browser_api(
 #[tauri::command]
 pub async fn browser_run(
     app: tauri::AppHandle,
+    state: State<'_, BrowserState>,
     port: u16,
     token: String,
     task: String,
@@ -282,23 +330,36 @@ pub async fn browser_run(
     use futures_util::StreamExt;
     use tauri::Emitter;
 
-    let response = reqwest::Client::new()
+    state.authenticate(port, &token)?;
+    let response = crate::runtime::http_client(910)?
         .post(format!("http://127.0.0.1:{port}/run"))
         .bearer_auth(&token)
-        .json(&serde_json::json!({ "task": task, "maxSteps": max_steps }))
+        .json(&serde_json::json!({ "task": task, "maxSteps": max_steps, "run": run }))
         .send()
         .await
         .map_err(|e| format!("could not reach the browsing agent: {e}"))?;
+    if !response.status().is_success() {
+        let body: serde_json::Value = response.json().await.unwrap_or_default();
+        return Err(body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("The browsing agent refused the run")
+            .to_string());
+    }
 
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer: Vec<u8> = Vec::new();
 
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| format!("the stream broke: {e}"))?;
-        buffer.push_str(&String::from_utf8_lossy(&bytes));
+        buffer.extend_from_slice(&bytes);
+        if buffer.len() > 2_000_000 {
+            return Err("Browser event exceeded the size limit".into());
+        }
         // Only whole frames: a chunk boundary can fall anywhere in one.
-        while let Some(cut) = buffer.find("\n\n") {
-            let frame: String = buffer.drain(..cut + 2).collect();
+        while let Some(cut) = buffer.windows(2).position(|w| w == b"\n\n") {
+            let raw: Vec<u8> = buffer.drain(..cut + 2).collect();
+            let frame = String::from_utf8(raw).map_err(|_| "Invalid UTF-8 browser event")?;
             let Some(data) = frame.lines().find_map(|l| l.strip_prefix("data: ")) else {
                 continue;
             };

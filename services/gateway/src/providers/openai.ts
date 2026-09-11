@@ -25,16 +25,24 @@ import {
 export class OpenAICompatibleProvider implements ChatProvider {
   readonly id: ProviderId;
   private readonly client: OpenAI;
+  private readonly maxTokensField: 'max_tokens' | 'max_completion_tokens';
 
   constructor(options: {
     id: ProviderId;
     apiKey: string;
     baseURL?: string;
     headers?: Record<string, string>;
+    maxTokensField?: 'max_tokens' | 'max_completion_tokens';
+    /** Injectable transport enables offline adapter contract tests. */
+    fetch?: NonNullable<ConstructorParameters<typeof OpenAI>[0]>['fetch'];
   }) {
     this.id = options.id;
+    this.maxTokensField = options.maxTokensField ?? (options.id === 'openai' ? 'max_completion_tokens' : 'max_tokens');
     this.client = new OpenAI({
       apiKey: options.apiKey,
+      timeout: 180_000,
+      maxRetries: 1,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
       ...(options.baseURL ? { baseURL: options.baseURL } : {}),
       ...(options.headers ? { defaultHeaders: options.headers } : {}),
     });
@@ -53,10 +61,19 @@ export class OpenAICompatibleProvider implements ChatProvider {
       const stream = await this.client.chat.completions.create(
         {
           model,
-          max_completion_tokens: maxTokens,
+          [this.maxTokensField]: maxTokens,
           stream: true,
           stream_options: { include_usage: true },
           ...(tools?.length ? { tools: toOpenAITools(tools) } : {}),
+          ...(request.toolChoice ? { tool_choice: typeof request.toolChoice === 'string' ? request.toolChoice : { type: 'function' as const, function: { name: request.toolChoice.name } } } : {}),
+          ...(request.parallelToolCalls !== undefined ? { parallel_tool_calls: request.parallelToolCalls } : {}),
+          ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+          ...(request.topP !== undefined ? { top_p: request.topP } : {}),
+          ...(request.stop?.length ? { stop: request.stop } : {}),
+          ...(request.responseFormat ? { response_format: request.responseFormat } : {}),
+          ...(request.reasoningEffort ? { reasoning_effort: request.reasoningEffort } : {}),
+          ...(request.frequencyPenalty !== undefined ? { frequency_penalty: request.frequencyPenalty } : {}),
+          ...(request.presencePenalty !== undefined ? { presence_penalty: request.presencePenalty } : {}),
           messages: [
             ...(system ? [{ role: 'system' as const, content: system }] : []),
             ...messages.map(toOpenAIMessage),
@@ -95,7 +112,10 @@ export class OpenAICompatibleProvider implements ChatProvider {
         }
       }
 
+      if (!stopReason) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
       for (const [, call] of [...pending].sort((a, b) => a[0] - b[0])) {
+        if (!call.id || !call.name) throw new ProviderError('The model returned an incomplete tool call.', true, 502);
+        try { JSON.parse(call.args || '{}'); } catch { throw new ProviderError('The model returned incomplete tool arguments. Please retry.', true, 502); }
         yield {
           type: 'tool_call',
           call: { id: call.id, name: call.name, arguments: call.args || '{}' },
@@ -121,11 +141,15 @@ function toOpenAITools(tools: ToolDefinition[]): OpenAI.Chat.ChatCompletionTool[
       name: t.name,
       ...(t.description ? { description: t.description } : {}),
       parameters: t.parameters as Record<string, unknown>,
+      ...(t.strict !== undefined ? { strict: t.strict } : {}),
     },
   }));
 }
 
 function toOpenAIMessage(message: ChatMessage): OpenAI.Chat.ChatCompletionMessageParam {
+  if (message.role === 'user' && message.contentParts?.length) return {
+    role: 'user', content: message.contentParts.map((part) => part.type === 'text' ? part : { type: 'image_url' as const, image_url: { url: part.url, ...(part.detail ? { detail: part.detail } : {}) } }),
+  };
   if (message.role === 'tool') {
     return { role: 'tool', tool_call_id: message.toolCallId ?? '', content: message.content };
   }
@@ -144,6 +168,7 @@ function toOpenAIMessage(message: ChatMessage): OpenAI.Chat.ChatCompletionMessag
 }
 
 function toProviderError(error: unknown): ProviderError {
+  if (error instanceof ProviderError) return error;
   if (error instanceof OpenAI.NotFoundError) {
     return new ProviderError('Model not found or unavailable.', false, 404);
   }
@@ -158,5 +183,5 @@ function toProviderError(error: unknown): ProviderError {
     const status = error.status ?? 500;
     return new ProviderError(humanize(error.message), status >= 500, status, error.message);
   }
-  return new ProviderError(error instanceof Error ? error.message : 'Unknown provider error', false);
+  return new ProviderError('The model request could not complete. Please retry.', false, 502, error instanceof Error ? error.message : undefined);
 }

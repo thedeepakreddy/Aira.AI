@@ -11,5 +11,18 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
-  server: { port: 5180 },
+  server: { port: 5180, strictPort: true, host: '127.0.0.1' },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/, priority: 30 },
+            { name: 'auth', test: /node_modules[\\/]@supabase[\\/]/, priority: 20 },
+            { name: 'controls', test: /node_modules[\\/]@base-ui[\\/]/, priority: 10 },
+          ],
+        },
+      },
+    },
+  },
 });

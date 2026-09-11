@@ -1,8 +1,8 @@
 -- Cross-surface memory for Aira.
 --
--- Run this once in the Supabase SQL editor. Until it exists the gateway keeps
--- memory in process, which works but does not survive a restart — it says which
--- mode it is in on the line it prints at boot.
+-- Run this and 002_memory_preferences.sql in the Supabase SQL editor. When
+-- Supabase is configured, missing migrations cause explicit memory errors;
+-- the gateway does not silently switch to a different persistence store.
 --
 -- Only the gateway touches this table. It holds the service_role key, so RLS is
 -- enabled with no policy: that denies every anon and authenticated client by

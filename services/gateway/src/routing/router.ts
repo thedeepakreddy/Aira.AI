@@ -1,4 +1,4 @@
-import { listModels } from '../providers/registry.ts';
+import { findModel, listModels } from '../providers/registry.ts';
 import type { Surface } from '../providers/types.ts';
 
 /**
@@ -42,11 +42,20 @@ export interface RouteDecision {
 export function routeModel(surface: Surface, explicitModel?: string): RouteDecision {
   if (explicitModel) return { model: explicitModel, reason: 'explicit' };
 
-  const override = process.env[ENV_KEYS[surface]];
+  const override = process.env[ENV_KEYS[surface]]?.trim();
   if (override) return { model: override, reason: 'env-override' };
 
   const tier = DEFAULT_TIERS[surface];
   const match = listModels().find((m) => m.tier === tier) ?? listModels()[0];
   if (!match) throw new Error('No models are configured in the catalogue.');
   return { model: match.id, reason: 'tier-default' };
+}
+
+/** Deployment mistakes fail at boot, before any client can spend a request. */
+export function validateRoutes(): void {
+  for (const [surface, key] of Object.entries(ENV_KEYS)) {
+    const model = process.env[key]?.trim();
+    if (model && !findModel(model)) throw new Error(`${key} names unavailable model "${model}" for ${surface}.`);
+  }
+  if (!listModels().length) throw new Error('No models are configured in the catalogue.');
 }

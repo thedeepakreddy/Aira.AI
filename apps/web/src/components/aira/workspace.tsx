@@ -1,196 +1,229 @@
-import { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, Paperclip, Sparkles, Signal, Wifi, BatteryFull, X, Send, PauseCircle, PlayCircle, MessageCircle, Plus, Terminal, LogIn, LogOut, Bot, Globe } from 'lucide-react';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Mic, Paperclip, Sparkles, X, Send, Square, MessageCircle, Plus, Terminal, LogIn, LogOut, Bot, Globe, Settings2, Trash2, RotateCcw, Loader2 } from 'lucide-react';
+import { Sheet, SheetTrigger, SheetContent, SheetTitle, SheetDescription, SheetHeader } from '@/components/ui/sheet';
+import ModelPicker from './model-picker';
+import { listModels, type ModelSpec } from '@/lib/gateway';
+import { getSession, onAuthChange, signOut as authSignOut } from '@/lib/supabase';
+import { playOrb } from '@/lib/orb';
+import { parseRoute, screenPath, type Screen, type View } from '@/lib/routes';
+import { readTextAttachment, TEXT_FILE_ACCEPT, type TextAttachment } from '@/lib/attachments';
+import { useChat } from '@/lib/use-chat';
+const AgentPanel = lazy(() => import('./agent-panel'));
+const TaskPanel = lazy(() => import('./task-panel'));
+const BrowserPanel = lazy(() => import('./browser-panel'));
+const ConnectionsPanel = lazy(() => import('./connections-panel'));
+const Login = lazy(() => import('./login'));
+const VoiceScreen = lazy(() => import('./voice-screen'));
+const Markdown = lazy(() => import('./markdown'));
+export type { Screen } from '@/lib/routes';
 
+const SUGGESTIONS = ['Build something useful', 'Research a new idea', 'Review my code'];
+const NAVIGATION = [
+  { screen: 'home', label: 'Chat', icon: MessageCircle },
+  { screen: 'browse', label: 'Browser', icon: Globe },
+  { screen: 'cli', label: 'Code', icon: Terminal },
+  { screen: 'tasks', label: 'Agents', icon: Bot },
+  { screen: 'connections', label: 'Workspace', icon: Settings2 },
+] as const;
+const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-import {Sheet,SheetTrigger,SheetContent,SheetTitle,SheetDescription,SheetHeader} from '@/components/ui/sheet';
-import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
-import AgentPanel from './agent-panel';
-import TaskPanel from './task-panel';
-import BrowserPanel from './browser-panel';
-import Login from './login';
-import {HISTORY_KEY,parseHistory,saveConversation,type Conversation} from '@/lib/workspace-state';
-import {streamChat,listModels,type ModelSpec} from '@/lib/gateway';
-import {getSession,onAuthChange,signOut as authSignOut} from '@/lib/supabase';
-import {playOrb} from '@/lib/orb';
-import Markdown from './markdown';
-import VoiceScreen from './voice-screen';
-export type Screen = 'home' | 'voice' | 'chat' | 'cli' | 'tasks' | 'browse' | 'login';
-type View = 'auto'|'mobile'|'desktop';
-type Message = {role:'user'|'assistant'; text:string};
-const SUGGESTIONS = ['Deploy autonomous agent','Optimize gas for ZK-proofs','Audit my protocol'];
-
-export default function Workspace({view='auto',initialScreen='home'}:{view?:View;initialScreen?:Screen}) {
- const [screen,setScreen]=useState<Screen>(initialScreen);
- const [historyOpen,setHistoryOpen]=useState(false);
- const [conversations,setConversations]=useState<Conversation[]>([]);
- const [currentId,setCurrentId]=useState<string|null>(null);
- const [historyReady,setHistoryReady]=useState(false);
- const [storageNotice,setStorageNotice]=useState('');
- const [signedIn,setSignedIn]=useState(false);
- const [models,setModels]=useState<ModelSpec[]>([]);
- const [model,setModel]=useState('');
- const basePath=view==='auto'?'':'/'+view;
- function showScreen(next:Screen){
-  setScreen(next);
-  const path=basePath+(next==='cli'?'/cli':next==='tasks'?'/tasks':next==='browse'?'/browse':next==='login'?'/login':'')||'/';
-  if(typeof window!=='undefined'&&window.location.pathname!==path)window.history.pushState({},'',path);
- }
- function newChat(){clearTimers();setCurrentId(null);setMessages([]);setDraft('');setAttachment('');setBusy(false);setHistoryOpen(false);showScreen('home')}
- function openConversation(conversation:Conversation){clearTimers();setCurrentId(conversation.id);setMessages(conversation.messages);setDraft('');setAttachment('');setBusy(false);setHistoryOpen(false);showScreen('chat')}
- function openCLI(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('cli')}
- function openTasks(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('tasks')}
- function openBrowse(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('browse')}
- function openLogin(){clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
- // onAuthChange is the single source of truth for signedIn; these only navigate.
- function completeLogin(){showScreen('home')}
- function signOut(){void authSignOut();clearTimers();setBusy(false);setHistoryOpen(false);showScreen('login')}
-
- const [draft,setDraft]=useState('');
- const [messages,setMessages]=useState<Message[]>([]);
- const [busy,setBusy]=useState(false);
- const [attachment,setAttachment]=useState('');
- const [reduceMotion,setReduceMotion]=useState(false);
- const fileInput=useRef<HTMLInputElement>(null);
- const textarea=useRef<HTMLTextAreaElement>(null);
- const scrollRegion=useRef<HTMLDivElement>(null);
- const closeButton=useRef<HTMLButtonElement>(null);
- const heroVideo=useRef<HTMLVideoElement>(null);
- const timers=useRef<ReturnType<typeof setTimeout>[]>([]);
- const screenRef=useRef(screen);
- screenRef.current=screen;
- const messagesRef=useRef<Message[]>(messages);
- messagesRef.current=messages;
- const request=useRef<AbortController|null>(null);
-
- function clearTimers(){timers.current.forEach(clearTimeout);timers.current=[];request.current?.abort();request.current=null}
- function later(fn:()=>void,ms:number){timers.current.push(setTimeout(fn,ms))}
- function goHome(){clearTimers();showScreen('home');setBusy(false)}
- function startVoice(){clearTimers();showScreen('voice');setBusy(false)}
- /** Appends streamed text to the open assistant bubble, or opens one. */
- function appendAssistant(text:string,started:boolean){
-  if(!started){setMessages(previous=>[...previous,{role:'assistant',text}]);return}
-  setMessages(previous=>{
-   const next=previous.slice();const last=next[next.length-1];
-   if(last?.role==='assistant')next[next.length-1]={...last,text:last.text+text};
-   return next;
-  });
- }
- async function runStream(history:Message[],conversationId:string){
-  const controller=new AbortController();request.current=controller;
-  let started=false;
-  try{
-   for await(const event of streamChat({
-    messages:history.map(m=>({role:m.role,content:m.text})),
-    surface:'chat',model:model||undefined,conversationId,signal:controller.signal,
-   })){
-    if(controller.signal.aborted)return;
-    if(event.type==='text'){
-     // The first token clears the thinking state and opens the bubble.
-     if(!started)setBusy(false);
-     appendAssistant(event.text,started);started=true;
-    }else if(event.type==='error'){
-     setBusy(false);appendAssistant(event.message,started);started=true;
-    }
-   }
-  }finally{
-   if(request.current===controller)request.current=null;
-   if(!controller.signal.aborted)setBusy(false);
-  }
- }
- function sendMessage(text:string){
-  const clean=text.trim(); if(!clean)return;
-  const continuing=screenRef.current==='chat';
-  clearTimers();
-  const conversationId=(!continuing||!currentId)?crypto.randomUUID():currentId;
-  if(conversationId!==currentId)setCurrentId(conversationId);
-  showScreen('chat');setDraft('');setAttachment('');setBusy(true);
-  const history:Message[]=[...(continuing?messagesRef.current:[]),{role:'user' as const,text:clean}];
-  setMessages(history);
-  void runStream(history,conversationId);
- }
- function submit(){if(busy)return;if(draft.trim())sendMessage(draft);else startVoice()}
- useEffect(()=>{
-  try{setConversations(parseHistory(localStorage.getItem(HISTORY_KEY)))}catch{setStorageNotice('History is available for this session only.')}
-  setHistoryReady(true);
-  function back(){
-   clearTimers();setBusy(false);setHistoryOpen(false);
-   const path=window.location.pathname;
-   setScreen(path.endsWith('/cli')?'cli':path.endsWith('/login')?'login':'home');
-  }
-  window.addEventListener('popstate',back);
-  return()=>window.removeEventListener('popstate',back);
- },[]);
- useEffect(()=>{
-  if(historyReady&&currentId&&messages.length)setConversations(previous=>saveConversation(previous,currentId,messages,Date.now()));
- },[messages,currentId,historyReady]);
- useEffect(()=>{
-  if(!historyReady)return;
-  try{localStorage.setItem(HISTORY_KEY,JSON.stringify(conversations))}catch{setStorageNotice('Browser storage is full or unavailable. New history stays in this session.')}
- },[conversations,historyReady]);
- useEffect(()=>{
-  void getSession().then(session=>setSignedIn(Boolean(session)));
-  return onAuthChange(session=>setSignedIn(Boolean(session)));
- },[]);
- useEffect(()=>{
-  let live=true;
-  void listModels().then(list=>{
-   if(!live)return;
-   setModels(list);
-   // Keep the user's choice if it survived; otherwise let the gateway route.
-   setModel(current=>list.some(m=>m.id===current)?current:'');
-  });
-  return()=>{live=false};
- },[signedIn]);
- useEffect(()=>{
-  const query=window.matchMedia('(prefers-reduced-motion: reduce)');
-  const update=()=>setReduceMotion(query.matches);update();query.addEventListener('change',update);
-  return()=>{query.removeEventListener('change',update);clearTimers()}
- },[]);
- useEffect(()=>{
-  if(screen==='voice'||screen==='chat')closeButton.current?.focus({preventScroll:true});
- },[screen]);
- useEffect(()=>{
-  function key(event:KeyboardEvent){if(event.key==='Escape'&&!event.defaultPrevented&&!historyOpen&&(screenRef.current==='voice'||screenRef.current==='chat'))goHome()}
-  window.addEventListener('keydown',key);
-  return()=>window.removeEventListener('keydown',key)
- },[screen,historyOpen]);
- useEffect(()=>{scrollRegion.current?.scrollTo({top:scrollRegion.current.scrollHeight,behavior:reduceMotion?'instant':'smooth'})},[messages,busy,reduceMotion]);
-
- return <div className={'viewport-frame view-'+view}><main className="stage"><div className="device"><div className={'surface '+screen}>
- <p className="sr-only">Aira workspace. Chat and voice are answered by a live model; the voice screen listens to your microphone while it is open.</p>
- <div className="status-bar" aria-hidden="true"><span>9:41</span><div className="island"/><div className="status-icons"><Signal/><Wifi/><BatteryFull/></div></div>
- <input ref={fileInput} className="sr-only" type="file" tabIndex={-1} onChange={event=>{setAttachment(event.target.files?.[0]?.name??'');event.target.value=''}}/>
- <header className={'home-header app-header '+(screen!=='home'?'in-session':'')}>
- <Sheet open={historyOpen} onOpenChange={setHistoryOpen}><SheetTrigger className="history-trigger glass" aria-label="Open chat history"><span className="menu-glyph" aria-hidden="true"><i/><i/><i/></span></SheetTrigger>
- <SheetContent side="left" className={"history-sheet "+(view==="mobile"?"mobile-sheet":"")}>
-  <SheetHeader><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><SheetTitle>Your workspace</SheetTitle><SheetDescription>Pick up a conversation or start something new.</SheetDescription></SheetHeader>
-  <Tabs defaultValue={screen==='cli'?'cli':'chat'} className="history-tabs"><TabsList aria-label="Workspace mode"><TabsTrigger value="chat"><MessageCircle/>Chat</TabsTrigger><TabsTrigger value="cli"><Terminal/>CLI</TabsTrigger></TabsList>
-  <TabsContent value="chat"><button className="new-chat-button warm-button" onClick={newChat}><Plus/>New chat</button><p className="history-label">CHAT HISTORY</p><div className="history-list">{conversations.length?conversations.map(conversation=><button className={'history-item '+(currentId===conversation.id?'selected':'')} key={conversation.id} onClick={()=>openConversation(conversation)}><MessageCircle/><span><strong>{conversation.title}</strong><small>{new Date(conversation.updatedAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</small></span></button>):<div className="history-empty"><MessageCircle/><p>A little space for big ideas.</p><span>Your conversations will appear here.</span></div>}</div></TabsContent>
-  <TabsContent value="cli"><div className="history-cli"><Terminal/><h3>Your remote workspace.</h3><p>Explore a terminal designed for your laptop and phone.</p><button className="warm-button" onClick={openCLI}>Open CLI<Send/></button><small>Front-end demo session</small></div></TabsContent></Tabs>
-  <footer className="history-footer"><p>{storageNotice||'Chat history is saved on this browser.'}</p><button className="history-account" onClick={signedIn?signOut:openLogin}>{signedIn?<LogOut/>:<LogIn/>}{signedIn?'Sign out':'Log in'}<span>Demo</span></button></footer>
- </SheetContent></Sheet>
- <button className="brand-home" onClick={goHome} aria-label="Aira by AskDeepakAI home"><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><small>{screen==='cli'?'Remote workspace':screen==='login'?'Your next chapter starts here':'Your AI workspace'}</small></button>
- <div className="app-header-actions">{screen!=='login'&&<><button className={'header-cli '+(screen==='browse'?'active':'')} onClick={screen==='browse'?goHome:openBrowse} title="Browsing agent"><Globe/><span className="desktop-only">Web</span></button><button className={'header-cli '+(screen==='tasks'?'active':'')} onClick={screen==='tasks'?goHome:openTasks} title="Task agents"><Bot/><span className="desktop-only">Tasks</span></button><button className={'header-cli '+(screen==='cli'?'active':'')} onClick={screen==='cli'?goHome:openCLI}>{screen==='cli'?<MessageCircle/>:<Terminal/>}<span>{screen==='cli'?'Chat':'CLI'}</span></button><button className="account-button glass" onClick={signedIn?signOut:openLogin} aria-label={signedIn?'Sign out':'Log in'}>{signedIn?<LogOut/>:<LogIn/>}<span>{signedIn?'Sign out':'Log in'}</span></button></>}</div>
- </header>
- {screen==='login'?<Login onComplete={completeLogin} onBack={goHome} reduceMotion={reduceMotion}/>:screen==='cli'?<AgentPanel/>:screen==='tasks'?<TaskPanel/>:screen==='browse'?<BrowserPanel/>:
- screen==='home'?<div className="screen-content" key="home">
- <section className="home-content"><h1>What are we<br/>building today?</h1><div className="suggestions" aria-label="Prompt suggestions">{SUGGESTIONS.map(text=><button className="suggestion" key={text} onClick={()=>{setDraft(text);textarea.current?.focus()}}><Sparkles/><span>{text}</span></button>)}</div></section>
- <form className="home-composer" onSubmit={event=>{event.preventDefault();submit()}}>
- <textarea ref={textarea} aria-label="Ask AI a question or describe your idea" placeholder="Ask AI a question or describe your idea" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit()}}}/>
- {attachment&&<div className="attachment"><Paperclip/><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}
- <div className="composer-actions"><button type="button" className="glass icon-button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><Select value={model} onValueChange={value=>setModel(String(value))}><SelectTrigger className="model-picker" aria-label="Model"><SelectValue>{(value:unknown)=>models.find(m=>m.id===value)?.label??(models.length?'Auto':'Model')}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">Auto</SelectItem>{models.map(m=><SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>)}</SelectContent></Select><button className="mic-button" type="submit" aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
- <aside className="desktop-intro"><button className="desktop-orb-button" onClick={startVoice} aria-label="Start a voice conversation with Aira">{reduceMotion?<img src="/assets/orb.jpg" alt=""/>:<video ref={heroVideo} src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay loop muted playsInline aria-hidden="true"/>}</button><span className="desktop-orb-caption">Meet Aira</span><h2>A thought away.</h2><p>Speak your next idea into life.</p><button className="desktop-voice-link" onClick={startVoice}><Mic/>Start a conversation<span aria-hidden="true">↗</span></button></aside>
- </div>:<>
- <button ref={closeButton} className="close-chat glass" onClick={goHome}><X/>{screen==='voice'?'Close conversation':'Close chat'}</button>
- {screen==='voice'?<VoiceScreen reduceMotion={reduceMotion}/>:<section className="chat-screen screen-content" key="chat" aria-label="Chat demo">
- <div className="messages" ref={scrollRegion} role="log" aria-live="polite" aria-relevant="additions text">{messages.map((message,index)=><div key={index} className={'message-row '+message.role}>{message.role==='assistant'&&<img src="/assets/orb.jpg" className="avatar" alt="Aira"/>}{message.role==="assistant"?<div className="message-bubble"><Markdown>{message.text}</Markdown></div>:<p className="message-bubble">{message.text}</p>}</div>)}{busy&&<p className="working-status">Aira is thinking…</p>}</div>
- <form className="chat-composer" onSubmit={e=>{e.preventDefault();submit()}}>{attachment&&<div className="attachment"><span>{attachment}</span><button type="button" aria-label="Remove attachment" onClick={()=>setAttachment('')}><X/></button></div>}<div className="chat-input-row"><button className="chat-icon" type="button" aria-label="Attach local file" onClick={()=>fileInput.current?.click()}><Paperclip/></button><input aria-label="Ask AI a question" placeholder="Ask AI a question" value={draft} onChange={e=>setDraft(e.target.value)}/><button className="chat-icon" type="submit" disabled={busy} aria-label={draft.trim()?'Send message':'Start voice demo'}>{draft.trim()?<Send/>:<Mic/>}</button></div></form>
- </section>}
- </>}
- <div className="home-indicator" aria-hidden="true"/>
- </div></div></main></div>
+export default function Workspace({ view = 'auto', initialScreen = 'home' }: { view?: View; initialScreen?: Screen }) {
+  const [identity, setIdentity] = useState<{ ready: boolean; id: string | null; error?: string }>({ ready: false, id: null });
+  useEffect(() => {
+    let live = true;
+    let changed = false;
+    let currentId: string | null | undefined;
+    let generation = 0;
+    const acceptIdentity = (id: string | null) => {
+      if (!live || currentId === id) return;
+      const initial = currentId === undefined;
+      currentId = id;
+      const request = ++generation;
+      if (initial || !isDesktop) { setIdentity({ ready: true, id }); return; }
+      // Do not let the next account adopt the prior account's active process
+      // or event stream while its panel cleanup is still awaiting native IPC.
+      setIdentity({ ready: false, id });
+      void import('@tauri-apps/api/core').then(async ({ invoke }) => {
+        const results = await Promise.allSettled(['opencode_stop', 'openclaw_stop', 'browser_stop'].map(command => invoke(command)));
+        if (results.some(result => result.status === 'rejected')) throw new Error('Could not stop all local tools. Close and reopen Aira before continuing with another account.');
+        if (live && request === generation) setIdentity({ ready: true, id });
+      }).catch(() => {
+        if (live && request === generation) setIdentity({ ready: false, id, error: 'Could not stop all local tools. Close and reopen Aira before continuing with another account.' });
+      });
+    };
+    const off = onAuthChange(session => { changed = true; acceptIdentity(session?.user.id ?? null); });
+    void getSession().then(session => { if (!changed) acceptIdentity(session?.user.id ?? null); })
+      .catch(() => { if (!changed) acceptIdentity(null); });
+    return () => { live = false; generation++; off(); };
+  }, []);
+  if (identity.error) return <main className="app-recovery" role="alert"><h1>Local tools need to close.</h1><p>{identity.error}</p></main>;
+  if (!identity.ready) return <div className="app-loading" role="status"><Loader2 className="spin" />Opening Aira…</div>;
+  return <WorkspaceContent key={identity.id ?? 'local'} view={view} initialScreen={initialScreen} userId={identity.id} />;
 }
 
+function WorkspaceContent({ view, initialScreen, userId }: { view: View; initialScreen: Screen; userId: string | null }) {
+  const [screen, setScreen] = useState<Screen>(() => parseRoute(window.location.pathname).screen || initialScreen);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [visited, setVisited] = useState<Set<Screen>>(() => new Set([screen]));
+  const [draft, setDraft] = useState('');
+  const [attachment, setAttachment] = useState<TextAttachment>();
+  const [filePending, setFilePending] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [models, setModels] = useState<ModelSpec[]>([]);
+  const [model, setModel] = useState('');
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const scrollRegion = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+  const heroVideo = useRef<HTMLVideoElement>(null);
+  const fileRead = useRef(0);
+  const chat = useChat(userId);
+  const signedIn = Boolean(userId);
 
+  const showScreen = useCallback((next: Screen) => {
+    setScreen(next);
+    setVisited(previous => new Set([...previous, next]));
+    setHistoryOpen(false);
+    setNotice('');
+    const path = screenPath(view, next);
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
+  }, [view]);
 
+  function newChat() { chat.reset(); setDraft(''); removeAttachment(); showScreen('home'); }
+  async function signOut() {
+    try { await authSignOut(); chat.stop(); showScreen('login'); }
+    catch { setNotice('Sign out failed. Please try again.'); }
+  }
+
+  useEffect(() => {
+    const back = () => {
+      const next = parseRoute(window.location.pathname).screen;
+      setScreen(next); setVisited(previous => new Set([...previous, next])); setHistoryOpen(false);
+    };
+    window.addEventListener('popstate', back);
+    return () => window.removeEventListener('popstate', back);
+  }, []);
+
+  const refreshModels = useCallback(async () => {
+    const list = await listModels();
+    setModels(list);
+    setModel(current => list.some(item => item.id === current) ? current : '');
+  }, []);
+  useEffect(() => { void refreshModels(); }, [refreshModels]);
+
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReduceMotion(query.matches);
+    update(); query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  useEffect(() => playOrb(heroVideo.current, reduceMotion), [screen, reduceMotion]);
+  useEffect(() => {
+    if (screen === 'chat' && stickToBottom.current) scrollRegion.current?.scrollTo({ top: scrollRegion.current.scrollHeight, behavior: reduceMotion || chat.busy ? 'instant' : 'smooth' });
+  }, [chat.messages, chat.busy, reduceMotion, screen]);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented && !historyOpen && (screen === 'voice' || screen === 'chat')) showScreen('home');
+      if ((event.metaKey || event.ctrlKey) && event.key === 'k') { event.preventDefault(); setHistoryOpen(open => !open); }
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [screen, historyOpen, showScreen]);
+
+  async function attach(file?: File) {
+    if (!file) return;
+    const version = ++fileRead.current;
+    setFilePending(true); setNotice('');
+    try { const result = await readTextAttachment(file); if (fileRead.current === version) setAttachment(result); }
+    catch (cause) { if (fileRead.current === version) setNotice(cause instanceof Error ? cause.message : 'Could not read the file.'); }
+    finally { if (fileRead.current === version) setFilePending(false); }
+  }
+  function submit() {
+    if (filePending || chat.busy) return;
+    if (!draft.trim() && !attachment) { showScreen('voice'); return; }
+    if (chat.send(draft, model, attachment, screen === 'home')) {
+      setDraft(''); setAttachment(undefined); setNotice(''); stickToBottom.current = true; showScreen('chat');
+    }
+  }
+  function removeAttachment() { fileRead.current++; setFilePending(false); setAttachment(undefined); }
+
+  const fileChip = attachment && <div className="attachment"><Paperclip /><span>{attachment.name}</span><button type="button" aria-label="Remove attachment" onClick={removeAttachment}><X /></button></div>;
+
+  return <div className={'viewport-frame view-' + view + (isDesktop ? ' native-desktop' : '')}>
+    <main className="stage"><div className="device"><div className={'surface ' + screen}>
+      <input ref={fileInput} className="sr-only" type="file" accept={TEXT_FILE_ACCEPT} tabIndex={-1} onChange={event => { void attach(event.target.files?.[0]); event.target.value = ''; }} />
+      <header className={'home-header app-header ' + (screen !== 'home' ? 'in-session' : '')}>
+        <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+          <SheetTrigger className="history-trigger glass" aria-label="Open workspace navigation"><span className="menu-glyph" aria-hidden="true"><i /><i /><i /></span></SheetTrigger>
+          <SheetContent side="left" className={'history-sheet ' + (view === 'mobile' ? 'mobile-sheet' : '')}>
+            <SheetHeader><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><SheetTitle>Your workspace</SheetTitle><SheetDescription>Your ideas, conversations, and tools.</SheetDescription></SheetHeader>
+            <nav className="workspace-navigation" aria-label="Workspace">
+              {NAVIGATION.map(item => <button key={item.screen} aria-current={screen === item.screen ? 'page' : undefined} onClick={() => showScreen(item.screen)}><item.icon />{item.label}</button>)}
+            </nav>
+            <button className="new-chat-button warm-button" onClick={newChat}><Plus />New chat</button>
+            <div className="history-scroll"><p className="history-label">RECENT CONVERSATIONS</p>
+              <div className="history-list">{chat.conversations.length ? chat.conversations.map(conversation =>
+                <div className="history-row" key={conversation.id}>
+                  <button className={'history-item ' + (chat.currentId === conversation.id ? 'selected' : '')} onClick={() => { chat.open(conversation); setDraft(''); removeAttachment(); stickToBottom.current = true; showScreen('chat'); }}><MessageCircle /><span><strong>{conversation.title}</strong><small>{new Date(conversation.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</small></span></button>
+                  <button className="history-delete" aria-label={'Delete conversation: ' + conversation.title} onClick={() => chat.remove(conversation.id)}><Trash2 /></button>
+                </div>)
+                : <div className="history-empty"><MessageCircle /><p>A little space for big ideas.</p><span>Your conversations will appear here.</span></div>}
+              </div>
+            </div>
+            <footer className="history-footer"><p>{chat.storageNotice || 'History is saved for this account on this device.'}</p><button className="history-account" onClick={signedIn ? () => void signOut() : () => showScreen('login')}>{signedIn ? <LogOut /> : <LogIn />}{signedIn ? 'Sign out' : 'Log in'}<span>{isDesktop ? 'Desktop' : 'Web'}</span></button></footer>
+          </SheetContent>
+        </Sheet>
+        <button className="brand-home" onClick={() => showScreen('home')} aria-label="Aira home"><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><small>Your AI workspace</small></button>
+        <nav className="app-header-actions" aria-label="Main navigation">
+          {NAVIGATION.filter(item => item.screen !== 'home').map(item => <button key={item.screen} className={'header-cli ' + (screen === item.screen ? 'active' : '')} aria-label={item.label} aria-current={screen === item.screen ? 'page' : undefined} onClick={() => showScreen(item.screen)}><item.icon /><span>{item.label}</span></button>)}
+          <button className="account-button glass" onClick={signedIn ? () => void signOut() : () => showScreen('login')} aria-label={signedIn ? 'Sign out' : 'Log in'}>{signedIn ? <LogOut /> : <LogIn />}<span>{signedIn ? 'Sign out' : 'Log in'}</span></button>
+        </nav>
+      </header>
+      {notice && <div className="workspace-notice" role="alert"><span>{notice}</span><button aria-label="Dismiss message" onClick={() => setNotice('')}><X /></button></div>}
+      {visited.has('cli') && <div hidden={screen !== 'cli'}><Suspense fallback={<PanelLoading />}><AgentPanel /></Suspense></div>}
+      {visited.has('tasks') && <div hidden={screen !== 'tasks'}><Suspense fallback={<PanelLoading />}><TaskPanel /></Suspense></div>}
+      {visited.has('browse') && <div hidden={screen !== 'browse'}><Suspense fallback={<PanelLoading />}><BrowserPanel active={screen === 'browse' && !historyOpen} /></Suspense></div>}
+      {screen === 'connections' && <Suspense fallback={<PanelLoading />}><ConnectionsPanel onModelsChanged={refreshModels} /></Suspense>}
+      {screen === 'login' && <Suspense fallback={<PanelLoading />}><Login onComplete={() => showScreen('home')} onBack={() => showScreen('home')} reduceMotion={reduceMotion} /></Suspense>}
+      {screen === 'home' && <div className="screen-content" key="home">
+        <section className="home-content"><h1>What are we<br />building today?</h1><div className="suggestions" aria-label="Prompt suggestions">{SUGGESTIONS.map(text => <button className="suggestion" key={text} onClick={() => { setDraft(text); textarea.current?.focus(); }}><Sparkles /><span>{text}</span></button>)}</div></section>
+        <form className="home-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
+          <textarea ref={textarea} aria-label="Ask AI a question or describe your idea" placeholder="Ask AI a question or describe your idea" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} />
+          {fileChip}
+          <div className="composer-actions">
+            <button type="button" className="glass icon-button" aria-label="Attach text or code file" disabled={filePending} onClick={() => fileInput.current?.click()}>{filePending ? <Loader2 className="spin" /> : <Paperclip />}</button>
+            <ModelPicker models={models} value={model} onChange={setModel} disabled={chat.busy} />
+            {chat.busy ? <button key="stop" className="mic-button" type="button" aria-label="Stop response" onClick={event => { event.preventDefault(); chat.stop(); }}><Square /></button>
+              : <button className="mic-button" type="submit" disabled={filePending} aria-label={draft.trim() || attachment ? 'Send message' : 'Start voice conversation'}>{draft.trim() || attachment ? <Send /> : <Mic />}</button>}
+          </div>
+          {chat.busy && <button type="button" className="background-chat" onClick={() => showScreen('chat')}>Aira is replying · Return to chat</button>}
+        </form>
+        <aside className="desktop-intro"><button className="desktop-orb-button" onClick={() => showScreen('voice')} aria-label="Start a voice conversation with Aira">{reduceMotion ? <img src="/assets/orb.jpg" alt="" /> : <video ref={heroVideo} src="/assets/orb.mp4" poster="/assets/orb.jpg" autoPlay loop muted playsInline aria-hidden="true" />}</button><span className="desktop-orb-caption">Meet Aira</span><h2>A thought away.</h2><p>Speak your next idea into life.</p><button className="desktop-voice-link" onClick={() => showScreen('voice')}><Mic />Start a conversation<span aria-hidden="true">↗</span></button></aside>
+      </div>}
+      {(screen === 'voice' || screen === 'chat') && <button className="close-chat glass" onClick={() => showScreen('home')}><X />{screen === 'voice' ? 'Close conversation' : 'Close chat'}</button>}
+      {screen === 'voice' && <Suspense fallback={<PanelLoading />}><VoiceScreen reduceMotion={reduceMotion} /></Suspense>}
+      {screen === 'chat' && <section className="chat-screen screen-content" aria-label="Chat">
+        <div className="messages" ref={scrollRegion} onScroll={event => { const element = event.currentTarget; stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100; }} role="log" aria-live="polite" aria-relevant="additions text">
+          {!chat.messages.length && <div className="chat-empty"><MessageCircle /><h2>A new conversation.</h2><p>Ask a question or attach a text file to get started.</p></div>}
+          {chat.messages.map((message, index) => <div key={index} className={'message-row ' + message.role}>
+            {message.role === 'assistant' && <img src="/assets/orb.jpg" className="avatar" alt="Aira" />}
+            {message.role === 'assistant' ? <div className="message-bubble"><Suspense fallback={<p>{message.text}</p>}><Markdown>{message.text}</Markdown></Suspense></div>
+              : <div className="message-bubble"><p>{message.text}</p>{message.attachment && <span className="message-file"><Paperclip />{message.attachment.name}</span>}</div>}
+          </div>)}
+          {chat.busy && <p className="working-status" role="status">{chat.messages.at(-1)?.role === 'assistant' ? 'Aira is responding…' : 'Aira is thinking…'}</p>}
+          {chat.error && <div className="chat-error" role="alert"><p>{chat.error}</p><button type="button" onClick={() => chat.retry(model)} disabled={chat.busy}><RotateCcw />Retry response</button><button type="button" onClick={() => showScreen('connections')}><Settings2 />Connections</button></div>}
+        </div>
+        <form className="chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
+          {fileChip}
+          <div className="chat-input-row"><button className="chat-icon" type="button" aria-label="Attach text or code file" disabled={filePending} onClick={() => fileInput.current?.click()}>{filePending ? <Loader2 className="spin" /> : <Paperclip />}</button><input aria-label="Ask AI a question" placeholder="Ask AI a question" value={draft} onChange={event => setDraft(event.target.value)} />
+            {chat.busy ? <button key="stop" className="chat-icon" type="button" onClick={event => { event.preventDefault(); chat.stop(); }} aria-label="Stop response"><Square /></button> : <button key="send" className="chat-icon" type="submit" disabled={filePending} aria-label={draft.trim() || attachment ? 'Send message' : 'Start voice conversation'}>{draft.trim() || attachment ? <Send /> : <Mic />}</button>}
+          </div>
+          <div className="chat-composer-meta"><ModelPicker models={models} value={model} onChange={setModel} disabled={chat.busy} /><span>{chat.answeredBy ? models.find(item => item.id === chat.answeredBy)?.label ?? chat.answeredBy : 'Choose a model or let Aira route'}{chat.busy ? ' · Responding' : ''}</span></div>
+        </form>
+      </section>}
+    </div></div></main>
+  </div>;
+}
+
+function PanelLoading() { return <div className="panel-loading screen-content" role="status"><Loader2 className="spin" />Opening your workspace…</div>; }

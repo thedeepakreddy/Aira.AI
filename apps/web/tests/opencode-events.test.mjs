@@ -1,7 +1,9 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { OpenCodeClient } from '../src/lib/opencode.ts';
+const originalFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = originalFetch; });
 
 /**
  * These fixtures are real events captured from a live OpenCode server during an
@@ -14,7 +16,7 @@ const fixtures = JSON.parse(
 );
 
 /** Feeds raw events through the client's normaliser and collects the output. */
-async function normalise(events) {
+async function normalise(events, sessionID) {
   const body = new ReadableStream({
     start(controller) {
       for (const event of events) {
@@ -23,10 +25,10 @@ async function normalise(events) {
       controller.close();
     },
   });
-  globalThis.fetch = async () => ({ body });
+  globalThis.fetch = async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } });
   const client = new OpenCodeClient(1234, 'pw');
   const out = [];
-  for await (const e of client.events(new AbortController().signal)) out.push(e);
+  for await (const e of client.events(new AbortController().signal, sessionID)) out.push(e);
   return out;
 }
 
@@ -132,10 +134,58 @@ test('malformed frames do not kill the stream', async () => {
       c.close();
     },
   });
-  globalThis.fetch = async () => ({ body });
+  globalThis.fetch = async () => new Response(body);
   const client = new OpenCodeClient(1234, 'pw');
   const out = [];
   for await (const e of client.events(new AbortController().signal)) out.push(e);
   assert.equal(out.length, 1, 'the good frame still arrives');
   assert.equal(out[0].kind, 'text');
+});
+
+test('one coding session never receives another session’s text, tools or idle events', async () => {
+  const out = await normalise([
+    { type: 'message.part.delta', properties: { sessionID: 'other', field: 'text', delta: 'private' } },
+    { type: 'message.part.updated', properties: { part: { id: 'p', sessionID: 'other', type: 'tool', tool: 'bash' } } },
+    { type: 'session.idle', properties: { sessionID: 'other' } },
+    { type: 'message.part.delta', properties: { sessionID: 'mine', field: 'text', delta: 'visible', partID: 'p2', messageID: 'm2' } },
+  ], 'mine');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].delta, 'visible');
+});
+
+test('HTTP event failures reject instead of pretending to be an idle agent', async () => {
+  globalThis.fetch = async () => new Response('denied', { status: 401 });
+  const client = new OpenCodeClient(1234, 'pw');
+  await assert.rejects(async () => {
+    for await (const unused of client.events(new AbortController().signal)) void unused;
+  }, /401/);
+});
+
+test('async task acceptance handles 204 and retains user text exactly', async () => {
+  let captured;
+  globalThis.fetch = async (url, init) => {
+    captured = { url, init };
+    return new Response(null, { status: 204 });
+  };
+  await new OpenCodeClient(1234, 'pw').sendMessage('session/a', 'Write tests\nThen run them');
+  assert.match(captured.url, /session\/session%2Fa\/prompt_async$/);
+  assert.deepEqual(JSON.parse(captured.init.body), { parts: [{ type: 'text', text: 'Write tests\nThen run them' }] });
+  assert.match(captured.init.headers.Authorization, /^Basic /);
+});
+
+test('session status and errors are visible to the coding panel', async () => {
+  const out = await normalise([
+    { type: 'session.status', properties: { sessionID: 'mine', status: { type: 'busy' } } },
+    { type: 'session.error', properties: { sessionID: 'mine', error: { name: 'APIError', data: { message: 'Provider quota exhausted' } } } },
+  ], 'mine');
+  assert.equal(out[0].status, 'busy');
+  assert.equal(out[1].kind, 'error');
+  assert.equal(out[1].message, 'Provider quota exhausted');
+});
+
+test('recovered permission requests support the live v1 field names', async () => {
+  globalThis.fetch = async () => Response.json([{ id: 'per_a', sessionID: 'mine', permission: 'edit', patterns: ['src/main.ts'] }]);
+  const [request] = await new OpenCodeClient(1234, 'pw').permissions();
+  assert.equal(request.action, 'edit');
+  assert.deepEqual(request.resources, ['src/main.ts']);
 });

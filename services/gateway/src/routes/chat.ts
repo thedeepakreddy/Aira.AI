@@ -13,6 +13,7 @@ import { routeModel } from '../routing/router.ts';
 import { browseTools } from '../tools/browse.ts';
 import { contextFor, record, withContext } from '../memory/context.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
+import { invalid, object, parseToolCalls, tokenLimit, validateConversation } from './validation.ts';
 
 const SURFACES: Surface[] = ['chat', 'voice', 'code', 'task'];
 
@@ -42,13 +43,18 @@ function parseBody(body: ChatBody): {
     const msg = m as Partial<ChatMessage>;
     if (
       !msg ||
-      (msg.role !== 'user' && msg.role !== 'assistant') ||
+      !['user', 'assistant', 'tool'].includes(msg.role ?? '') ||
       typeof msg.content !== 'string'
     ) {
-      throw new ProviderError(`messages[${i}] must be {role:'user'|'assistant', content:string}.`, false, 400);
+      throw new ProviderError(`messages[${i}] needs a user, assistant or tool role and string content.`, false, 400);
     }
-    return { role: msg.role, content: msg.content };
+    return { role: msg.role!, content: msg.content, ...(msg.role === 'assistant' && msg.toolCalls ? { toolCalls: parseToolCalls(msg.toolCalls, false) } : {}), ...(msg.role === 'tool' ? { toolCallId: msg.toolCallId } : {}) };
   });
+  validateConversation(messages);
+  if (body.surface !== undefined && !SURFACES.includes(body.surface as Surface)) invalid('Unknown surface.');
+  if (body.canBrowse !== undefined && typeof body.canBrowse !== 'boolean') invalid('canBrowse must be boolean.');
+  if (body.model !== undefined && (typeof body.model !== 'string' || !body.model.trim())) invalid('model must be a non-empty string.');
+  if (body.system !== undefined && typeof body.system !== 'string') invalid('system must be text.');
 
   const surface = SURFACES.includes(body.surface as Surface) ? (body.surface as Surface) : 'chat';
 
@@ -56,9 +62,9 @@ function parseBody(body: ChatBody): {
     messages,
     system: typeof body.system === 'string' ? body.system : undefined,
     surface,
-    model: typeof body.model === 'string' ? body.model : undefined,
+    model: typeof body.model === 'string' && body.model !== 'auto' ? body.model : undefined,
     conversationId: typeof body.conversationId === 'string' ? body.conversationId : null,
-    maxTokens: typeof body.maxTokens === 'number' ? body.maxTokens : undefined,
+    maxTokens: tokenLimit(body.maxTokens),
     // Declared by the caller, because only the caller knows whether it has a
     // browsing agent to run the tool with.
     canBrowse: body.canBrowse === true,
@@ -69,7 +75,9 @@ export function createChatRoute(providers: ChatProvider[]) {
   return async (c: Context<{ Variables: AuthedVars }>) => {
     let parsed: ReturnType<typeof parseBody>;
     try {
-      parsed = parseBody(await c.req.json());
+      const body = await c.req.json();
+      if (!object(body)) invalid('The request body must be an object.');
+      parsed = parseBody(body);
     } catch (error) {
       const message = error instanceof ProviderError ? error.message : 'Malformed request body.';
       return c.json({ error: message }, 400);
@@ -92,14 +100,16 @@ export function createChatRoute(providers: ChatProvider[]) {
     // What this user has been doing on Aira's other surfaces. Fetched before
     // the stream opens, because once SSE has started there is no way to change
     // the request that was sent.
-    const system = withContext(parsed.system, await contextFor(userId, parsed.surface));
+    const useMemory = c.req.header('x-aira-memory')?.toLowerCase() !== 'off';
+    const system = withContext(parsed.system, useMemory ? await contextFor(userId, parsed.surface) : '');
     const asked = [...parsed.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
 
     return streamSSE(c, async (sse) => {
       // Propagates client disconnect down to the provider so an abandoned
       // stream stops being billed the moment the user navigates away.
       const abort = new AbortController();
-      c.req.raw.signal?.addEventListener('abort', () => abort.abort());
+      sse.onAbort(() => abort.abort());
+      const signal = AbortSignal.any([abort.signal, c.req.raw.signal, AbortSignal.timeout(300_000)]);
 
       let usage: TokenUsage = {
         inputTokens: 0,
@@ -118,7 +128,7 @@ export function createChatRoute(providers: ChatProvider[]) {
           system,
           tools: browseTools(parsed.canBrowse),
           model: decision.model,
-          signal: abort.signal,
+          signal,
         })) {
           if (event.type === 'text') answered += event.text;
           if (event.type === 'done') {
@@ -126,8 +136,13 @@ export function createChatRoute(providers: ChatProvider[]) {
             stopReason = event.stopReason;
             ok = true;
           }
+          if (event.type === 'error') {
+            failure = event.message;
+            ok = false;
+          }
           await sse.writeSSE({ event: event.type, data: JSON.stringify(event) });
         }
+        if (!ok && !failure) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
       } catch (error) {
         const pe =
           error instanceof ProviderError
@@ -135,8 +150,9 @@ export function createChatRoute(providers: ChatProvider[]) {
             : new ProviderError('Something went wrong reaching the model. Please try again.', false);
         // The user sees a clean message; the raw vendor text stays in the log.
         failure = pe.raw ?? pe.message;
+        ok = false;
         console.error(`[gateway] ${provider.id}/${decision.model} failed:`, failure);
-        await sse.writeSSE({
+        if (!signal.aborted) await sse.writeSSE({
           event: 'error',
           data: JSON.stringify({ type: 'error', message: pe.message, retryable: pe.retryable }),
         });
@@ -162,7 +178,7 @@ export function createChatRoute(providers: ChatProvider[]) {
         });
         // Only a turn that actually completed is worth remembering; a failed
         // request would otherwise leave the question in memory with no answer.
-        if (ok) {
+        if (ok && useMemory) {
           await record(userId, parsed.surface, 'user', asked);
           await record(userId, parsed.surface, 'assistant', answered);
         }

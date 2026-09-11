@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { loadCatalogue } from '../src/providers/registry.ts';
 import { createOpenAIChatRoute, createOpenAIModelsRoute } from '../src/routes/openai.ts';
 
-loadCatalogue({});
+loadCatalogue({ enabledProviders: ['anthropic'] });
 
 /** Stands in for a real provider so the wire format can be tested offline. */
 const stub = {
@@ -88,15 +88,16 @@ test('non-streaming reply carries content and usage', async () => {
 });
 
 test('streaming emits chunks and terminates with [DONE]', async () => {
-  const text = await (await post({ model: 'claude-opus-5', stream: true, messages: [{ role: 'user', content: 'hi' }] })).text();
+  const text = await (await post({ model: 'claude-opus-5', stream: true, stream_options: { include_usage: true }, messages: [{ role: 'user', content: 'hi' }] })).text();
   const payloads = text.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim());
 
   assert.equal(payloads.at(-1), '[DONE]', 'clients hang without the [DONE] sentinel');
 
   const chunks = payloads.slice(0, -1).map((p) => JSON.parse(p));
   assert.equal(chunks[0].choices[0].delta.role, 'assistant');
-  assert.equal(chunks.map((c) => c.choices[0].delta.content ?? '').join(''), 'Hello world');
-  assert.equal(chunks.at(-1).choices[0].finish_reason, 'stop');
+  assert.equal(chunks.map((c) => c.choices[0]?.delta.content ?? '').join(''), 'Hello world');
+  assert.equal(chunks.at(-2).choices[0].finish_reason, 'stop');
+  assert.deepEqual(chunks.at(-1).choices, []);
   assert.equal(chunks.at(-1).usage.total_tokens, 17);
   for (const c of chunks) assert.equal(c.object, 'chat.completion.chunk');
 });
@@ -193,13 +194,92 @@ test('a tool result round-trips back to the provider', async () => {
   assert.equal(toolResult.content, 'written');
 });
 
-test('malformed tool entries are dropped rather than forwarded half-formed', async () => {
+test('malformed tool entries are rejected before invoking a provider', async () => {
   stub.lastRequest = null;
-  await post({
+  const response = await post({
     model: 'claude-opus-5',
     messages: [{ role: 'user', content: 'hi' }],
     tools: [{ type: 'function', function: { description: 'no name' } }, WRITE_TOOL],
   });
-  assert.equal(stub.lastRequest.tools.length, 1);
-  assert.equal(stub.lastRequest.tools[0].name, 'write_file');
+  assert.equal(response.status, 400);
+  assert.equal(stub.lastRequest, null);
+});
+
+test('explicit unavailable model never silently falls back', async () => {
+  stub.lastRequest = null;
+  const response = await post({ model: 'nonexistent', messages: [{ role: 'user', content: 'hi' }] });
+  assert.equal(response.status, 400);
+  assert.equal(stub.lastRequest, null);
+});
+
+test('tool choice, parallel execution and strict schema are preserved', async () => {
+  await post({ model: 'claude-opus-5', messages: [{ role: 'user', content: 'hi' }],
+    tools: [{ ...WRITE_TOOL, function: { ...WRITE_TOOL.function, strict: true } }],
+    tool_choice: { type: 'function', function: { name: 'write_file' } }, parallel_tool_calls: false,
+    temperature: 0.3, top_p: 0.8,
+  });
+  assert.deepEqual(stub.lastRequest.toolChoice, { name: 'write_file' });
+  assert.equal(stub.lastRequest.parallelToolCalls, false);
+  assert.equal(stub.lastRequest.tools[0].strict, true);
+  assert.equal(stub.lastRequest.temperature, 0.3);
+  assert.equal(stub.lastRequest.topP, 0.8);
+});
+
+test('invalid roles, tool references, modalities and token limits fail before provider work', async () => {
+  const bodies = [
+    null,
+    { messages: [null] },
+    { messages: [{ role: 'root', content: 'hi' }] },
+    { messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'abc', format: 'wav' } }] }] },
+    { messages: [{ role: 'tool', tool_call_id: 'unknown', content: 'result' }] },
+    { messages: [{ role: 'user', content: 'hi' }], max_tokens: -1 },
+    { messages: [{ role: 'user', content: 'hi' }], tool_choice: 'required' },
+    { messages: [{ role: 'user', content: 'hi' }], tools: [WRITE_TOOL], tool_choice: { type: 'function', function: { name: 'other' } } },
+    { messages: [{ role: 'user', content: 'hi' }], n: 2 },
+    { messages: [{ role: 'user', content: 'hi' }], response_format: { type: 'json_schema' } },
+  ];
+  for (const body of bodies) {
+    stub.lastRequest = null;
+    assert.equal((await post(body)).status, 400, JSON.stringify(body));
+    assert.equal(stub.lastRequest, null);
+  }
+});
+
+test('provider error events are surfaced instead of a successful stop chunk', async () => {
+  const failure = { id: 'anthropic', supports: () => true, async *streamChat() {
+    yield { type: 'error', message: 'Unavailable for this request.', retryable: false };
+  } };
+  const response = await post({ stream: true, messages: [{ role: 'user', content: 'hi' }] }, failure);
+  const text = await response.text();
+  assert.match(text, /Unavailable for this request/);
+  assert.doesNotMatch(text, /"finish_reason":"stop"/);
+  assert.match(text, /\[DONE\]/);
+  assert.equal((await post({ messages: [{ role: 'user', content: 'hi' }] }, failure)).status, 500);
+});
+
+test('truncated streams are failures for both streaming and regular clients', async () => {
+  const truncated = { id: 'anthropic', supports: () => true, async *streamChat() { yield { type: 'text', text: 'partial' }; } };
+  assert.equal((await post({ messages: [{ role: 'user', content: 'hi' }] }, truncated)).status, 502);
+  const text = await (await post({ stream: true, messages: [{ role: 'user', content: 'hi' }] }, truncated)).text();
+  assert.match(text, /ended before completing/);
+  assert.doesNotMatch(text, /"finish_reason":"stop"/);
+});
+
+test('usage chunks are emitted only on request', async () => {
+  const text = await (await post({ stream: true, messages: [{ role: 'user', content: 'hi' }] })).text();
+  assert.doesNotMatch(text, /"usage"/);
+});
+
+test('browser research preserves screenshot placement and its structured-output contract', async () => {
+  const schema = { type: 'object', properties: { done: { type: 'boolean' } }, required: ['done'], additionalProperties: false };
+  const res = await post({ model: 'claude-opus-5', messages: [{ role: 'user', content: [
+    { type: 'text', text: 'First image:' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,YQ==', detail: 'high' } },
+    { type: 'text', text: 'Second image:' }, { type: 'image_url', image_url: { url: 'https://example.com/second.png' } },
+  ] }], response_format: { type: 'json_schema', json_schema: { name: 'agent_output', strict: true, schema } }, reasoning_effort: 'low', stop: ['END'] });
+  assert.equal(res.status, 200);
+  assert.deepEqual(stub.lastRequest.messages[0].contentParts.map((part) => part.type), ['text', 'image', 'text', 'image']);
+  assert.equal(stub.lastRequest.messages[0].contentParts[1].url, 'data:image/png;base64,YQ==');
+  assert.deepEqual(stub.lastRequest.responseFormat.json_schema.schema, schema);
+  assert.equal(stub.lastRequest.reasoningEffort, 'low');
+  assert.deepEqual(stub.lastRequest.stop, ['END']);
 });

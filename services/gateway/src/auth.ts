@@ -23,17 +23,23 @@ export function createAuthMiddleware(env: Env) {
 
   return async (c: Context<{ Variables: AuthedVars }>, next: Next) => {
     if (!env.requireAuth) {
-      c.set('userId', c.req.header('x-aira-dev-user') ?? 'dev-user');
+      // Development is a single local identity. A caller-controlled user id
+      // would let a browser select another user's shared memory.
+      c.set('userId', 'dev-user');
       return next();
     }
 
     const header = c.req.header('authorization');
-    const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
+    const token = header?.match(/^Bearer\s+(\S+)$/i)?.[1];
     if (!token || !client) {
       return c.json({ error: 'Authentication required.' }, 401);
     }
 
-    const { data, error } = await client.auth.getUser(token);
+    let result;
+    try { result = await client.auth.getUser(token); } catch {
+      return c.json({ error: 'Authentication service unavailable. Please retry.' }, 503);
+    }
+    const { data, error } = result;
     if (error || !data.user) {
       return c.json({ error: 'Invalid or expired session.' }, 401);
     }

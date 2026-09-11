@@ -5,6 +5,7 @@ import { estimateCostUsd, findModel, listModels } from '../providers/registry.ts
 import {
   ProviderError,
   type ChatMessage,
+  type ChatRequest,
   type ChatProvider,
   type Surface,
   type TokenUsage,
@@ -14,6 +15,7 @@ import {
 import { contextFor, record as remember, withContext } from '../memory/context.ts';
 import { routeModel } from '../routing/router.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
+import { invalid, messageContent, numberOption, object, parseToolCalls, parseToolChoice, parseTools, responseFormat, stopSequences, tokenLimit, validateConversation } from './validation.ts';
 
 /**
  * OpenAI-compatible surface, mounted at /openai/v1.
@@ -29,64 +31,6 @@ import { emit, type ModelRequestPayload } from '../usage/events.ts';
  * own /v1/models returns a different shape and an OpenAI client would choke
  * on it.
  */
-
-interface OpenAIMessage {
-  role: string;
-  content: unknown;
-  tool_call_id?: unknown;
-  tool_calls?: unknown;
-}
-
-/**
- * OpenAI wraps each tool in a `function` envelope. Anything without a usable
- * name is dropped rather than forwarded half-formed.
- */
-function parseTools(raw: unknown): ToolDefinition[] | undefined {
-  if (!Array.isArray(raw) || raw.length === 0) return undefined;
-  const tools: ToolDefinition[] = [];
-  for (const entry of raw) {
-    const fn = (entry as { function?: { name?: unknown; description?: unknown; parameters?: unknown } })
-      ?.function;
-    if (!fn || typeof fn.name !== 'string') continue;
-    tools.push({
-      name: fn.name,
-      ...(typeof fn.description === 'string' ? { description: fn.description } : {}),
-      parameters:
-        fn.parameters && typeof fn.parameters === 'object'
-          ? (fn.parameters as Record<string, unknown>)
-          : { type: 'object', properties: {} },
-    });
-  }
-  return tools.length ? tools : undefined;
-}
-
-function parseToolCalls(raw: unknown): ToolCall[] | undefined {
-  if (!Array.isArray(raw) || raw.length === 0) return undefined;
-  const calls: ToolCall[] = [];
-  for (const entry of raw) {
-    const c = entry as { id?: unknown; function?: { name?: unknown; arguments?: unknown } };
-    if (typeof c?.id !== 'string' || typeof c.function?.name !== 'string') continue;
-    calls.push({
-      id: c.id,
-      name: c.function.name,
-      arguments: typeof c.function.arguments === 'string' ? c.function.arguments : '{}',
-    });
-  }
-  return calls.length ? calls : undefined;
-}
-
-/** OpenAI allows content as a string or as an array of parts; both must work. */
-function flattenContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) =>
-        part && typeof part === 'object' && 'text' in part ? String((part as { text: unknown }).text) : '',
-      )
-      .join('');
-  }
-  return '';
-}
 
 export function createOpenAIModelsRoute() {
   return (c: Context) =>
@@ -109,16 +53,11 @@ export function createOpenAIModelsRoute() {
  */
 export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surface = 'code') {
   return async (c: Context<{ Variables: AuthedVars }>) => {
-    let body: {
-      model?: unknown;
-      messages?: unknown;
-      stream?: unknown;
-      max_tokens?: unknown;
-      max_completion_tokens?: unknown;
-      tools?: unknown;
-    };
+    let body: Record<string, unknown>;
     try {
-      body = await c.req.json();
+      const raw = await c.req.json();
+      if (!object(raw)) invalid('The request body must be an object.');
+      body = raw;
     } catch {
       return c.json({ error: { message: 'Malformed JSON body.', type: 'invalid_request_error' } }, 400);
     }
@@ -134,8 +73,19 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
     // array; pull it out rather than sending it through as a turn.
     const system: string[] = [];
     const messages: ChatMessage[] = [];
-    for (const raw of body.messages as OpenAIMessage[]) {
-      const text = flattenContent(raw?.content);
+    let tools: ToolDefinition[] | undefined;
+    let options: Partial<ChatRequest>;
+    try {
+    if (body.stream !== undefined && typeof body.stream !== 'boolean') invalid('stream must be boolean.');
+    if (body.n !== undefined && body.n !== 1) invalid('This gateway supports one completion per request (n=1).');
+    for (const option of ['functions', 'function_call', 'logprobs', 'logit_bias', 'modalities', 'audio', 'prediction', 'seed', 'service_tier']) {
+      if (body[option] !== undefined && body[option] !== null) invalid(`The gateway does not yet support ${option}; omit it instead of relying on a silently ignored setting.`);
+    }
+    if (body.model !== undefined && (typeof body.model !== 'string' || !body.model.trim())) invalid('model must be a non-empty string.');
+    for (const raw of body.messages) {
+      if (!object(raw) || !['system', 'developer', 'user', 'assistant', 'tool'].includes(String(raw.role))) invalid('Every message must have a supported role.');
+      const content = messageContent(raw.content ?? (raw.role === 'assistant' && raw.tool_calls ? null : undefined), String(raw.role));
+      const text = content.content;
       if (raw?.role === 'system' || raw?.role === 'developer') {
         system.push(text);
       } else if (raw?.role === 'tool') {
@@ -147,21 +97,36 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
       } else if (raw?.role === 'assistant') {
         const toolCalls = parseToolCalls(raw.tool_calls);
         messages.push({ role: 'assistant', content: text, ...(toolCalls ? { toolCalls } : {}) });
-      } else {
-        messages.push({ role: 'user', content: text });
+      } else if (raw.role === 'user') {
+        messages.push({ role: 'user', ...content });
       }
     }
-    if (messages.length === 0) {
-      return c.json(
-        { error: { message: 'At least one user or assistant message is required.', type: 'invalid_request_error' } },
-        400,
-      );
+    validateConversation(messages);
+    tools = parseTools(body.tools);
+    if (body.parallel_tool_calls !== undefined && typeof body.parallel_tool_calls !== 'boolean') invalid('parallel_tool_calls must be boolean.');
+    if (body.stream_options !== undefined && (!object(body.stream_options) || (body.stream_options.include_usage !== undefined && typeof body.stream_options.include_usage !== 'boolean'))) invalid('stream_options.include_usage must be boolean.');
+    if (body.reasoning_effort !== undefined && !['low', 'medium', 'high'].includes(String(body.reasoning_effort))) invalid('Supported reasoning_effort values are low, medium and high.');
+    options = {
+      maxTokens: tokenLimit(body.max_completion_tokens ?? body.max_tokens),
+      toolChoice: parseToolChoice(body.tool_choice, tools),
+      parallelToolCalls: body.parallel_tool_calls as boolean | undefined,
+      temperature: numberOption(body.temperature, 'temperature', 2),
+      topP: numberOption(body.top_p, 'top_p', 1),
+      stop: stopSequences(body.stop),
+      responseFormat: responseFormat(body.response_format),
+      reasoningEffort: body.reasoning_effort as ChatRequest['reasoningEffort'],
+      frequencyPenalty: numberOption(body.frequency_penalty, 'frequency_penalty', 2, -2),
+      presencePenalty: numberOption(body.presence_penalty, 'presence_penalty', 2, -2),
+    };
+    } catch (error) {
+      return c.json({ error: { message: error instanceof ProviderError ? error.message : 'Invalid request.', type: 'invalid_request_error' } }, 400);
     }
 
     const requested = typeof body.model === 'string' ? body.model : undefined;
     // Agent work routes to the surface this endpoint was mounted for, unless it
     // named a model we actually have.
-    const decision = routeModel(surface, requested && findModel(requested) ? requested : undefined);
+    if (requested && requested !== 'auto' && !findModel(requested)) return c.json({ error: { message: `Unknown or unavailable model "${requested}".`, type: 'invalid_request_error' } }, 400);
+    const decision = routeModel(surface, requested === 'auto' ? undefined : requested);
     const spec = findModel(decision.model);
     const provider = spec && providers.find((p) => p.supports(decision.model));
     if (!spec || !provider) {
@@ -171,13 +136,6 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
       );
     }
 
-    const maxTokens =
-      typeof body.max_completion_tokens === 'number'
-        ? body.max_completion_tokens
-        : typeof body.max_tokens === 'number'
-          ? body.max_tokens
-          : 16000;
-
     const userId = c.get('userId');
     const startedAt = Date.now();
     const id = `chatcmpl-${crypto.randomUUID()}`;
@@ -186,7 +144,8 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
     // The agents get the same cross-surface context the chat screen does. They
     // reach this gateway directly and never touch the app, so this is the only
     // point at which they can know what the user has been doing elsewhere.
-    const recalled = await contextFor(userId, surface);
+    const useMemory = c.req.header('x-aira-memory')?.toLowerCase() !== 'off';
+    const recalled = useMemory ? await contextFor(userId, surface) : '';
     // Last, not first: an agent's system prompt is its instructions, and
     // context that displaces them changes what the agent is.
     const asked = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
@@ -196,10 +155,10 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
       system: withContext(system.length ? system.join('\n\n') : undefined, recalled),
       surface,
       model: decision.model,
-      maxTokens,
+      ...options,
       // Forwarding these is what separates an agent gateway from a chat proxy;
       // dropping them leaves a model that can only describe actions.
-      tools: parseTools(body.tools),
+      tools,
     };
 
     async function record(usage: TokenUsage, stopReason: string | null, ok: boolean, failure: string | null) {
@@ -233,23 +192,28 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
       const calls: ToolCall[] = [];
       let usage = empty;
       let stopReason: string | null = null;
+      let completed = false;
       try {
-        for await (const event of provider.streamChat({ ...request, signal: undefined })) {
+        for await (const event of provider.streamChat({ ...request, signal: AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(300_000)]) })) {
           if (event.type === 'text') text += event.text;
           else if (event.type === 'tool_call') calls.push(event.call);
           else if (event.type === 'done') {
             usage = event.usage;
             stopReason = event.stopReason;
+            completed = true;
           } else if (event.type === 'error') throw new ProviderError(event.message, event.retryable);
         }
+        if (!completed) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
       } catch (error) {
         const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false);
         await record(empty, null, false, pe.raw ?? pe.message);
         return c.json({ error: { message: pe.message, type: 'api_error' } }, (pe.status ?? 500) as 500);
       }
       await record(usage, stopReason, true, null);
-      await remember(userId, surface, 'user', asked);
-      await remember(userId, surface, 'assistant', text);
+      if (useMemory) {
+        await remember(userId, surface, 'user', asked);
+        await remember(userId, surface, 'assistant', text);
+      }
       return c.json({
         id,
         object: 'chat.completion',
@@ -274,7 +238,9 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
     // ── streaming ────────────────────────────────────────────────────────────
     return streamSSE(c, async (sse) => {
       const abort = new AbortController();
-      c.req.raw.signal?.addEventListener('abort', () => abort.abort());
+      sse.onAbort(() => abort.abort());
+      const signal = AbortSignal.any([abort.signal, c.req.raw.signal, AbortSignal.timeout(300_000)]);
+      const includeUsage = object(body.stream_options) && body.stream_options.include_usage === true;
 
       const chunk = (delta: Record<string, unknown>, finish: string | null) => ({
         id,
@@ -282,6 +248,7 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
         created,
         model: decision.model,
         choices: [{ index: 0, delta, finish_reason: finish }],
+        ...(includeUsage ? { usage: null } : {}),
       });
 
       let usage = empty;
@@ -293,7 +260,7 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
 
       try {
         await sse.writeSSE({ data: JSON.stringify(chunk({ role: 'assistant' }, null)) });
-        for await (const event of provider.streamChat({ ...request, signal: abort.signal })) {
+        for await (const event of provider.streamChat({ ...request, signal })) {
           if (event.type === 'text') {
             streamed += event.text;
             await sse.writeSSE({ data: JSON.stringify(chunk({ content: event.text }, null)) });
@@ -310,24 +277,24 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
             stopReason = event.stopReason;
             ok = true;
           } else if (event.type === 'error') {
-            failure = event.message;
+            throw new ProviderError(event.message, event.retryable);
           }
         }
+        if (!ok) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
         await sse.writeSSE({
-          data: JSON.stringify({
-            ...chunk({}, toolCalls ? 'tool_calls' : mapStop(stopReason)),
-            usage: openAIUsage(usage),
-          }),
+          data: JSON.stringify(chunk({}, toolCalls ? 'tool_calls' : mapStop(stopReason))),
         });
+        if (includeUsage) await sse.writeSSE({ data: JSON.stringify({ ...chunk({}, null), choices: [], usage: openAIUsage(usage) }) });
       } catch (error) {
         const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false);
         failure = pe.raw ?? pe.message;
-        await sse.writeSSE({ data: JSON.stringify({ error: { message: pe.message, type: 'api_error' } }) });
+        ok = false;
+        if (!signal.aborted) await sse.writeSSE({ data: JSON.stringify({ error: { message: pe.message, type: 'api_error' } }) });
       } finally {
         // OpenAI clients wait for this sentinel; without it they hang.
-        await sse.writeSSE({ data: '[DONE]' });
+        if (!signal.aborted) await sse.writeSSE({ data: '[DONE]' }).catch(() => {});
         await record(usage, stopReason, ok, failure);
-        if (ok) {
+        if (ok && useMemory) {
           await remember(userId, surface, 'user', asked);
           await remember(userId, surface, 'assistant', streamed);
         }
@@ -347,6 +314,7 @@ function toOpenAIToolCall(call: ToolCall) {
 function mapStop(stopReason: string | null): string {
   if (stopReason === 'max_tokens' || stopReason === 'length') return 'length';
   if (stopReason === 'tool_use') return 'tool_calls';
+  if (stopReason === 'tool_calls' || stopReason === 'content_filter') return stopReason;
   return 'stop';
 }
 
@@ -356,5 +324,6 @@ function openAIUsage(u: TokenUsage) {
     prompt_tokens: prompt,
     completion_tokens: u.outputTokens,
     total_tokens: prompt + u.outputTokens,
+    prompt_tokens_details: { cached_tokens: u.cacheReadTokens },
   };
 }

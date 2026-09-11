@@ -21,7 +21,7 @@
 //!     commands, so an open port is local code execution for anything on the
 //!     machine.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -31,6 +31,17 @@ use tauri::State;
 #[derive(Default)]
 pub struct OpenClawState {
     inner: Mutex<Option<Running>>,
+    runs: Arc<Mutex<HashSet<String>>>,
+}
+
+struct ActiveRun {
+    runs: Arc<Mutex<HashSet<String>>>,
+    id: String,
+}
+impl Drop for ActiveRun {
+    fn drop(&mut self) {
+        self.runs.lock().unwrap().remove(&self.id);
+    }
 }
 
 struct Running {
@@ -39,6 +50,7 @@ struct Running {
     log: Arc<Mutex<VecDeque<String>>>,
     port: u16,
     token: String,
+    model: String,
 }
 
 #[derive(Serialize)]
@@ -49,6 +61,7 @@ pub struct Status {
     pub token: Option<String>,
     /// Absolute path to the binary, or None when OpenClaw is not installed.
     pub binary: Option<String>,
+    pub model: Option<String>,
 }
 
 /// Looks for the openclaw binary on PATH and in the usual install locations.
@@ -57,7 +70,11 @@ pub struct Status {
 /// root-owned, so `npm install -g` fails there and the documented fix is a
 /// user-owned prefix — which a Finder-launched app will not have on its PATH.
 fn find_binary() -> Option<String> {
-    if let Ok(out) = Command::new("sh").arg("-lc").arg("command -v openclaw").output() {
+    if let Ok(out) = Command::new("sh")
+        .arg("-lc")
+        .arg("command -v openclaw")
+        .output()
+    {
         if out.status.success() {
             let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !path.is_empty() {
@@ -92,12 +109,22 @@ fn free_port() -> Result<u16, String> {
 /// Where Aira keeps OpenClaw's state and config, away from the user's own.
 fn state_dir() -> Result<std::path::PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "no HOME directory".to_string())?;
-    let dir = std::path::PathBuf::from(home).join(".aira").join("openclaw");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let dir = std::path::PathBuf::from(home)
+        .join(".aira")
+        .join("openclaw");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     Ok(dir)
 }
 
 impl OpenClawState {
+    fn authenticate(&self, port: u16, token: &str) -> Result<(), String> {
+        self.reap();
+        match self.inner.lock().unwrap().as_ref() {
+            Some(r) if r.port == port && r.token == token => Ok(()),
+            _ => Err("The task-agent session ended. Reconnect the agent.".into()),
+        }
+    }
     /// Drops the handle if the child has exited, so a crashed agent can be
     /// restarted instead of leaving `start` convinced it is still running.
     fn reap(&self) {
@@ -121,7 +148,10 @@ fn drain(stderr: Option<std::process::ChildStderr>, log: Arc<Mutex<VecDeque<Stri
     let Some(stderr) = stderr else { return };
     std::thread::spawn(move || {
         use std::io::BufRead;
-        for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
             let mut guard = log.lock().unwrap();
             if guard.len() >= 60 {
                 guard.pop_front();
@@ -142,12 +172,14 @@ pub fn openclaw_status(state: State<'_, OpenClawState>) -> Status {
             port: Some(running.port),
             token: Some(running.token.clone()),
             binary: find_binary(),
+            model: Some(running.model.clone()),
         },
         None => Status {
             running: false,
             port: None,
             token: None,
             binary: find_binary(),
+            model: None,
         },
     }
 }
@@ -163,7 +195,7 @@ pub fn openclaw_status(state: State<'_, OpenClawState>) -> Status {
 /// The model routes through `/openai/task/v1`, not `/openai/v1`: the gateway
 /// reads the surface from the path, and the coding mount would route this to
 /// the coding model and meter its spend as coding.
-fn build_config(gateway_url: &str, model: &str, port: u16, token: &str) -> serde_json::Value {
+fn build_config(gateway_url: &str, model: &str, port: u16, workspace: &str) -> serde_json::Value {
     let qualified = format!("aira/{model}");
     serde_json::json!({
         "gateway": {
@@ -172,7 +204,7 @@ fn build_config(gateway_url: &str, model: &str, port: u16, token: &str) -> serde
             // not be reachable from off this machine.
             "bind": "loopback",
             "port": port,
-            "auth": { "token": token },
+            "auth": { "token": "${OPENCLAW_GATEWAY_TOKEN}" },
             // Off by default. Aira drives the agent over this rather than the
             // WebSocket control protocol: it is the same SSE shape the rest of
             // the app already speaks, where the WS handshake is a challenge
@@ -185,7 +217,7 @@ fn build_config(gateway_url: &str, model: &str, port: u16, token: &str) -> serde
         // its presence to the local network buys nothing and tells every device
         // on the café Wi-Fi that this machine is running an agent.
         "plugins": { "entries": { "bonjour": { "enabled": false } } },
-        "agents": { "defaults": { "model": { "primary": qualified } } },
+        "agents": { "defaults": { "model": { "primary": qualified }, "workspace": workspace } },
         "models": {
             "providers": {
                 "aira": {
@@ -214,13 +246,15 @@ pub fn openclaw_start(
     token: String,
     model: String,
 ) -> Result<Status, String> {
+    crate::runtime::validate_gateway(&gateway_url)?;
+    if token.trim().is_empty() || model.trim().is_empty() {
+        return Err("Sign in and select an agent model first".into());
+    }
     state.reap();
-    {
-        let guard = state.inner.lock().unwrap();
-        if guard.is_some() {
-            drop(guard);
-            return Ok(openclaw_status(state));
-        }
+    let mut guard = state.inner.lock().unwrap();
+    if guard.is_some() {
+        drop(guard);
+        return Ok(openclaw_status(state));
     }
 
     let binary = find_binary().ok_or_else(|| {
@@ -231,7 +265,9 @@ pub fn openclaw_start(
     let port = free_port()?;
     let gateway_token = uuid::Uuid::new_v4().to_string();
     let config_path = dir.join("openclaw.json");
-    let config = build_config(&gateway_url, &model, port, &gateway_token);
+    let workspace = dir.join("workspace");
+    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    let config = build_config(&gateway_url, &model, port, &workspace.to_string_lossy());
     std::fs::write(
         &config_path,
         serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
@@ -258,9 +294,8 @@ pub fn openclaw_start(
         .stderr(Stdio::piped());
 
     // A GUI app launched from Finder inherits "/" as its working directory.
-    if let Ok(home) = std::env::var("HOME") {
-        command.current_dir(home);
-    }
+    command.current_dir(&workspace);
+    crate::runtime::prepare(&mut command);
 
     let child = command
         .spawn()
@@ -270,11 +305,12 @@ pub fn openclaw_start(
     let mut child = child;
     drain(child.stderr.take(), Arc::clone(&log));
 
-    *state.inner.lock().unwrap() = Some(Running {
+    *guard = Some(Running {
         child,
         log,
         port,
         token: gateway_token.clone(),
+        model: model.clone(),
     });
 
     Ok(Status {
@@ -282,14 +318,14 @@ pub fn openclaw_start(
         port: Some(port),
         token: Some(gateway_token),
         binary: Some(binary),
+        model: Some(model),
     })
 }
 
 #[tauri::command]
 pub fn openclaw_stop(state: State<'_, OpenClawState>) -> Result<(), String> {
     if let Some(mut running) = state.inner.lock().unwrap().take() {
-        let _ = running.child.kill();
-        let _ = running.child.wait();
+        crate::runtime::terminate(&mut running.child);
     }
     Ok(())
 }
@@ -299,8 +335,7 @@ impl OpenClawState {
     /// supervises it and leave a shell-executing port open.
     pub fn shutdown(&self) {
         if let Some(mut running) = self.inner.lock().unwrap().take() {
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+            crate::runtime::terminate(&mut running.child);
         }
     }
 }
@@ -317,9 +352,7 @@ impl OpenClawState {
 // only the result crosses back into the webview.
 
 fn client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .build()
-        .map_err(|e| format!("could not create an HTTP client: {e}"))
+    crate::runtime::http_client(900)
 }
 
 #[derive(Serialize)]
@@ -329,8 +362,13 @@ pub struct AgentEntry {
 }
 
 #[tauri::command]
-pub async fn openclaw_agents(port: u16, token: String) -> Result<Vec<AgentEntry>, String> {
-    let body: serde_json::Value = client()?
+pub async fn openclaw_agents(
+    state: State<'_, OpenClawState>,
+    port: u16,
+    token: String,
+) -> Result<Vec<AgentEntry>, String> {
+    state.authenticate(port, &token)?;
+    let body: serde_json::Value = crate::runtime::http_client(3)?
         .get(format!("http://127.0.0.1:{port}/v1/models"))
         .bearer_auth(&token)
         .send()
@@ -370,6 +408,7 @@ pub async fn openclaw_agents(port: u16, token: String) -> Result<Vec<AgentEntry>
 #[tauri::command]
 pub async fn openclaw_stream(
     app: tauri::AppHandle,
+    state: State<'_, OpenClawState>,
     port: u16,
     token: String,
     agent: String,
@@ -378,6 +417,15 @@ pub async fn openclaw_stream(
 ) -> Result<(), String> {
     use futures_util::StreamExt;
     use tauri::Emitter;
+    state.authenticate(port, &token)?;
+    if run.is_empty() || run.len() > 80 {
+        return Err("Invalid task run ID".into());
+    }
+    state.runs.lock().unwrap().insert(run.clone());
+    let _active = ActiveRun {
+        runs: Arc::clone(&state.runs),
+        id: run.clone(),
+    };
 
     let response = client()?
         .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
@@ -390,18 +438,28 @@ pub async fn openclaw_stream(
         .send()
         .await
         .map_err(|e| format!("could not reach the agent: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "The task agent returned HTTP {}",
+            response.status()
+        ));
+    }
 
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer: Vec<u8> = Vec::new();
 
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| format!("the stream broke: {e}"))?;
-        buffer.push_str(&String::from_utf8_lossy(&bytes));
+        buffer.extend_from_slice(&bytes);
+        if buffer.len() > 2_000_000 {
+            return Err("Task event exceeded the size limit".into());
+        }
 
         // SSE frames end at a blank line, and a chunk can split one anywhere —
         // including mid-character — so only whole frames are parsed.
-        while let Some(cut) = buffer.find("\n\n") {
-            let frame: String = buffer.drain(..cut + 2).collect();
+        while let Some(cut) = buffer.windows(2).position(|w| w == b"\n\n") {
+            let raw: Vec<u8> = buffer.drain(..cut + 2).collect();
+            let frame = String::from_utf8(raw).map_err(|_| "Invalid UTF-8 task event")?;
             let Some(data) = frame.lines().find_map(|l| l.strip_prefix("data: ")) else {
                 continue;
             };
@@ -431,11 +489,13 @@ pub async fn openclaw_stream(
 
 #[tauri::command]
 pub async fn openclaw_run(
+    state: State<'_, OpenClawState>,
     port: u16,
     token: String,
     agent: String,
     message: String,
 ) -> Result<String, String> {
+    state.authenticate(port, &token)?;
     let body: serde_json::Value = client()?
         .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
         .bearer_auth(&token)
@@ -447,13 +507,19 @@ pub async fn openclaw_run(
         .send()
         .await
         .map_err(|e| format!("could not reach the agent: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("The task agent refused the request: {e}"))?
         .json()
         .await
         .map_err(|e| format!("the agent sent something unreadable: {e}"))?;
 
     // A failed run comes back as a 200 with an error object: by the time an
     // upstream provider gives up, the response has already started.
-    if let Some(error) = body.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+    if let Some(error) = body
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+    {
         return Err(error.to_string());
     }
     Ok(body
@@ -461,6 +527,16 @@ pub async fn openclaw_run(
         .and_then(|c| c.as_str())
         .unwrap_or_default()
         .to_string())
+}
+
+/// OpenClaw's HTTP API has no per-run abort. Stopping the supervised runtime
+/// terminates its outstanding runs and subprocesses instead of hiding output.
+#[tauri::command]
+pub fn openclaw_cancel(state: State<'_, OpenClawState>, run: String) -> Result<(), String> {
+    if state.runs.lock().unwrap().contains(&run) {
+        state.shutdown();
+    }
+    Ok(())
 }
 
 /// The tail of the agent's own stderr, so a failed start can say what it said
@@ -472,4 +548,29 @@ pub fn openclaw_log(state: State<'_, OpenClawState>) -> Vec<String> {
         .as_ref()
         .map(|r| r.log.lock().unwrap().iter().cloned().collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn config_uses_environment_credentials_and_dedicated_workspace() {
+        let config = build_config("https://aira.example/", "model", 12345, "/tmp/aira-project");
+        assert_eq!(
+            config["gateway"]["auth"]["token"],
+            "${OPENCLAW_GATEWAY_TOKEN}"
+        );
+        assert_eq!(
+            config["models"]["providers"]["aira"]["apiKey"],
+            "${AIRA_TOKEN}"
+        );
+        assert_eq!(
+            config["models"]["providers"]["aira"]["baseUrl"],
+            "https://aira.example/openai/task/v1"
+        );
+        assert_eq!(
+            config["agents"]["defaults"]["workspace"],
+            "/tmp/aira-project"
+        );
+    }
 }

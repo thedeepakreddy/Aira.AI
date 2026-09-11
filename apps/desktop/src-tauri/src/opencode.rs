@@ -37,6 +37,7 @@ struct Running {
     /// Where the server was started. The agent's tools inherit this, so the
     /// panel needs it to tell which stored session belongs to this process.
     directory: Option<String>,
+    model: String,
 }
 
 #[derive(Serialize)]
@@ -49,12 +50,17 @@ pub struct Status {
     pub binary: Option<String>,
     /// Working directory of the running server, if any.
     pub directory: Option<String>,
+    pub model: Option<String>,
 }
 
 /// Looks for the opencode binary on PATH and in the usual install locations.
 /// Returning the path rather than a bool lets the UI say *what* is missing.
 fn find_binary() -> Option<String> {
-    if let Ok(out) = Command::new("sh").arg("-lc").arg("command -v opencode").output() {
+    if let Ok(out) = Command::new("sh")
+        .arg("-lc")
+        .arg("command -v opencode")
+        .output()
+    {
         if out.status.success() {
             let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !path.is_empty() {
@@ -114,7 +120,10 @@ fn drain(stderr: Option<std::process::ChildStderr>, log: Arc<Mutex<VecDeque<Stri
     let Some(stderr) = stderr else { return };
     std::thread::spawn(move || {
         use std::io::BufRead;
-        for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
             let mut guard = log.lock().unwrap();
             if guard.len() >= 60 {
                 guard.pop_front();
@@ -136,6 +145,7 @@ pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
             password: Some(running.password.clone()),
             binary: find_binary(),
             directory: running.directory.clone(),
+            model: Some(running.model.clone()),
         },
         None => Status {
             running: false,
@@ -143,6 +153,7 @@ pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
             password: None,
             binary: find_binary(),
             directory: None,
+            model: None,
         },
     }
 }
@@ -161,9 +172,14 @@ pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
 ///  * Setting `edit` and `bash` to "ask". OpenCode allows everything by
 ///    default, so without this the approval prompts in Aira's UI would never
 ///    fire and the agent would edit files unannounced.
-fn build_config(gateway_url: &str, token: &str, model: &str) -> String {
+fn build_config(
+    gateway_url: &str,
+    token: &str,
+    model: &str,
+    browser: Option<(u16, String)>,
+) -> String {
     let qualified = format!("aira/{model}");
-    serde_json::json!({
+    let mut config = serde_json::json!({
         "provider": {
             "aira": {
                 "npm": "@ai-sdk/openai-compatible",
@@ -176,7 +192,14 @@ fn build_config(gateway_url: &str, token: &str, model: &str) -> String {
             }
         },
         "model": qualified,
+        "mcp": {
+            "aira_memory": {
+                "type": "remote", "url": format!("{}/mcp", gateway_url.trim_end_matches('/')),
+                "headers": { "Authorization": format!("Bearer {token}") }, "oauth": false,
+            }
+        },
         "permission": {
+            "*": "ask",
             "read": "allow",
             "list": "allow",
             "glob": "allow",
@@ -188,26 +211,52 @@ fn build_config(gateway_url: &str, token: &str, model: &str) -> String {
             "webfetch": "deny",
             "websearch": "deny",
             "external_directory": "deny",
+            "aira_browser*": "ask",
+            "aira_memory*": "ask",
         },
-    })
-    .to_string()
+    });
+    if let Some((port, secret)) = browser {
+        config["mcp"]["aira_browser"] = serde_json::json!({
+            "type": "remote", "url": format!("http://127.0.0.1:{port}/mcp"),
+            "headers": { "Authorization": format!("Bearer {secret}") }, "oauth": false,
+        });
+    }
+    config.to_string()
 }
 
 #[tauri::command]
 pub fn opencode_start(
     state: State<'_, OpenCodeState>,
+    browser: State<'_, crate::browser::BrowserState>,
     directory: Option<String>,
     gateway_url: String,
     token: String,
     model: String,
 ) -> Result<Status, String> {
-    state.reap();
+    crate::runtime::validate_gateway(&gateway_url)?;
+    if token.trim().is_empty() || model.trim().is_empty() {
+        return Err("Sign in and select a coding model first".into());
+    }
+    let selected = directory
+        .filter(|d| !d.trim().is_empty())
+        .ok_or("Choose a project folder before starting the coding agent")?;
+    let canonical = std::path::Path::new(&selected)
+        .canonicalize()
+        .map_err(|_| "The selected project folder does not exist")?;
+    if !canonical.is_dir()
+        || canonical.parent().is_none()
+        || std::env::var("HOME").ok().as_deref() == canonical.to_str()
     {
-        let guard = state.inner.lock().unwrap();
-        if guard.is_some() {
-            drop(guard);
-            return Ok(opencode_status(state));
-        }
+        return Err(
+            "Choose a specific project folder, rather than your home or filesystem root".into(),
+        );
+    }
+    let workdir = Some(canonical.to_string_lossy().to_string());
+    state.reap();
+    let mut guard = state.inner.lock().unwrap();
+    if guard.is_some() {
+        drop(guard);
+        return Ok(opencode_status(state));
     }
 
     let binary = find_binary().ok_or_else(|| {
@@ -231,7 +280,7 @@ pub fn opencode_start(
         // and the gateway token never reaches disk.
         .env(
             "OPENCODE_CONFIG_CONTENT",
-            build_config(&gateway_url, &token, &model),
+            build_config(&gateway_url, &token, &model, browser.connection()),
         )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -240,13 +289,10 @@ pub fn opencode_start(
     // A GUI app launched from Finder inherits "/" as its working directory, and
     // the agent would then treat the filesystem root as the project. Fall back
     // to the user's home instead, which is at least somewhere they own.
-    let workdir = directory
-        .filter(|d| !d.is_empty())
-        .or_else(|| std::env::var("HOME").ok())
-        .filter(|d| d != "/");
     if let Some(dir) = &workdir {
         command.current_dir(dir);
     }
+    crate::runtime::prepare(&mut command);
 
     let child = command
         .spawn()
@@ -256,12 +302,13 @@ pub fn opencode_start(
     let mut child = child;
     drain(child.stderr.take(), Arc::clone(&log));
 
-    *state.inner.lock().unwrap() = Some(Running {
+    *guard = Some(Running {
         child,
         log,
         port,
         password: password.clone(),
         directory: workdir.clone(),
+        model: model.clone(),
     });
 
     Ok(Status {
@@ -270,14 +317,14 @@ pub fn opencode_start(
         password: Some(password),
         binary: Some(binary),
         directory: workdir,
+        model: Some(model),
     })
 }
 
 #[tauri::command]
 pub fn opencode_stop(state: State<'_, OpenCodeState>) -> Result<(), String> {
     if let Some(mut running) = state.inner.lock().unwrap().take() {
-        let _ = running.child.kill();
-        let _ = running.child.wait();
+        crate::runtime::terminate(&mut running.child);
     }
     Ok(())
 }
@@ -287,8 +334,7 @@ impl OpenCodeState {
     /// and keeps a shell-executing port open with nothing watching it.
     pub fn shutdown(&self) {
         if let Some(mut running) = self.inner.lock().unwrap().take() {
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+            crate::runtime::terminate(&mut running.child);
         }
     }
 }
@@ -302,4 +348,41 @@ pub fn opencode_log(state: State<'_, OpenCodeState>) -> Vec<String> {
         .as_ref()
         .map(|r| r.log.lock().unwrap().iter().cloned().collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn mcp_connections_share_runtime_credentials_and_require_approval() {
+        let config: serde_json::Value = serde_json::from_str(&build_config(
+            "https://aira.example/",
+            "session-token",
+            "vendor/model",
+            Some((12345, "browser-token".into())),
+        ))
+        .unwrap();
+        assert_eq!(
+            config["provider"]["aira"]["options"]["baseURL"],
+            "https://aira.example/openai/v1"
+        );
+        assert_eq!(
+            config["mcp"]["aira_memory"]["url"],
+            "https://aira.example/mcp"
+        );
+        assert_eq!(
+            config["mcp"]["aira_browser"]["headers"]["Authorization"],
+            "Bearer browser-token"
+        );
+        assert_eq!(config["permission"]["aira_browser*"], "ask");
+        assert_eq!(config["permission"]["external_directory"], "deny");
+        let disconnected: serde_json::Value = serde_json::from_str(&build_config(
+            "https://aira.example",
+            "token",
+            "model",
+            None,
+        ))
+        .unwrap();
+        assert!(disconnected["mcp"].get("aira_browser").is_none());
+    }
 }

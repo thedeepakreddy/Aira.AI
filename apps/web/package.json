@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:ui": "node tests/ui-smoke.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -32,8 +33,9 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
+    "playwright": "^1.62.1",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "vite": "8.0.13"
+    "vite": "8.3.0"
   }
 }

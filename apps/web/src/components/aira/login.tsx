@@ -17,8 +17,10 @@ export default function Login({onComplete,onBack,reduceMotion}:{onComplete:()=>v
   event.preventDefault();
   if(pending)return;
   setPending(true);setMessage(null);
-  const error=signup?await signUp(email,password):await signIn(email,password);
-  setPending(false);
+  let error:string|null;
+  try { error=signup?await signUp(email.trim(),password):await signIn(email.trim(),password); }
+  catch { setMessage({tone:'error',text:'Could not connect to sign-in. Please try again.'});return; }
+  finally { setPending(false); }
   // A new account has no session until the emailed link is clicked; saying so
   // beats a form that appears to do nothing.
   if(error==='CONFIRM_EMAIL'){setPassword('');setMode('signin');setMessage({tone:'info',text:'Check your inbox to confirm your address, then sign in.'});return}
@@ -34,5 +36,5 @@ export default function Login({onComplete,onBack,reduceMotion}:{onComplete:()=>v
  {message&&<p className={'login-message '+message.tone} role={message.tone==='error'?'alert':'status'}>{message.text}</p>}
  <button type="submit" className="warm-button" disabled={pending||!isAuthConfigured}>{pending?<><Loader2 className="spin"/>{signup?'Creating account…':'Signing in…'}</>:<>{signup?'Create account':'Sign in'}<ArrowUpRight/></>}</button></form>
  <button type="button" className="login-toggle" onClick={switchMode}>{signup?<>Already have an account? <b>Sign in</b></>:<>New to Aira? <b>Create an account</b></>}</button>
- <p className="login-note">{isAuthConfigured?'Your password is sent directly to Supabase over HTTPS and is never stored by Aira.':'Sign-in is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'}</p></div></section>
+ <p className="login-note">{isAuthConfigured?'Your account is secured by Supabase. Aira never stores your password.':'Sign-in is not available in this workspace yet. Your workspace administrator needs to connect authentication.'}</p></div></section>
 }

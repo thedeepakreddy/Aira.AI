@@ -1,379 +1,250 @@
-import {useCallback,useEffect,useRef,useState} from 'react';
-import {Power,Globe,Send,Square,ArrowUpRight,Check,Loader2,ShieldAlert,Link2,Plus,X,Search,EyeOff,Puzzle,ArrowLeft,ArrowRight,RotateCw} from 'lucide-react';
-import {isDesktop,supervisor,page,BrowserClient,type BrowseEvent,type BrowserStatus,type Tab} from '@/lib/browser';
+import {useCallback,useEffect,useRef,useState,type KeyboardEvent} from 'react';
+import {Power,Globe,Send,Square,ArrowUpRight,Check,Loader2,ShieldAlert,Plus,X,Search,EyeOff,ArrowLeft,ArrowRight,RotateCw,PanelRightClose,PanelRightOpen,Sparkles} from 'lucide-react';
+import {isDesktop,supervisor,BrowserClient,type BrowseEvent,type BrowserStatus,type TabState} from '@/lib/browser';
 import {getAccessToken} from '@/lib/supabase';
-import {listCatalogue} from '@/lib/gateway';
+import {listCatalogue,gatewayRequest} from '@/lib/gateway';
 import Markdown from './markdown';
+import './browser-workbench.css';
 
-/**
- * The browsing agent.
- *
- * Shows the trail rather than a spinner: a browse takes tens of seconds, most
- * of it spent looking at a page, and the steps are the only evidence that
- * anything is happening. They are also the only way to see *where* the agent
- * went, which matters on the one surface that acts on what a page tells it.
- */
-
-interface Step {n:number;url:string;action:string}
-
-/** Where a new tab lands. English Google, explicitly — the country redirect
- *  otherwise decides the language for you. */
-const HOME='https://www.google.com/?hl=en&gl=us';
-
-/** "google.com/search?q=x" → "google.com" — enough to tell tabs apart. */
-function label(url:string):string{
- try{const u=new URL(url);return u.hostname.replace(/^www\./,'')||'New tab'}catch{return 'New tab'}
+const HOME='https://www.google.com/';
+const EMPTY:TabState={tabs:[],private:false,running:false};
+// Account remounts wait for the prior owner's runtime to stop before reading
+// status. A StrictMode effect replay does not end ownership.
+let browserCleanup:Promise<void>=Promise.resolve();
+function label(url:string){try{return new URL(url).hostname.replace(/^www\./,'')||'New tab'}catch{return 'New tab'}}
+export function browserAddress(text:string){
+ const value=text.trim();
+ if(/^https?:\/\//i.test(value)||value==='about:blank')return value;
+ if(/^[a-z][a-z\d+.-]*:/i.test(value)&&!/^localhost:\d/i.test(value))throw new Error('Use an HTTP or HTTPS web address.');
+ if(!/\s/.test(value)&&(/^[\w-]+(\.[\w-]+)+(?:[:/].*)?$/.test(value)||/^localhost(?::\d+)?(?:\/.*)?$/.test(value)))return `https://${value}`;
+ return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
 }
 
-export default function BrowserPanel(){
+export default function BrowserPanel({active=true}:{active?:boolean}){
  const [status,setStatus]=useState<BrowserStatus|null>(null);
+ const [tabState,setTabState]=useState<TabState>(EMPTY);
+ const [address,setAddress]=useState('');
  const [task,setTask]=useState('');
  const [sent,setSent]=useState('');
- const [steps,setSteps]=useState<Step[]>([]);
+ const [steps,setSteps]=useState<{n:number;url:string;action:string}[]>([]);
  const [result,setResult]=useState('');
  const [visited,setVisited]=useState<string[]>([]);
  const [busy,setBusy]=useState(false);
  const [starting,setStarting]=useState(false);
+ const [working,setWorking]=useState(false);
  const [error,setError]=useState('');
  const [model,setModel]=useState('');
- const [tabs,setTabs]=useState<{id:string;url:string}[]>([{id:'t0',url:HOME}]);
- const [activeTab,setActiveTab]=useState('t0');
- const [isPrivate,setPrivate]=useState(false);
+ const [showResearch,setShowResearch]=useState(true);
  const [frame,setFrame]=useState<string|null>(null);
- const [pageUrl,setPageUrl]=useState('');
+ const [frameTitle,setFrameTitle]=useState('');
+ const [memoryState,setMemoryState]=useState<'idle'|'saving'|'saved'>('idle');
+ const [privateResult,setPrivateResult]=useState(false);
  const client=useRef<BrowserClient|null>(null);
  const run=useRef<AbortController|null>(null);
- const trail=useRef<HTMLDivElement>(null);
- const pageArea=useRef<HTMLDivElement>(null);
- const opened=useRef(false);
-
+ const editingAddress=useRef(false);
+ const currentAddress=useRef('');
+ const alive=useRef(true);
+ const pendingStart=useRef<Promise<BrowserStatus>|null>(null);
+ const startingController=useRef<AbortController|null>(null);
+ const imageRef=useRef<HTMLImageElement>(null);
  const connected=Boolean(status?.running&&client.current);
- const missing=Boolean(status&&!status.python);
+ const locked=busy||working||Boolean(tabState.busy);
 
- useEffect(()=>{trail.current?.scrollTo({top:trail.current.scrollHeight,behavior:'instant'})},[steps,result]);
-
- // Closed whenever this screen goes away, whatever state it was in. Tying this
- // to `connected` left a stopped browser's page hanging over the panel, because
- // the close only ran on the transition that had already happened.
- useEffect(()=>()=>{opened.current=false;void page.close().catch(()=>{})},[]);
-
- /**
-  * Stops the app scrolling while the page view is open.
-  *
-  * The webview is an OS layer positioned in window coordinates — nothing lays
-  * it out and nothing scrolls it. If Aira's own document moves underneath, the
-  * page stays nailed where it was and the two slide apart, which reads as the
-  * browser floating loose over the app.
-  */
- useEffect(()=>{
-  if(!isDesktop||!connected)return;
-  const {body}=document;
-  const before=body.style.overflow;
-  body.style.overflow='hidden';
-  return()=>{body.style.overflow=before};
- },[connected]);
-
- /**
-  * Keeps the native page view exactly over the panel's content area.
-  *
-  * A child webview is positioned in window coordinates, not laid out by CSS, so
-  * nothing moves it when the window resizes or the toolbar changes height —
-  * which is what this does. And it is closed on the way out: the webview draws
-  * over its parent, so one left open would hang over whatever screen comes
-  * next.
-  */
- useEffect(()=>{
-  if(!isDesktop||!connected)return;
-  const area=pageArea.current;
-  if(!area)return;
-  let alive=true;
-
-  // No title-bar correction: the window uses an overlay title bar, so its
-  // frame and its content share an origin and a rectangle measured in the page
-  // is the rectangle the child webview gets. Deriving the offset was tried and
-  // failed — Tauri reports the window as undecorated in every metric, and
-  // `window.screenY` inside the webview reports the screen height, not the
-  // window's position.
-  const place=()=>{
-   // Anchored to the bottom edge of the chrome rather than the top of the page
-   // div. The div's own rect was measured before the toolbar had laid out, and
-   // a ResizeObserver on it never corrected that — so the page sat over the
-   // address bar with nothing to move it.
-   const chromeEl=document.querySelector('.browse-chrome');
-   const bar=document.querySelector('.browse-bar')?.getBoundingClientRect();
-   const chrome=chromeEl?.getBoundingClientRect();
-   const box=area.getBoundingClientRect();
-   if(!chrome||chrome.height<40)return;
-   // The address bar's own bottom, not just the container's: if the two ever
-   // disagree again, the one that must not be covered wins.
-   const top=Math.max(chrome.bottom,bar?.bottom??0,box.y);
-   const rect=new DOMRect(box.x,top,box.width,Math.max(0,box.bottom-top));
-   if(rect.width<2||rect.height<2)return;
-   void (opened.current?page.bounds(rect):page.open(HOME,rect).then(()=>{opened.current=true}))
-    .catch(()=>{});
-  };
-  // Placed again once layout has settled. The first measurement can be taken
-  // before the toolbar has its final height — a tab strip that grows by a row
-  // afterwards leaves the page sitting over the address bar, and nothing moves
-  // it back because the canvas never changed size.
-  place();
-  requestAnimationFrame(place);
-  const settle=setTimeout(place,400);
-  const observer=new ResizeObserver(()=>{if(alive)place()});
-  observer.observe(area);
-  window.addEventListener('resize',place);
-
-  // The address bar shows where the page actually went, including links the
-  // user followed inside it.
-  const poll=setInterval(()=>{void page.url().then(u=>{
-   if(!alive||!u)return;
-   setPageUrl(u);
-   setTabs(list=>list.map(t=>t.id===activeTab?{...t,url:u}:t));
-  }).catch(()=>{})},1200);
-
-  return()=>{
-   alive=false;observer.disconnect();window.removeEventListener('resize',place);
-   clearTimeout(settle);clearInterval(poll);
-   opened.current=false;
-   void page.close().catch(()=>{});
-  };
- },[connected]);
-
-
- useEffect(()=>{
-  if(!isDesktop)return;
-  void supervisor.status().then(next=>{
-   setStatus(next);
-   // The service outlives this panel, so returning to the screen reattaches
-   // rather than showing a running agent as stopped.
-   if(next.running&&next.port!=null&&next.token){
-    client.current=new BrowserClient(next.port,next.token);
-    void listCatalogue().then(({routing})=>setModel(routing.task??'')).catch(()=>{});
-   }
-  }).catch(()=>{});
-  return()=>{run.current?.abort()};
+ const showError=useCallback((e:unknown)=>setError(e instanceof Error?e.message:String(e)),[]);
+ const applyTabs=useCallback((state:TabState)=>{
+  setTabState(state);
+  const url=state.tabs.find(t=>t.id===state.activeId)?.url;
+  if(url){currentAddress.current=url;if(!editingAddress.current)setAddress(url)}
  },[]);
+
+ useEffect(()=>{
+  alive.current=true;
+  let cancelled=false;
+  queueMicrotask(()=>{
+   if(!isDesktop||cancelled)return;
+   void browserCleanup.then(()=>supervisor.status()).then(next=>{
+    if(cancelled)return;
+    if(next.running&&next.port!=null&&next.token)client.current=new BrowserClient(next.port,next.token);
+    setStatus(next);
+   }).catch(e=>{if(!cancelled)showError(e)});
+  });
+  return()=>{
+   cancelled=true;alive.current=false;run.current?.abort();startingController.current?.abort();client.current=null;
+   queueMicrotask(()=>{
+    if(isDesktop&&!alive.current){
+     const launch=pendingStart.current;
+     browserCleanup=browserCleanup.then(async()=>{await launch?.catch(()=>undefined);await supervisor.stop()}).catch(()=>undefined);
+    }
+   });
+  };
+ },[showError]);
+
+ useEffect(()=>{
+  if(!connected||!active)return;
+  let disposed=false;
+  let timer:ReturnType<typeof setTimeout>;
+  let failures=0;
+  async function refresh(){
+   const c=client.current;
+   if(!c||disposed)return;
+   try{
+    const state=await c.tabs();
+    if(disposed)return;
+    if(state.error)throw new Error(state.error);
+    applyTabs(state);
+    if(state.tabs.length){
+     const next=await c.screen();
+     if(disposed)return;
+     setFrame(next.image);setFrameTitle(next.title||label(next.url));
+     if(next.url){currentAddress.current=next.url;if(!editingAddress.current)setAddress(next.url)}
+    }else setFrame(null);
+    failures=0;
+   }catch(e){
+    failures++;
+    if(failures===3){showError(e);const next=await supervisor.status().catch(()=>null);if(!disposed)setStatus(next)}
+   }finally{if(!disposed)timer=setTimeout(()=>void refresh(),busy?1200:700)}
+  }
+  void refresh();
+  return()=>{disposed=true;clearTimeout(timer)};
+ },[connected,active,busy,applyTabs,showError]);
 
  async function start(){
   setError('');setStarting(true);
+  const controller=new AbortController();startingController.current=controller;
   try{
-   const token=await getAccessToken();
-   if(!token)throw new Error('Sign in before starting the browser.');
-   const {models,routing}=await listCatalogue();
-   const chosen=routing.task??models[0]?.id;
-   if(!chosen)throw new Error('No models available from the gateway.');
-   const gatewayUrl=(import.meta.env?.VITE_GATEWAY_URL as string|undefined)??'http://localhost:8787';
-   const next=await supervisor.start({gatewayUrl,token,model:chosen});
-   setStatus(next);setModel(chosen);
-   if(!next.running||next.port==null||!next.token)throw new Error('The browsing agent did not start.');
-   client.current=new BrowserClient(next.port,next.token);
+   const gatewayUrl=(import.meta.env.VITE_GATEWAY_URL as string|undefined)??'http://localhost:8787';
+   // Ordinary browsing does not consume model tokens or require a model.
+   await browserCleanup;
+   if(!alive.current||controller.signal.aborted)return;
+   const launch=supervisor.start({gatewayUrl,token:'',model:''});pendingStart.current=launch;
+   const next=await launch;
+   if(!alive.current||controller.signal.aborted){await supervisor.stop();return}
+   if(!next.running||next.port==null||!next.token)throw new Error('The browser service could not start.');
+   const c=new BrowserClient(next.port,next.token);
+   await c.waitUntilReady(controller.signal);
+   if(!alive.current||controller.signal.aborted){await supervisor.stop();return}
+   const state=await c.openTab(HOME);
+   if(!alive.current||controller.signal.aborted){await supervisor.stop();return}
+   client.current=c;applyTabs(state);setStatus(next);
   }catch(e){
-   const said=await supervisor.log().catch(()=>[] as string[]);
-   const tail=said.slice(-2).join(' · ');
-   setError((e instanceof Error?e.message:'Could not start the browser.')+(tail?` It said: ${tail}`:''));
-  }finally{setStarting(false)}
+   if(alive.current&&!controller.signal.aborted)showError(e);
+   await supervisor.stop().catch(()=>{});
+   if(alive.current)setStatus(await supervisor.status().catch(()=>null));
+  }finally{pendingStart.current=null;if(startingController.current===controller)startingController.current=null;if(alive.current)setStarting(false)}
  }
 
  async function stop(){
-  run.current?.abort();run.current=null;
-  client.current=null;
-  setBusy(false);
-  opened.current=false;
-  await page.close().catch(()=>{});
-  try{await supervisor.stop()}catch{}
-  setStatus(await supervisor.status().catch(()=>null));
+  setWorking(true);run.current?.abort();
+  try{await supervisor.stop();client.current=null;setStatus(await supervisor.status());setTabState(EMPTY);setFrame(null);setBusy(false)}
+  catch(e){showError(e)}finally{setWorking(false)}
+ }
+
+ async function operate(action:(c:BrowserClient)=>Promise<TabState>){
+  const c=client.current;if(!c||locked)return;
+  setWorking(true);setError('');
+  try{applyTabs(await action(c))}catch(e){showError(e)}finally{setWorking(false)}
+ }
+
+ async function navigate(){
+  if(!address.trim())return;
+  try{const url=browserAddress(address);editingAddress.current=false;await operate(c=>c.navigate(url))}catch(e){showError(e)}
  }
 
  const onEvent=useCallback((event:BrowseEvent)=>{
-  if(event.type==='step')setSteps(list=>[...list,{n:event.n,url:event.url,action:event.action}]);
-  else if(event.type==='result'){setResult(event.text);setVisited(event.urls)}
+  if(!alive.current)return;
+  if(event.type==='step')setSteps(list=>[...list,event]);
+  else if(event.type==='result'){setResult(event.text);setVisited([...new Set(event.urls)].filter(u=>/^https?:\/\//i.test(u)))}
   else if(event.type==='error')setError(event.message);
+  else if(event.type==='cancelled')setError('Research stopped. Your tabs are still open.');
  },[]);
 
- async function go(){
-  const text=task.trim();
-  const c=client.current;
-  if(!text||!c||busy)return;
-  run.current?.abort();
+ async function research(){
+  const c=client.current,text=task.trim();if(!c||!text||locked)return;
   const controller=new AbortController();run.current=controller;
-  setTask('');setSent(text);setSteps([]);setResult('');setVisited([]);setError('');setBusy(true);
+  setBusy(true);setError('');setSent(text);setResult('');setSteps([]);setVisited([]);setMemoryState('idle');setPrivateResult(tabState.private);
   try{
+   const token=await getAccessToken();if(!token)throw new Error('Sign in to use the research agent. Browsing remains available.');
+   const catalogue=await listCatalogue();
+   const chosen=catalogue.routing.task??catalogue.models[0]?.id;
+   if(!chosen)throw new Error('Configure a model in the gateway to use research.');
+   if(controller.signal.aborted)return;
+   await c.configure(chosen,token);setModel(chosen);setTask('');
    await c.run(text,12,onEvent,controller.signal);
-  }catch(e){
-   if(!controller.signal.aborted)setError(e instanceof Error?e.message:String(e));
-  }finally{
-   if(!controller.signal.aborted)setBusy(false);
-  }
+  }catch(e){if(!controller.signal.aborted)showError(e)}
+  finally{if(alive.current)setBusy(false);if(run.current===controller)run.current=null}
  }
 
- function interrupt(){
-  run.current?.abort();run.current=null;setBusy(false);
+ async function input(event:Record<string,unknown>){
+  if(locked||!client.current)return;
+  try{const response=await client.current.input(event);if(!response.ok)throw new Error('The page did not accept this input.')}catch(e){showError(e)}
  }
-
- function openTab(url=HOME){
-  const id='t'+Date.now();
-  setTabs(list=>[...list,{id,url}]);
-  setActiveTab(id);
-  void page.navigate(url).catch(()=>{});
- }
-
- function selectTab(id:string){
-  const tab=tabs.find(t=>t.id===id);
-  if(!tab)return;
-  setActiveTab(id);
-  void page.navigate(tab.url).catch(()=>{});
- }
-
- function closeTab(id:string){
-  setTabs(list=>{
-   const next=list.filter(t=>t.id!==id);
-   // A browser with no tabs is a broken browser; the last close opens a new one.
-   if(!next.length){const fresh={id:'t'+Date.now(),url:HOME};setActiveTab(fresh.id);void page.navigate(HOME).catch(()=>{});return [fresh]}
-   if(id===activeTab){setActiveTab(next[0].id);void page.navigate(next[0].url).catch(()=>{})}
-   return next;
-  });
- }
-
- /** An address goes to the browser; anything else goes to the agent. */
- function looksLikeAddress(text:string):boolean{
-  if(/^[a-z]+:\/\//i.test(text))return true;
-  // A single token with a dot and no spaces is an address; "what is a .com"
-  // is not. Getting this wrong in the safe direction means a search, which is
-  // what a browser does with an ambiguous omnibox anyway.
-  return !/\s/.test(text)&&/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(text);
- }
-
- async function submit(){
-  const text=task.trim();
-  if(!text)return;
-  if(!looksLikeAddress(text)&&busy){
-   setError('The agent is still working. Stop it first, or type an address — those always go through.');
-   return;
-  }
-  // An address always goes through, even mid-research: the browser and the
-  // agent are doing different jobs, and a browser you cannot type into because
-  // something else is busy is not a browser.
-  if(looksLikeAddress(text)){
-   setTask('');
-   // Straight into the page view — this is the browser the person is looking
-   // at. The agent's Chrome is a separate thing and gets its own tasks.
-   const url=/^[a-z]+:\/\//i.test(text)?text:`https://${text}`;
-   setTabs(list=>list.map(t=>t.id===activeTab?{...t,url}:t));
-   await page.navigate(url).catch((e:unknown)=>setError(e instanceof Error?e.message:String(e)));
-   return;
-  }
-  await go();
- }
-
- async function togglePrivate(){
-  const c=client.current;
-  if(!c)return;
-  const want=!isPrivate;
+ async function saveMemory(){
+  if(!result||privateResult||memoryState!=='idle')return;
+  setMemoryState('saving');
   try{
-   const state=await c.setPrivate(want);
-   setPrivate(state.private);
-  }catch(e){setError(e instanceof Error?e.message:String(e))}
+   await gatewayRequest('/v1/memory',{method:'POST',body:JSON.stringify({text:`Research: ${sent}\n${result}`.slice(0,4000),surface:'browser'})});
+   setMemoryState('saved');
+  }catch(e){setMemoryState('idle');showError(e)}
+ }
+ function key(event:KeyboardEvent<HTMLImageElement>){
+  if(event.metaKey||event.ctrlKey||event.altKey)return;
+  const controls=['Enter','Backspace','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape'];
+  if(event.key.length===1||controls.includes(event.key)){
+   event.preventDefault();void input(event.key.length===1?{type:'text',text:event.key}:{type:'key',key:event.key});
+  }
  }
 
-
-
- return <section className="cli-page agent-page browse-page screen-content" aria-label="Browsing agent">
+ return <section className="cli-page agent-page browse-page screen-content browser-workbench" aria-label="Browser workspace">
   <div className="cli-heading">
-   <span className="eyebrow">BROWSING AGENT</span>
-   <div className="agent-title-row">
-    <h1>Web<span className="desktop-only"> research.</span></h1>
-    <div className="agent-controls">
-     <span className="session-badge" role="status"><span/>
-      {connected?(busy?`Step ${steps.length||1}`:'Ready'):isDesktop?'Not running':'Desktop app only'}</span>
-     <button className={'agent-power '+(connected?'on':'')} onClick={connected?stop:()=>void start()}
-      disabled={starting||!isDesktop||!status?.python}
-      aria-label={connected?'Stop the browser':'Start the browser'}
-      title={!isDesktop?'The browsing agent runs in the Aira desktop app':status?.python?(connected?'Stop the browser':'Start the browser'):'The browsing agent is not installed'}>
-      <Power/>
-     </button>
+   <span className="eyebrow">EXPLORE · RESEARCH · ACT</span>
+   <div className="agent-title-row"><h1>A wider view.</h1><div className="agent-controls">
+    <span className="session-badge" role="status"><span/>{starting?'Starting Chrome':connected?(busy?'Researching':'Connected'):'Disconnected'}</span>
+    <button className={'agent-power '+(connected?'on':'')} onClick={()=>void(connected?stop():start())} disabled={starting||working||!isDesktop||!status?.python} aria-label={connected?'Disconnect browser':'Connect browser'} title={connected?'Close the shared browser session':'Start shared Chrome'}><Power/></button>
+   </div></div>
+   <p>Your browsing and research, in one shared Chrome session.</p>
+  </div>
+  {error&&<div className="agent-notice error browser-notice" role="alert"><ShieldAlert/><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss browser message"><X/></button></div>}
+  {!connected?<div className="browser-welcome">
+   <div className="browser-welcome-orbit"><Globe/></div>
+   <span className="eyebrow">A BROWSER WITH CONTEXT</span><h2>Follow your curiosity.</h2>
+   <p>{!isDesktop?'The shared Chrome session runs in Aira Desktop. On the web, open pages in your browser and bring findings back to chat.':status&&!status.python?'Install the browser runtime using the project’s Browser setup guide, then reopen this panel.':'Open real tabs, browse the web, and let research work in the same session. No model is needed to browse.'}</p>
+   <div className="browser-welcome-actions">{isDesktop?<button className="browser-primary" disabled={starting||!status?.python} onClick={()=>void start()}>{starting?<Loader2 className="spin"/>:<Power/>}{starting?'Connecting…':'Connect browser'}</button>:<a className="browser-primary" href="https://www.google.com/" target="_blank" rel="noopener noreferrer">Open web search <ArrowUpRight/></a>}</div>
+   <div className="browser-feature-row"><span>Real tabs & history</span><span>Shared with coding tools</span><span>Research in context</span></div>
+  </div>:<div className={'browser-workbench-grid '+(!showResearch?'research-collapsed':'')}>
+   <div className="browser-surface">
+    <div className="browse-chrome">
+     <div className="browse-tabstrip" role="tablist" aria-label="Shared Chrome tabs">
+      {tabState.tabs.map(tab=><div className={'browse-tab '+(tab.id===tabState.activeId?'active':'')} key={tab.id}>
+       <button role="tab" aria-selected={tab.id===tabState.activeId} className="browse-tab-title" title={tab.title||tab.url} disabled={locked} onClick={()=>void operate(c=>c.selectTab(tab.id))}>{tab.title||label(tab.url)}</button>
+       <button className="browse-tab-x" disabled={locked} onClick={()=>void operate(c=>c.closeTab(tab.id))} aria-label={`Close ${tab.title||label(tab.url)}`}><X/></button>
+      </div>)}
+      <button className="browse-tab-new" disabled={locked} onClick={()=>void operate(c=>c.openTab('about:blank'))} aria-label="New browser tab"><Plus/></button>
+     </div>
+     <div className="browse-toolbar"><div className="browse-nav">
+      <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('back'))} aria-label="Back"><ArrowLeft/></button>
+      <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('forward'))} aria-label="Forward"><ArrowRight/></button>
+      <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('reload'))} aria-label="Reload"><RotateCw className={working?'spin':''}/></button>
+     </div><form className="browse-bar" onSubmit={e=>{e.preventDefault();void navigate()}}><Search/><input aria-label="Search or enter a web address" value={address} placeholder="Search or enter a web address" disabled={locked} autoComplete="off" spellCheck={false} onFocus={()=>{editingAddress.current=true}} onBlur={()=>{editingAddress.current=false}} onChange={e=>setAddress(e.target.value)}/><button className="browse-bar-go" disabled={locked||!address.trim()} aria-label="Navigate"><ArrowRight/></button></form>
+     <button className={'browse-icon '+(tabState.private?'on':'')} disabled={locked} aria-label="Private browser profile" aria-pressed={tabState.private} title="Switch profile and close current tabs" onClick={()=>void operate(async c=>{await c.setPrivate(!tabState.private);return c.openTab(HOME)})}><EyeOff/></button>
+     <button className="browse-icon" aria-label={showResearch?'Hide research panel':'Show research panel'} aria-expanded={showResearch} onClick={()=>setShowResearch(!showResearch)}>{showResearch?<PanelRightClose/>:<PanelRightOpen/>}</button></div>
     </div>
+    <div className="browser-preview" aria-busy={busy||working}>
+     {frame?<img ref={imageRef} src={frame} alt={frameTitle?`Interactive preview of ${frameTitle}`:'Interactive Chrome page preview'} tabIndex={locked?-1:0} draggable={false} onKeyDown={key} onPaste={e=>{e.preventDefault();void input({type:'text',text:e.clipboardData.getData('text')})}} onClick={e=>{const img=e.currentTarget;img.focus();const r=img.getBoundingClientRect();void input({type:'click',x:(e.clientX-r.left)*img.naturalWidth/r.width,y:(e.clientY-r.top)*img.naturalHeight/r.height})}} onWheel={e=>{void input({type:'scroll',deltaX:e.deltaX,deltaY:e.deltaY})}}/>:<div className="browser-preview-empty"><Globe/><p>{working?'Opening page…':'Your page preview will appear here.'}</p></div>}
+    </div>
+    <div className="browser-statusbar"><span>{tabState.private?'Temporary profile':'Aira profile'} · {busy?'Agent has control':'Interactive preview'}</span><button disabled={working} onClick={()=>{void client.current?.focus().catch(showError)}}>Open browser window <ArrowUpRight/></button></div>
    </div>
-   <p>A real browser, and an agent that can research for you.</p>
-  </div>
-
-  <div className="cli-grid agent-grid">
-   <div className="terminal-window">
-
-    {connected&&<div className="browse-chrome">
-     <div className="browse-tabstrip" role="tablist" aria-label="Open tabs">
-      {tabs.map(tab=><span className={'browse-tab '+(tab.id===activeTab?'active':'')} key={tab.id} title={tab.url}>
-       <button className="browse-tab-title" onClick={()=>selectTab(tab.id)}>{label(tab.url)}</button>
-       <button className="browse-tab-x" onClick={()=>closeTab(tab.id)} aria-label={`Close ${label(tab.url)}`}><X/></button>
-      </span>)}
-      <button className="browse-tab-new" onClick={()=>openTab()} aria-label="New tab"><Plus/></button>
-     </div>
-     <div className="browse-toolbar">
-      <div className="browse-nav">
-       <button type="button" className="browse-icon" onClick={()=>void page.history('back')} aria-label="Back"><ArrowLeft/></button>
-       <button type="button" className="browse-icon" onClick={()=>void page.history('forward')} aria-label="Forward"><ArrowRight/></button>
-       <button type="button" className="browse-icon" onClick={()=>void page.history('reload')} aria-label="Reload"><RotateCw/></button>
-      </div>
-      <form className="browse-bar" onSubmit={e=>{e.preventDefault();void submit()}}>
-       {isPrivate?<EyeOff/>:<Search/>}
-       <input aria-label="Address or question" value={task}
-        placeholder={pageUrl||'Search, ask, or type a web address'}
-        autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
-       {busy
-        ? <button type="button" className="browse-bar-go" onClick={interrupt} aria-label="Stop"><Square/></button>
-        : <button type="submit" className="browse-bar-go" disabled={!task.trim()} aria-label="Go"><Send/></button>}
-      </form>
-      <div className="browse-actions">
-       <button type="button" className={'browse-icon '+(isPrivate?'on':'')} onClick={()=>void togglePrivate()}
-        aria-label={isPrivate?'Private browsing on':'Private browsing off'}
-        title={isPrivate?'Private: nothing is kept.':'Browse privately — applies to the next browser'}><EyeOff/></button>
-       <span className="browse-icon quiet" title="Unpacked extensions in ~/.aira/browser/extensions load at start"><Puzzle/></span>
-      </div>
-     </div>
-    </div>}
-
-    {/* The native page view sits over this rectangle. Nothing is drawn here:
-        the hole is the point, and its measured bounds are what the webview is
-        given. */}
-    <div className="browse-canvas" ref={pageArea}/>
-
-    {(sent||busy||error)&&<div className={'terminal-log '+(connected&&frame?'browse-trail':'')} ref={trail} role="log" aria-live="polite">
-     {!(connected&&frame)&&<div className="terminal-welcome"><span>Aira Browser</span>
-      <p>{connected?'Browse above, or ask a question and the agent researches it — its own Chrome, with every page it opens listed here.'
-       :!isDesktop?'The browsing agent drives a real browser on your machine, so it runs in the Aira desktop app rather than a browser tab.'
-       :missing?'The browsing agent is not installed. Aira keeps it in its own virtualenv at ~/.aira/browser/venv.'
-       :'Press power to start the browser.'}</p>
-     </div>}
-
-     {sent&&<div className="terminal-entry"><div className="terminal-command"><span>❯</span> {sent}</div></div>}
-
-     {steps.map(step=><div className="browse-step" key={step.n}>
-      <span className="browse-step-n">{step.n}</span>
-      <span className="browse-step-body">
-       {step.action&&<span className="browse-action">{step.action}</span>}
-       {step.url&&<code>{step.url.length>64?step.url.slice(0,63)+'…':step.url}</code>}
-       {!step.action&&!step.url&&<span className="browse-action quiet">looking…</span>}
-      </span>
-     </div>)}
-
-     {busy&&<div className="browse-step pending"><span className="browse-step-n"><Loader2 className="spin"/></span>
-      <span className="browse-step-body"><span className="browse-action quiet">reading the page…</span></span></div>}
-
-     {result&&<div className="browse-result">
-      <div className="browse-result-head"><Check/><span>Found it</span></div>
-      <Markdown>{result}</Markdown>
-      {visited.length>0&&<ul className="browse-visited">
-       {visited.map((url,i)=><li key={i}><ArrowUpRight/><code>{url}</code></li>)}
-      </ul>}
-     </div>}
-
-     {error&&<div className="agent-notice error"><ShieldAlert/><span>{error}</span></div>}
-    </div>}
-
-    {!connected&&<div className="terminal-shortcuts">
-     {['Summarise the top story on Hacker News','Find the latest Tauri release notes','What is on example.com?'].map(s=>
-      <button key={s} disabled={busy} onClick={()=>setTask(s)}>{s}</button>)}
-    </div>}
-   </div>
-  </div>
+   {showResearch&&<aside className="browser-research" aria-label="Research assistant">
+    <div className="browser-research-heading"><Sparkles/><div><h2>Research companion</h2><p>Works in your open tabs</p></div></div>
+    <div className="browser-research-log" role="log" aria-live="polite">
+     {!sent&&<div className="browser-research-empty"><p>Ask a question worth exploring.</p><span>The agent reads the same Chrome session you see here. Stop it any time to take control.</span><div className="browser-prompts">{['Summarize the current page with sources','Compare these open tabs','Find official documentation for this topic'].map(s=><button key={s} onClick={()=>setTask(s)}>{s}<ArrowUpRight/></button>)}</div></div>}
+     {sent&&<div className="browser-question">{sent}</div>}
+     {steps.map(step=><div className="browse-step" key={step.n}><span className="browse-step-n">{step.n}</span><span className="browse-step-body"><span className="browse-action">{step.action||'Reading page'}</span>{step.url&&<code>{label(step.url)}</code>}</span></div>)}
+     {busy&&<div className="browse-step"><Loader2 className="spin"/><span>Researching your question…</span></div>}
+     {result&&<div className="browse-result"><div className="browse-result-head"><Check/><span>Research result</span></div><Markdown>{result}</Markdown>{visited.length>0&&<ul className="browse-visited">{visited.map(url=><li key={url}><button disabled={locked} onClick={()=>void operate(c=>c.openTab(url))}>{label(url)}<ArrowUpRight/></button></li>)}</ul>}<button className="browser-primary" disabled={privateResult||memoryState!=='idle'} onClick={()=>void saveMemory()} title={privateResult?'Memory is disabled for temporary profiles':'Save these findings to shared Aira memory'}>{memoryState==='saving'?'Saving…':memoryState==='saved'?'Saved to memory':'Save to memory'}</button></div>}
+    </div>
+    <form className="browser-research-composer" onSubmit={e=>{e.preventDefault();void research()}}><textarea value={task} onChange={e=>setTask(e.target.value)} placeholder="Ask Aira to research…" aria-label="Research question" rows={3} disabled={busy}/><div><span>{model?labelModel(model):'Uses your research model'}</span>{busy?<button key="stop" type="button" className="browser-primary" onClick={e=>{e.preventDefault();run.current?.abort()}}><Square/>Stop</button>:<button key="research" type="submit" className="browser-primary" disabled={!task.trim()||locked}><Send/>Research</button>}</div></form>
+   </aside>}
+  </div>}
  </section>;
 }
+function labelModel(model:string){return model.split('/').pop()||model}

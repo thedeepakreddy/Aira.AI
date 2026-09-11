@@ -19,6 +19,7 @@ export interface OpenClawStatus {
   token: string | null;
   /** Path to the binary, or null when OpenClaw is not installed. */
   binary: string | null;
+  model?: string | null;
 }
 
 /** True inside the Tauri shell; false in a browser tab. */
@@ -67,6 +68,9 @@ export class OpenClawClient {
   private readonly token: string;
 
   constructor(port: number, token: string) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !token) {
+      throw new Error('The task runtime returned invalid connection details.');
+    }
     this.port = port;
     this.token = token;
   }
@@ -109,32 +113,45 @@ export class OpenClawClient {
     signal?: AbortSignal,
   ): Promise<void> {
     const { listen } = await import('@tauri-apps/api/event');
-    const run = crypto.randomUUID();
+    await streamTask({ invoke, listen }, { port: this.port, token: this.token, agent: agentId, message }, onDelta, signal);
+  }
+}
 
-    const stops: (() => void)[] = [];
-    const finished = new Promise<void>((resolve) => {
-      void listen<string>(`openclaw://delta/${run}`, (e) => onDelta(e.payload)).then((off) =>
-        stops.push(off),
-      );
-      void listen(`openclaw://done/${run}`, () => resolve()).then((off) => stops.push(off));
-      signal?.addEventListener('abort', () => resolve());
+export interface TaskBridge {
+  invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+  listen: <T>(name: string, handler: (event: { payload: T }) => void) => Promise<() => void>;
+}
+
+/** Subscribe before dispatch; only the native command's result completes a run. */
+export async function streamTask(
+  bridge: TaskBridge,
+  request: { port: number; token: string; agent: string; message: string },
+  onDelta: (text: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const run = crypto.randomUUID();
+  const off = await bridge.listen<string>(`openclaw://delta/${run}`, event => {
+    if (!signal?.aborted) onDelta(event.payload);
+  });
+  let abort: (() => void) | undefined;
+  try {
+    signal?.throwIfAborted();
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => {
+        // The owned runtime is terminated: OpenClaw does not expose a verified
+        // per-task cancellation API. The panel refreshes status after stopping.
+        void bridge.invoke<void>('openclaw_cancel', { run }).then(
+          () => reject(new DOMException('The task runtime was stopped.', 'AbortError')),
+          error => reject(new Error(`Could not confirm task cancellation: ${String(error)}`)),
+        );
+      };
+      signal?.addEventListener('abort', abort, { once: true });
     });
-
-    try {
-      // Resolves when the shell finishes the stream; the `done` event may beat
-      // it, so whichever lands first ends the wait.
-      await Promise.race([
-        invoke<void>('openclaw_stream', {
-          port: this.port,
-          token: this.token,
-          agent: agentId,
-          message,
-          run,
-        }),
-        finished,
-      ]);
-    } finally {
-      for (const stop of stops) stop();
-    }
+    await Promise.race([bridge.invoke<void>('openclaw_stream', { ...request, run }), cancelled]);
+    signal?.throwIfAborted();
+  } finally {
+    if (abort) signal?.removeEventListener('abort', abort);
+    off();
   }
 }

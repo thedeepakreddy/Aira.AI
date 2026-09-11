@@ -10,6 +10,9 @@ dist/
 .vinext/
 .wrangler/
 *.tsbuildinfo
+artifacts/
+__pycache__/
+*.pyc
 
 # local environment / secrets
 .env

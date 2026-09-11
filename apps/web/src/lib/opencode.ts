@@ -21,6 +21,8 @@ export interface OpenCodeStatus {
   binary: string | null;
   /** Working directory of the running server, or null when it is not running. */
   directory: string | null;
+  /** Model configured on the supervised process, not a routing guess. */
+  model?: string | null;
 }
 
 /** True inside the Tauri shell; false in a browser tab. */
@@ -111,8 +113,8 @@ export interface QuestionRequest {
 
 /** One stored message, as the server replays it. */
 export interface MessageRecord {
-  info?: { role?: string };
-  parts?: { type?: string; text?: string; tool?: string; state?: { status?: string } }[];
+  info?: { id?: string; role?: string };
+  parts?: { id?: string; type?: string; text?: string; tool?: string; state?: { status?: string; input?: Record<string,unknown> } }[];
 }
 
 /** What the agent is doing right now, so long steps are legible. */
@@ -127,19 +129,22 @@ export interface ToolActivity {
 
 export type AgentEvent =
   | { kind: 'text'; sessionID: string; messageID: string; partID: string; delta: string }
-  | { kind: 'tool'; activity: ToolActivity }
+  | { kind: 'tool'; sessionID?: string; activity: ToolActivity }
   | { kind: 'permission'; request: PermissionRequest }
-  | { kind: 'permission-resolved'; id: string; reply?: string }
+  | { kind: 'permission-resolved'; sessionID?: string; id: string; reply?: string }
   | { kind: 'question'; request: QuestionRequest }
-  | { kind: 'question-resolved'; id: string; answers?: string[][] }
-  | { kind: 'file-edited'; path: string }
+  | { kind: 'question-resolved'; sessionID?: string; id: string; answers?: string[][] }
+  | { kind: 'file-edited'; sessionID?: string; path: string }
   | { kind: 'idle'; sessionID: string }
+  | { kind: 'status'; sessionID: string; status: string }
+  | { kind: 'error'; sessionID?: string; message: string }
   | { kind: 'other'; type: string };
 
 interface ToolPart {
   type?: string;
   id?: string;
   tool?: string;
+  sessionID?: string;
   state?: { status?: string; input?: Record<string, unknown> };
 }
 
@@ -150,7 +155,7 @@ interface ToolPart {
  * so the first recognised key wins and anything unknown shows nothing rather
  * than a blob of JSON.
  */
-function toolTarget(input: Record<string, unknown> | undefined): string {
+export function toolTarget(input: Record<string, unknown> | undefined): string {
   if (!input) return '';
   for (const key of ['filePath', 'path', 'command', 'pattern', 'query', 'description', 'url']) {
     const value = input[key];
@@ -164,6 +169,9 @@ export class OpenCodeClient {
   private readonly auth: string;
 
   constructor(port: number, password: string) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !password) {
+      throw new Error('The coding runtime returned invalid connection details.');
+    }
     this.base = `http://127.0.0.1:${port}`;
     this.auth = `Basic ${btoa(`opencode:${password}`)}`;
   }
@@ -172,11 +180,14 @@ export class OpenCodeClient {
     const response = await fetch(this.base + path, {
       ...init,
       headers: { 'Content-Type': 'application/json', Authorization: this.auth, ...init?.headers },
+      signal: init?.signal ?? AbortSignal.timeout(30_000),
     });
     if (!response.ok) {
-      throw new Error(`OpenCode ${path} returned ${response.status}`);
+      const detail = await response.text().catch(() => '');
+      throw new Error(`OpenCode request failed (${response.status})${detail ? `: ${detail.slice(0, 300)}` : '.'}`);
     }
-    return (await response.json()) as T;
+    const body = await response.text();
+    return (body ? JSON.parse(body) : undefined) as T;
   }
 
   /** Sessions the server knows about, including ones from earlier runs. */
@@ -186,11 +197,18 @@ export class OpenCodeClient {
 
   /** Every message in a session, used to rebuild the log after a remount. */
   messages(sessionID: string) {
-    return this.request<MessageRecord[]>(`/session/${sessionID}/message`);
+    return this.request<MessageRecord[]>(`/session/${encodeURIComponent(sessionID)}/message`);
   }
 
+  sessionStatuses() { return this.request<Record<string, { type: string }>>('/session/status'); }
+  async permissions(): Promise<PermissionRequest[]> {
+    const requests = await this.request<(PermissionRequest & { permission?: string; patterns?: string[] })[]>('/permission');
+    return requests.map(request => ({ ...request, action: request.action ?? request.permission ?? 'action', resources: request.resources ?? request.patterns ?? [] }));
+  }
+  questions() { return this.request<QuestionRequest[]>('/question'); }
+
   health() {
-    return this.request<{ healthy: boolean; version: string }>('/global/health');
+    return this.request<{ healthy: boolean; version: string }>('/global/health', { signal: AbortSignal.timeout(2_000) });
   }
 
   /**
@@ -207,23 +225,23 @@ export class OpenCodeClient {
   }
 
   /**
-   * Sends a task. Resolves when the agent finishes; progress arrives on the
-   * event stream rather than in this response.
+   * Accepts a task without holding an HTTP request open for the whole run.
+   * Completion and failure arrive on the event stream.
    */
   sendMessage(sessionID: string, text: string) {
-    return this.request<unknown>(`/session/${sessionID}/message`, {
+    return this.request<unknown>(`/session/${encodeURIComponent(sessionID)}/prompt_async`, {
       method: 'POST',
       body: JSON.stringify({ parts: [{ type: 'text', text }] }),
     });
   }
 
   abort(sessionID: string) {
-    return this.request<unknown>(`/session/${sessionID}/abort`, { method: 'POST' });
+    return this.request<unknown>(`/session/${encodeURIComponent(sessionID)}/abort`, { method: 'POST' });
   }
 
   /** `once` allows this call only; `always` remembers it; `reject` denies it. */
   replyPermission(requestID: string, reply: 'once' | 'always' | 'reject') {
-    return this.request<unknown>(`/permission/${requestID}/reply`, {
+    return this.request<unknown>(`/permission/${encodeURIComponent(requestID)}/reply`, {
       method: 'POST',
       body: JSON.stringify({ reply }),
     });
@@ -234,7 +252,7 @@ export class OpenCodeClient {
    * holds the labels the user picked (several only when `multiple` is set).
    */
   replyQuestion(requestID: string, answers: string[][]) {
-    return this.request<boolean>(`/question/${requestID}/reply`, {
+    return this.request<boolean>(`/question/${encodeURIComponent(requestID)}/reply`, {
       method: 'POST',
       body: JSON.stringify({ answers }),
     });
@@ -242,7 +260,7 @@ export class OpenCodeClient {
 
   /** Declines to answer. The agent carries on with what it already knows. */
   rejectQuestion(requestID: string) {
-    return this.request<boolean>(`/question/${requestID}/reject`, { method: 'POST' });
+    return this.request<boolean>(`/question/${encodeURIComponent(requestID)}/reject`, { method: 'POST' });
   }
 
   /**
@@ -250,12 +268,13 @@ export class OpenCodeClient {
    * on. Unrecognised events are surfaced as `other` rather than dropped, so a
    * new event type shows up in the log instead of vanishing.
    */
-  async *events(signal: AbortSignal): AsyncGenerator<AgentEvent> {
+  async *events(signal: AbortSignal, sessionID?: string, onOpen?: () => void): AsyncGenerator<AgentEvent> {
     const response = await fetch(`${this.base}/event`, {
       headers: { Authorization: this.auth },
       signal,
     });
-    if (!response.body) return;
+    if (!response.ok || !response.body) throw new Error(`Coding agent event stream failed (${response.status}).`);
+    onOpen?.();
 
     for await (const data of parseSSE(response.body)) {
       if (!data) continue;
@@ -266,6 +285,8 @@ export class OpenCodeClient {
         continue;
       }
       const p = (event.properties ?? {}) as Record<string, string>;
+      const scoped = p.sessionID ?? (p as unknown as { part?: ToolPart }).part?.sessionID;
+      if (sessionID && scoped && scoped !== sessionID) continue;
 
       switch (event.type) {
         case 'message.part.delta':
@@ -318,7 +339,7 @@ export class OpenCodeClient {
           // showing its buttons after the user had already answered it.
           const replied = p as unknown as { id?: string; requestID?: string; reply?: string };
           const id = replied.requestID ?? replied.id;
-          if (id) yield { kind: 'permission-resolved', id, reply: replied.reply };
+          if (id) yield { kind: 'permission-resolved', sessionID: scoped, id, reply: replied.reply };
           break;
         }
         case 'question.asked':
@@ -337,7 +358,7 @@ export class OpenCodeClient {
           // the ask names it `id`.
           const replied = p as unknown as { id?: string; requestID?: string; answers?: string[][] };
           const id = replied.requestID ?? replied.id;
-          if (id) yield { kind: 'question-resolved', id, answers: replied.answers };
+          if (id) yield { kind: 'question-resolved', sessionID: scoped, id, answers: replied.answers };
           break;
         }
         case 'message.part.updated': {
@@ -348,6 +369,7 @@ export class OpenCodeClient {
           if (part.tool === 'question') break;
           yield {
             kind: 'tool',
+            sessionID: scoped,
             activity: {
               partID: part.id,
               tool: part.tool ?? 'tool',
@@ -358,11 +380,21 @@ export class OpenCodeClient {
           break;
         }
         case 'file.edited':
-          yield { kind: 'file-edited', path: p.path ?? p.file ?? '' };
+          yield { kind: 'file-edited', sessionID: scoped, path: p.path ?? p.file ?? '' };
           break;
         case 'session.idle':
           yield { kind: 'idle', sessionID: p.sessionID };
           break;
+        case 'session.status': {
+          const status = (p as unknown as { status?: { type?: string } }).status?.type;
+          if (status) yield { kind: 'status', sessionID: p.sessionID, status };
+          break;
+        }
+        case 'session.error': {
+          const error = (p as unknown as { error?: { name?: string; data?: { message?: string }; message?: string } }).error;
+          yield { kind: 'error', sessionID: scoped, message: error?.data?.message ?? error?.message ?? error?.name ?? 'The coding task failed.' };
+          break;
+        }
         default:
           yield { kind: 'other', type: event.type ?? 'unknown' };
       }

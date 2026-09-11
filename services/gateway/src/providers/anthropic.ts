@@ -15,21 +15,16 @@ import {
  *
  * Notes that are easy to get wrong and expensive to discover later:
  *  - Model ids are complete as written; never append a date suffix.
- *  - `budget_tokens` is rejected on Opus 5. Thinking is adaptive by default,
- *    so it is simply omitted here.
  *  - A safety refusal arrives as HTTP 200 with stop_reason "refusal", not as a
  *    thrown error, so stop_reason is checked before the result is trusted.
- *  - Server-side fallbacks reroute a refusal automatically. It rides a beta
- *    flag, so it is switchable in case an account lacks access.
+ *  - Standard Messages API only; no experimental fallback or beta flags.
  */
 export class AnthropicProvider implements ChatProvider {
   readonly id = 'anthropic' as const;
   private readonly client: Anthropic;
-  private readonly useFallbacks: boolean;
 
-  constructor(apiKey: string, useFallbacks = true) {
-    this.client = new Anthropic({ apiKey });
-    this.useFallbacks = useFallbacks;
+  constructor(apiKey: string, fetch?: NonNullable<ConstructorParameters<typeof Anthropic>[0]>['fetch']) {
+    this.client = new Anthropic({ apiKey, timeout: 180_000, maxRetries: 1, ...(fetch ? { fetch } : {}) });
   }
 
   supports(model: string): boolean {
@@ -38,6 +33,9 @@ export class AnthropicProvider implements ChatProvider {
 
   async *streamChat(request: ChatRequest & { model: string }): AsyncIterable<StreamEvent> {
     const { model, messages, system, maxTokens = 16000, tools, signal } = request;
+
+    if (request.responseFormat?.type === 'json_object') throw new ProviderError('This Anthropic model requires response_format json_schema for structured output.', false, 400);
+    if (request.frequencyPenalty || request.presencePenalty) throw new ProviderError('Anthropic does not support frequency or presence penalties. Omit these settings for this provider.', false, 400);
 
     yield { type: 'start', model, provider: this.id };
 
@@ -49,16 +47,22 @@ export class AnthropicProvider implements ChatProvider {
       cache_control: { type: 'ephemeral' as const },
       ...(system ? { system } : {}),
       ...(tools?.length ? { tools: toAnthropicTools(tools) } : {}),
+      ...(request.toolChoice ? { tool_choice: {
+        ...(typeof request.toolChoice === 'object' ? { type: 'tool' as const, name: request.toolChoice.name } : { type: request.toolChoice === 'required' ? 'any' as const : request.toolChoice }),
+        ...(request.parallelToolCalls !== undefined ? { disable_parallel_tool_use: !request.parallelToolCalls } : {}),
+      } } : request.parallelToolCalls !== undefined && tools?.length ? { tool_choice: { type: 'auto' as const, disable_parallel_tool_use: !request.parallelToolCalls } } : {}),
+      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(request.topP !== undefined ? { top_p: request.topP } : {}),
+      ...(request.stop?.length ? { stop_sequences: request.stop } : {}),
+      ...(request.responseFormat?.type === 'json_schema' || request.reasoningEffort ? { output_config: {
+        ...(request.responseFormat?.type === 'json_schema' ? { format: { type: 'json_schema', schema: request.responseFormat.json_schema.schema } } : {}),
+        ...(request.reasoningEffort ? { effort: request.reasoningEffort } : {}),
+      } } : {}),
       messages: toAnthropicMessages(messages),
     };
 
     try {
-      const stream = this.useFallbacks
-        ? this.client.beta.messages.stream(
-            { ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } as never,
-            { signal },
-          )
-        : this.client.messages.stream(params, { signal });
+      const stream = this.client.messages.stream(params, { signal });
 
       // Tool calls stream as a start block naming the tool, then JSON
       // fragments. They are accumulated per block index and emitted whole.
@@ -83,6 +87,7 @@ export class AnthropicProvider implements ChatProvider {
           const done = pending.get(event.index);
           if (done) {
             pending.delete(event.index);
+            try { JSON.parse(done.json || '{}'); } catch { throw new ProviderError('The model returned incomplete tool arguments. Please retry.', true, 502); }
             yield {
               type: 'tool_call',
               // An empty argument object still has to be valid JSON.
@@ -126,6 +131,7 @@ function toAnthropicTools(tools: ToolDefinition[]) {
     name: t.name,
     ...(t.description ? { description: t.description } : {}),
     input_schema: t.parameters as Anthropic.Tool.InputSchema,
+    ...(t.strict !== undefined ? { strict: t.strict } : {}),
   }));
 }
 
@@ -142,6 +148,15 @@ function toAnthropicMessages(messages: ChatMessage[]): Anthropic.MessageParam[] 
   const out: Anthropic.MessageParam[] = [];
 
   for (const message of messages) {
+    if (message.role === 'user' && message.contentParts?.length) {
+      const blocks: Anthropic.ContentBlockParam[] = message.contentParts.map((part) => {
+        if (part.type === 'text') return part;
+        const data = part.url.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/);
+        return { type: 'image', source: data ? { type: 'base64', media_type: data[1] as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp', data: data[2] } : { type: 'url', url: part.url } };
+      });
+      out.push({ role: 'user', content: blocks });
+      continue;
+    }
     if (message.role === 'tool') {
       const block = {
         type: 'tool_result' as const,
@@ -183,7 +198,7 @@ function safeParse(json: string): unknown {
   try {
     return JSON.parse(json || '{}');
   } catch {
-    return {};
+    throw new ProviderError('Tool call arguments are not valid JSON.', false, 400);
   }
 }
 
@@ -193,6 +208,7 @@ function safeParse(json: string): unknown {
  * retryable/non-retryable split that decides whether the client may retry.
  */
 function toProviderError(error: unknown): ProviderError {
+  if (error instanceof ProviderError) return error;
   if (error instanceof Anthropic.NotFoundError) {
     return new ProviderError('Model not found or unavailable.', false, 404);
   }
@@ -206,5 +222,5 @@ function toProviderError(error: unknown): ProviderError {
     const status = error.status ?? 500;
     return new ProviderError(humanize(error.message), status >= 500, status, error.message);
   }
-  return new ProviderError(error instanceof Error ? error.message : 'Unknown provider error', false);
+  return new ProviderError('The model request could not complete. Please retry.', false, 502, error instanceof Error ? error.message : undefined);
 }

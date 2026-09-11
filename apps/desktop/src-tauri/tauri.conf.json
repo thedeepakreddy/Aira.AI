@@ -55,6 +55,8 @@
           "http://127.0.0.1:*",
           "http://localhost:*",
           "ws://localhost:*",
+          "https:",
+          "wss:",
           "https://*.supabase.co",
           "wss://*.supabase.co"
         ]
@@ -79,6 +81,7 @@
     "shortDescription": "Your AI workspace",
     "longDescription": "Aira brings chat, voice, and agents together in one workspace.",
     "macOS": {
+      "signingIdentity": "-",
       "minimumSystemVersion": "10.15"
     },
     "resources": {

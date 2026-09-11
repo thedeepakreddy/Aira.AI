@@ -13,7 +13,10 @@ export interface ToolDefinition {
   name: string;
   description?: string;
   parameters: Record<string, unknown>;
+  strict?: boolean;
 }
+
+export type ToolChoice = 'none' | 'auto' | 'required' | { name: string };
 
 /**
  * A model's request to call a tool. `arguments` stays a raw JSON string
@@ -29,6 +32,8 @@ export interface ToolCall {
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Vision parts preserved when an OpenAI-compatible agent sends screenshots. */
+  contentParts?: Array<{ type: 'text'; text: string } | { type: 'image'; url: string; detail?: 'auto' | 'low' | 'high' }>;
   /** Present on assistant turns that asked to call tools. */
   toolCalls?: ToolCall[];
   /** Present on `tool` turns; identifies the call being answered. */
@@ -43,6 +48,11 @@ export interface ChatMessage {
  */
 export type Surface = 'chat' | 'voice' | 'code' | 'task';
 
+export type ResponseFormat = { type: 'text' } | { type: 'json_object' } | {
+  type: 'json_schema';
+  json_schema: { name: string; schema: Record<string, unknown>; strict?: boolean; description?: string };
+};
+
 export interface ChatRequest {
   messages: ChatMessage[];
   system?: string;
@@ -56,6 +66,15 @@ export interface ChatRequest {
    * cannot take, so adapters must either forward them or fail loudly.
    */
   tools?: ToolDefinition[];
+  toolChoice?: ToolChoice;
+  parallelToolCalls?: boolean;
+  temperature?: number;
+  topP?: number;
+  stop?: string[];
+  responseFormat?: ResponseFormat;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  frequencyPenalty?: number;
+  presencePenalty?: number;
   signal?: AbortSignal;
 }
 
@@ -84,7 +103,7 @@ export type StreamEvent =
   | { type: 'done'; usage: TokenUsage; stopReason: string | null }
   | { type: 'error'; message: string; retryable: boolean };
 
-export type ProviderId = 'anthropic' | 'openai' | 'openrouter' | 'gemini';
+export type ProviderId = string;
 
 export interface ChatProvider {
   readonly id: ProviderId;

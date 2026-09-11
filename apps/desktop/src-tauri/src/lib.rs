@@ -1,7 +1,7 @@
 mod browser;
-mod webview;
 mod openclaw;
 mod opencode;
+mod runtime;
 
 use browser::BrowserState;
 use openclaw::OpenClawState;
@@ -10,7 +10,8 @@ use tauri::{Manager, RunEvent};
 
 /// Aira desktop shell.
 ///
-/// The shell holds no product logic and no credentials. It hosts the same
+/// The shell embeds no provider API keys. It holds ephemeral runtime/session
+/// credentials and supervises local processes. It hosts the same
 /// single-page app the web build serves, which talks to the Aira gateway over
 /// HTTPS — provider API keys live in the gateway alone, because a packaged
 /// .app can be unzipped and read.
@@ -36,6 +37,7 @@ pub fn run() {
             openclaw::openclaw_agents,
             openclaw::openclaw_run,
             openclaw::openclaw_stream,
+            openclaw::openclaw_cancel,
             openclaw::openclaw_log,
             opencode::opencode_log,
             browser::browser_status,
@@ -44,12 +46,6 @@ pub fn run() {
             browser::browser_log,
             browser::browser_run,
             browser::browser_api,
-            webview::webview_open,
-            webview::webview_bounds,
-            webview::webview_navigate,
-            webview::webview_url,
-            webview::webview_history,
-            webview::webview_close,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")

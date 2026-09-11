@@ -1,0 +1,149 @@
+name: Aira checks
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aira-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  web:
+    name: Web tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+
+  gateway:
+    name: Gateway tests and types
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/gateway
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: services/gateway/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+
+  browser-service:
+    name: Browser service protocol tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      # Boundary tests use the standard library; no Chrome or model calls.
+      - run: python -m unittest discover -s services/browser -p 'test_*.py' -v
+
+  desktop:
+    name: macOS desktop tests and types
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+        working-directory: apps/web
+      # Tauri's compile-time context embeds frontendDist; build it first.
+      - run: npm run build
+        working-directory: apps/web
+      - name: Install the locally verified Rust toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - run: cargo +1.98.1 check --locked --all-targets
+        working-directory: apps/desktop/src-tauri
+      - run: cargo +1.98.1 test --locked
+        working-directory: apps/desktop/src-tauri
+
+  ui:
+    name: Production UI and desktop bridge controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Exercise layouts and controls with isolated fixtures
+        run: |
+          node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 5192 --strictPort &
+          aira_preview_pid=$!
+          node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5191 --strictPort &
+          aira_dev_pid=$!
+          trap 'kill "$aira_preview_pid" "$aira_dev_pid" 2>/dev/null || true' EXIT
+          for aira_port in 5191 5192; do
+            for aira_attempt in {1..30}; do
+              if curl --fail --silent --max-time 1 "http://127.0.0.1:$aira_port/" > /dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            curl --fail --silent --max-time 2 "http://127.0.0.1:$aira_port/" > /dev/null
+          done
+          AIRA_TEST_URL=http://127.0.0.1:5192 npm run test:ui
+          # These two suites replace the auth module and native bridge in the
+          # browser; they therefore intentionally target the Vite dev server.
+          AIRA_TEST_URL=http://127.0.0.1:5191 node tests/agent-ui-smoke.mjs
+          AIRA_TEST_URL=http://127.0.0.1:5191 node tests/browser-ui-smoke.mjs
+      - name: Keep screenshots and test summaries
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: aira-ui-evidence
+          path: apps/web/artifacts/
+          if-no-files-found: warn
+          retention-days: 14

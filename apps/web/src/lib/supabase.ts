@@ -14,7 +14,7 @@ export const isAuthConfigured = Boolean(url && anonKey);
 
 export const supabase = isAuthConfigured
   ? createClient(url!, anonKey!, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     })
   : null;
 
@@ -59,5 +59,6 @@ export async function signUp(email: string, password: string): Promise<string | 
 }
 
 export async function signOut(): Promise<void> {
-  await supabase?.auth.signOut();
+  const result = await supabase?.auth.signOut();
+  if (result?.error) throw result.error;
 }

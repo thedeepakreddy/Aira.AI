@@ -28,27 +28,6 @@ export interface StartOptions {
   model: string;
 }
 
-/**
- * The native page view — a real browser inside Aira's window.
- *
- * A child webview composited by the OS, not a stream of frames: scrolling has
- * inertia, video plays, selection works, and nothing round-trips. It is drawn
- * *over* the app's own webview in the rectangle it is given, which is why the
- * panel measures its content area and why leaving the screen must close it.
- */
-export const page = {
-  // Plain content-area coordinates. The shell adds the window's frame inset,
-  // where both coordinate spaces are authoritative.
-  open: (url: string, r: DOMRect) =>
-    invoke<void>('webview_open', { url, x: r.x, y: r.y, width: r.width, height: r.height }),
-  bounds: (r: DOMRect) =>
-    invoke<void>('webview_bounds', { x: r.x, y: r.y, width: r.width, height: r.height }),
-  navigate: (url: string) => invoke<void>('webview_navigate', { url }),
-  url: () => invoke<string | null>('webview_url'),
-  history: (action: 'back' | 'forward' | 'reload') => invoke<void>('webview_history', { action }),
-  close: () => invoke<void>('webview_close'),
-};
-
 export const supervisor = {
   status: () => invoke<BrowserStatus>('browser_status'),
   start: (options: StartOptions) => invoke<BrowserStatus>('browser_start', { ...options }),
@@ -62,6 +41,7 @@ export type BrowseEvent =
   | { type: 'step'; n: number; url: string; action: string }
   | { type: 'result'; text: string; steps: number; urls: string[] }
   | { type: 'error'; message: string }
+  | { type: 'cancelled' }
   | { type: 'done' };
 
 /** One open tab in the agent's browser. */
@@ -73,6 +53,8 @@ export interface Tab {
 
 export interface TabState {
   tabs: Tab[];
+  activeId?: string;
+  busy?: boolean;
   /** True when the browser is on a throwaway profile. */
   private: boolean;
   running: boolean;
@@ -123,6 +105,30 @@ export class BrowserClient {
     return this.api<TabState>('POST', '/tabs/close', { id });
   }
 
+  health(): Promise<{ ready: boolean; error?: string }> { return this.api('GET', '/health'); }
+  navigate(url: string): Promise<TabState> { return this.api('POST', '/navigate', { url }); }
+  selectTab(id: string): Promise<TabState> { return this.api('POST', '/tabs/select', { id }); }
+  history(action: 'back' | 'forward' | 'reload'): Promise<TabState> { return this.api('POST', '/history', { action }); }
+  focus(): Promise<TabState> { return this.api('POST', '/focus'); }
+  configure(model: string, token: string): Promise<{ ok: boolean }> { return this.api('POST', '/configure', { model, token }); }
+  cancel(run: string): Promise<{ ok: boolean }> { return this.api('POST', '/cancel', { run }); }
+
+  async waitUntilReady(signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      try {
+        const health = await this.health();
+        if (health.error) throw new Error(health.error);
+        if (health.ready) return;
+      } catch (error) {
+        if (Date.now() + 500 >= deadline) throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    throw new Error('The browser service did not become ready. Check its Python dependencies.');
+  }
+
   /**
    * Switches between the saved profile and a throwaway one.
    *
@@ -150,30 +156,24 @@ export class BrowserClient {
     const { listen } = await import('@tauri-apps/api/event');
     const run = crypto.randomUUID();
 
-    let stop: (() => void) | undefined;
-    const finished = new Promise<void>((resolve) => {
-      void listen<BrowseEvent>(`browser://event/${run}`, (e) => {
-        onEvent(e.payload);
-        if (e.payload.type === 'done') resolve();
-      }).then((off) => {
-        stop = off;
-      });
-      signal?.addEventListener('abort', () => resolve());
-    });
-
+    // The listener must exist before a fast server can emit its first event.
+    const stop = await listen<BrowseEvent>(`browser://event/${run}`, e => onEvent(e.payload));
+    let cancellation: Promise<unknown> | undefined;
+    const abort = () => { cancellation = this.cancel(run); void cancellation.catch(() => {}); };
     try {
-      await Promise.race([
-        invoke<void>('browser_run', {
+      if (signal?.aborted) return;
+      signal?.addEventListener('abort', abort, { once: true });
+      await invoke<void>('browser_run', {
           port: this.port,
           token: this.token,
           task,
           maxSteps,
           run,
-        }),
-        finished,
-      ]);
+        });
+      await cancellation;
     } finally {
-      stop?.();
+      signal?.removeEventListener('abort', abort);
+      stop();
     }
   }
 }

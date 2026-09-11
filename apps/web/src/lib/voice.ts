@@ -1,9 +1,9 @@
 /**
  * Speech input and output for the voice screen.
  *
- * Uses the platform's own speech engines rather than a hosted service: no audio
- * leaves the machine, there is no per-minute cost, and it works with the
- * providers Aira already has. The trade is that recognition quality and voice
+ * Uses platform speech APIs. Recognition may use the browser vendor's online
+ * service; the app must not claim that audio always stays on the device.
+ * It works with the providers Aira already has. Recognition quality and voice
  * quality are whatever the OS provides — on macOS the "Enhanced" voices are
  * close to natural, which is why they are preferred explicitly below.
  *
@@ -39,6 +39,7 @@ interface SpeechRecognitionLike {
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
 function recognitionCtor(): SpeechRecognitionCtor | null {
+  if (typeof window === 'undefined') return null;
   const w = window as unknown as {
     SpeechRecognition?: SpeechRecognitionCtor;
     webkitSpeechRecognition?: SpeechRecognitionCtor;
@@ -82,6 +83,7 @@ export function listen(handlers: ListenHandlers): Listener | null {
 
   let stopped = false;
   let recognition: SpeechRecognitionLike | null = null;
+  let restart: ReturnType<typeof setTimeout> | undefined;
 
   const begin = () => {
     if (stopped) return;
@@ -95,6 +97,7 @@ export function listen(handlers: ListenHandlers): Listener | null {
     r.onresult = (event) => {
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        if (stopped) break;
         const result = event.results[i];
         const text = result[0].transcript;
         if (result.isFinal) {
@@ -111,6 +114,7 @@ export function listen(handlers: ListenHandlers): Listener | null {
       // `no-speech` and `aborted` are ordinary in a hands-free loop — someone
       // pausing to think is not an error worth showing.
       if (event.error === 'no-speech' || event.error === 'aborted') return;
+      stopped = true;
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         stopped = true;
         handlers.onError('Aira needs microphone access to listen.');
@@ -121,13 +125,14 @@ export function listen(handlers: ListenHandlers): Listener | null {
 
     // Engines stop by themselves after a pause; keep the session alive.
     r.onend = () => {
-      if (!stopped) begin();
+      if (!stopped) restart = setTimeout(begin, 400);
     };
 
     try {
       r.start();
     } catch {
-      // start() throws if a session is somehow already running; ignore.
+      stopped = true;
+      handlers.onError('Could not start speech recognition. Tap retry to try again.');
     }
   };
 
@@ -136,6 +141,7 @@ export function listen(handlers: ListenHandlers): Listener | null {
   return {
     stop() {
       stopped = true;
+      clearTimeout(restart);
       recognition?.abort();
       recognition = null;
     },

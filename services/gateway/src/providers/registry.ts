@@ -25,7 +25,8 @@ export interface ModelSpec {
 
 /**
  * Anthropic prices and ids verified against the Claude API reference
- * (2026-06-24 catalogue). Model ids are complete as written — never append a
+ * (2026-09-12: https://platform.claude.com/docs/en/models/overview).
+ * Model ids are complete as written — never append a
  * date suffix.
  */
 const ANTHROPIC_MODELS: ModelSpec[] = [
@@ -66,22 +67,21 @@ const ANTHROPIC_MODELS: ModelSpec[] = [
  * and colons (`nvidia/nemotron-3-ultra:free`), so a colon delimiter would split
  * the id itself. Everything after the tier may be omitted: "id|tier".
  */
-function parseCompatibleModels(raw: string | undefined, provider: ProviderId): ModelSpec[] {
+export function parseCompatibleModels(raw: string | undefined, provider: ProviderId): ModelSpec[] {
   if (!raw?.trim()) return [];
   return raw
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => {
-      const [id, tier, ctx, input, output] = entry.split('|');
-      if (!id) throw new Error(`Model catalogue entry missing an id: "${entry}"`);
-      // An entry written with the old colon delimiter parses as an id with the
-      // tier stuck on the end — "gpt-5-nano:fast" — which the provider then
-      // rejects as an unknown model. The catalogue looks right, every request
-      // fails, and nothing says why, so it is rejected here instead.
+      // Preserve legacy id:tier:context:input:output declarations without
+      // splitting legitimate ids such as vendor/model:free.
+      const legacy = !entry.includes('|') && entry.match(/^(.*):(frontier|balanced|fast)(?::([^:]*))?(?::([^:]*))?(?::([^:]*))?$/);
+      const fields = legacy ? legacy.slice(1) : entry.split('|').map((field) => field.trim());
+      const [id, tier, ctx, input, output] = fields;
+      if (!id || /\s/.test(id) || fields.length > 5) throw new Error(`Invalid model catalogue entry: "${entry}"`);
       const TIERS = ['frontier', 'balanced', 'fast'];
-      const misdelimited = TIERS.some((t) => id.endsWith(`:${t}`));
-      if (misdelimited || (tier !== undefined && !TIERS.includes(tier))) {
+      if (tier !== undefined && !TIERS.includes(tier)) {
         throw new Error(
           `Model catalogue entry "${entry}" is not pipe-separated. ` +
             'Expected id|tier|contextWindow|inPerMTok|outPerMTok, where tier is ' +
@@ -92,11 +92,20 @@ function parseCompatibleModels(raw: string | undefined, provider: ProviderId): M
         id,
         label: prettifyModelId(id),
         provider,
-        contextWindow: Number(ctx) || 128_000,
+        contextWindow: ctx ? Number(ctx) : 128_000,
         tier: (tier as ModelSpec['tier']) || 'balanced',
       };
+      if (!Number.isSafeInteger(spec.contextWindow) || spec.contextWindow <= 0) {
+        throw new Error(`Invalid context window in model catalogue entry "${entry}".`);
+      }
+      if (Boolean(input) !== Boolean(output)) {
+        throw new Error(`Both input and output prices must be supplied for "${id}".`);
+      }
       if (input && output) {
         spec.pricing = { inputPerMTok: Number(input), outputPerMTok: Number(output) };
+        if (Object.values(spec.pricing).some((price) => !Number.isFinite(price) || price < 0)) {
+          throw new Error(`Invalid model pricing in catalogue entry "${entry}".`);
+        }
       }
       return spec;
     });
@@ -119,23 +128,43 @@ function prettifyModelId(id: string): string {
     .replace('GPT ', 'GPT-');
 }
 
-let catalogue: ModelSpec[] = ANTHROPIC_MODELS;
+let catalogue: ModelSpec[] = [];
 
 export function loadCatalogue(sources: {
   openai?: string;
   openrouter?: string;
   gemini?: string;
+  anthropic?: string;
+  compatible?: Array<{ id: string; models: string }>;
+  enabledProviders?: string[];
 }): void {
-  catalogue = [
-    ...ANTHROPIC_MODELS,
+  const enabled = new Set(sources.enabledProviders ?? [
+    ...(sources.anthropic !== undefined ? ['anthropic'] : []),
+    ...(['openai', 'openrouter', 'gemini'] as const).filter((id) => sources[id]),
+    ...(sources.compatible ?? []).map((provider) => provider.id),
+  ]);
+  const next = [
+    ...(sources.anthropic?.trim() ? parseCompatibleModels(sources.anthropic, 'anthropic') : ANTHROPIC_MODELS),
     ...parseCompatibleModels(sources.openai, 'openai'),
     ...parseCompatibleModels(sources.openrouter, 'openrouter'),
     ...parseCompatibleModels(sources.gemini, 'gemini'),
-  ];
+    ...(sources.compatible ?? []).flatMap((provider) => parseCompatibleModels(provider.models, provider.id)),
+  ].filter((model) => enabled.has(model.provider));
+  const ids = new Set<string>();
+  for (const model of next) {
+    if (ids.has(model.id)) throw new Error(`Duplicate model id "${model.id}" across configured providers. Model ids must be unique.`);
+    ids.add(model.id);
+  }
+  for (const provider of enabled) {
+    if (!next.some((model) => model.provider === provider)) {
+      throw new Error(`Provider "${provider}" has a key but no models. Set its MODELS catalogue before starting the gateway.`);
+    }
+  }
+  catalogue = next;
 }
 
 export function listModels(): ModelSpec[] {
-  return catalogue;
+  return catalogue.map((model) => ({ ...model, ...(model.pricing ? { pricing: { ...model.pricing } } : {}) }));
 }
 
 export function findModel(id: string): ModelSpec | undefined {

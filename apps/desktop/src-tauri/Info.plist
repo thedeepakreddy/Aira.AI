@@ -7,6 +7,6 @@
   <key>NSMicrophoneUsageDescription</key>
   <string>Aira uses your microphone so you can talk to it during a voice conversation.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>Aira transcribes your speech on this device so it can respond to what you say.</string>
+  <string>Aira uses speech recognition to transcribe your voice so it can respond to what you say.</string>
 </dict>
 </plist>

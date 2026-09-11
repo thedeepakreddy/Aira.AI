@@ -2,8 +2,8 @@
  * Client for the Aira gateway.
  *
  * The gateway holds every provider key, so this module only ever talks to our
- * own origin — no vendor SDK, no API key, nothing sensitive reaches the browser
- * or the packaged desktop app.
+ * configured gateway — no vendor SDK or provider API key reaches the browser
+ * or packaged app. Account sessions still use sensitive bearer credentials.
  */
 
 import { parseSSE } from './sse';
@@ -31,11 +31,8 @@ export interface StreamChatOptions {
   signal?: AbortSignal;
 }
 
-const GATEWAY_URL: string =
-  (import.meta.env?.VITE_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787';
-
-/** Dev-only shim so the gateway can be exercised before Supabase auth is wired. */
-const DEV_USER = import.meta.env?.VITE_AIRA_DEV_USER as string | undefined;
+export const GATEWAY_URL: string =
+  ((import.meta.env?.VITE_GATEWAY_URL as string | undefined) || 'http://localhost:8787').replace(/\/+$/, '');
 
 /**
  * Streams a reply. Yields normalised events identical in shape across every
@@ -46,16 +43,15 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
 
   // The gateway pays for every token it forwards, so it needs to know who is
   // asking. Without a session it answers 401 and nothing is spent.
-  const token = await getAccessToken();
-
   let response: Response;
   try {
+    const token = await getAccessToken();
+    if (signal?.aborted) return;
     response = await fetch(`${GATEWAY_URL}/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(DEV_USER ? { 'x-aira-dev-user': DEV_USER } : {}),
       },
       body: JSON.stringify({ messages, surface, model, conversationId }),
       signal,
@@ -65,7 +61,7 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
     if (signal?.aborted) return;
     yield {
       type: 'error',
-      message: `Can't reach Aira's gateway at ${GATEWAY_URL}. Is it running?`,
+      message: 'Aira could not connect. Check Connections and try again.',
       retryable: true,
     };
     return;
@@ -88,15 +84,20 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
     return;
   }
 
+  let completed = false;
   try {
     for await (const data of parseSSE(response.body)) {
       if (!data) continue;
       try {
-        yield JSON.parse(data) as StreamEvent;
+        const event = JSON.parse(data) as StreamEvent;
+        if (event.type === 'done' || event.type === 'error') completed = true;
+        if (event.type === 'text' && typeof event.text !== 'string') continue;
+        yield event;
       } catch {
         // A malformed frame shouldn't kill an otherwise healthy stream.
       }
     }
+    if (!completed && !signal?.aborted) yield { type: 'error', message: 'The response ended early. You can retry this message.', retryable: true };
   } catch (error) {
     if (signal?.aborted) return;
     yield { type: 'error', message: 'The connection dropped mid-response.', retryable: true };
@@ -121,17 +122,17 @@ export type SurfaceRouting = Partial<Record<'chat' | 'voice' | 'code' | 'task', 
  * session has expired — an empty picker is a better failure than a blank screen.
  */
 export async function listCatalogue(): Promise<{ models: ModelSpec[]; routing: SurfaceRouting }> {
-  const token = await getAccessToken();
   try {
+    const token = await getAccessToken();
     const response = await fetch(`${GATEWAY_URL}/v1/models`, {
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(DEV_USER ? { 'x-aira-dev-user': DEV_USER } : {}),
       },
+      signal: AbortSignal.timeout(12000),
     });
     if (!response.ok) return { models: [], routing: {} };
     const body = (await response.json()) as { models?: ModelSpec[]; routing?: SurfaceRouting };
-    return { models: body.models ?? [], routing: body.routing ?? {} };
+    return { models: Array.isArray(body.models) ? body.models : [], routing: body.routing ?? {} };
   } catch {
     return { models: [], routing: {} };
   }
@@ -139,4 +140,21 @@ export async function listCatalogue(): Promise<{ models: ModelSpec[]; routing: S
 
 export async function listModels(): Promise<ModelSpec[]> {
   return (await listCatalogue()).models;
+}
+
+/** Authenticated requests for workspace settings; never persist bearer tokens. */
+export async function gatewayRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = await getAccessToken();
+  const headers = new Headers(options.headers);
+  if (options.body) headers.set('Content-Type', 'application/json');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  let response: Response;
+  try { response = await fetch(`${GATEWAY_URL}${path}`, { ...options, headers, signal: options.signal ?? AbortSignal.timeout(12000) }); }
+  catch { throw new Error('Could not reach Aira. Check your connection and try again.'); }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const error = typeof body?.error === 'string' ? body.error : body?.error?.message;
+    throw new Error(error || (response.status === 401 ? 'Sign in to manage your workspace.' : `Request failed (${response.status}).`));
+  }
+  return response.json() as Promise<T>;
 }
