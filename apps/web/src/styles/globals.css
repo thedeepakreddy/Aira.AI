@@ -430,3 +430,19 @@
 /* The orb leans into whoever is talking. */
 .orb-wrap.is-speaking{box-shadow:0 0 70px #ff6a0040,0 0 140px #ff6a001f}
 .voice-phase svg{width:18px;height:18px;color:#e8af84}
+
+/* ── Agent tool activity ──────────────────────────────────────────────────────
+   Steps can take ten seconds or more on a slow model. Without this the log sits
+   empty and the agent looks hung, so each tool call reports itself and updates
+   in place as it moves from running to done. */
+.agent-tool{display:flex;gap:9px;align-items:baseline;margin:5px 0;font-size:11.5px;line-height:1.5}
+.agent-tool-icon{display:inline-flex;width:13px;flex-shrink:0;color:#e8945a}
+.agent-tool-icon svg{width:12px;height:12px}
+.agent-tool-body{display:flex;gap:7px;align-items:baseline;min-width:0;flex-wrap:wrap}
+.agent-tool-body>svg{width:12px;height:12px;flex-shrink:0;color:#a1806a;align-self:center}
+.agent-tool-verb{color:#dbbcaa}
+.agent-tool code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+  color:#ffd0a4;overflow-wrap:anywhere}
+.agent-tool.done .agent-tool-icon{color:#7fc98a}
+.agent-tool.done .agent-tool-verb{color:#a1806a}
+.agent-tool.failed .agent-tool-icon{color:#ffb59f}

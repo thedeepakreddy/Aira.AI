@@ -1,4 +1,4 @@
-import { parseSSE } from './sse';
+import { parseSSE } from './sse.ts';
 
 /**
  * Client for the OpenCode agent server.
@@ -62,13 +62,47 @@ export interface PermissionRequest {
   resources: string[];
 }
 
+/** What the agent is doing right now, so long steps are legible. */
+export interface ToolActivity {
+  /** Stable per tool call, so updates replace rather than stack up. */
+  partID: string;
+  tool: string;
+  status: 'pending' | 'running' | 'completed' | 'error';
+  /** The thing being acted on: a path, a command, a search term. */
+  target: string;
+}
+
 export type AgentEvent =
   | { kind: 'text'; sessionID: string; messageID: string; partID: string; delta: string }
+  | { kind: 'tool'; activity: ToolActivity }
   | { kind: 'permission'; request: PermissionRequest }
   | { kind: 'permission-resolved'; id: string; reply?: string }
   | { kind: 'file-edited'; path: string }
   | { kind: 'idle'; sessionID: string }
   | { kind: 'other'; type: string };
+
+interface ToolPart {
+  type?: string;
+  id?: string;
+  tool?: string;
+  state?: { status?: string; input?: Record<string, unknown> };
+}
+
+/**
+ * Picks the most meaningful field out of a tool's input.
+ *
+ * Tools disagree on what to call their subject — a path, a command, a pattern —
+ * so the first recognised key wins and anything unknown shows nothing rather
+ * than a blob of JSON.
+ */
+function toolTarget(input: Record<string, unknown> | undefined): string {
+  if (!input) return '';
+  for (const key of ['filePath', 'path', 'command', 'pattern', 'query', 'description', 'url']) {
+    const value = input[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
 
 export class OpenCodeClient {
   private readonly base: string;
@@ -198,6 +232,20 @@ export class OpenCodeClient {
           const replied = p as unknown as { id?: string; requestID?: string; reply?: string };
           const id = replied.requestID ?? replied.id;
           if (id) yield { kind: 'permission-resolved', id, reply: replied.reply };
+          break;
+        }
+        case 'message.part.updated': {
+          const part = (p as unknown as { part?: ToolPart }).part;
+          if (part?.type !== 'tool' || !part.id) break;
+          yield {
+            kind: 'tool',
+            activity: {
+              partID: part.id,
+              tool: part.tool ?? 'tool',
+              status: (part.state?.status as ToolActivity['status']) ?? 'running',
+              target: toolTarget(part.state?.input),
+            },
+          };
           break;
         }
         case 'file.edited':

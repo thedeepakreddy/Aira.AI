@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {Terminal,Power,Send,Folder,ChevronRight,ShieldAlert,FileEdit,Square} from 'lucide-react';
-import {isDesktop,supervisor,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest} from '@/lib/opencode';
+import {Terminal,Power,Send,Folder,ChevronRight,ShieldAlert,FileEdit,Square,Check,Loader2,FileText,Search,SquareTerminal} from 'lucide-react';
+import {isDesktop,supervisor,OpenCodeClient,type AgentEvent,type OpenCodeStatus,type PermissionRequest,type ToolActivity} from '@/lib/opencode';
 import {getAccessToken} from '@/lib/supabase';
 import {listCatalogue} from '@/lib/gateway';
 
@@ -22,6 +22,7 @@ import {listCatalogue} from '@/lib/gateway';
  */
 
 type Entry =
+  | {kind:'tool';activity:ToolActivity}
   | {kind:'you';text:string}
   | {kind:'agent';text:string}
   | {kind:'notice';text:string}
@@ -67,6 +68,17 @@ export default function AgentPanel(){
     if(signal.aborted)return;
     switch(event.kind){
      case 'text':appendAgent(event.delta);break;
+     case 'tool':{
+      // Replace the existing line for this call so a tool reports progress in
+      // place instead of stacking pending/running/completed on top of itself.
+      const a=event.activity;
+      const line:Entry={kind:'tool',activity:a};
+      setEntries(e=>{
+       const at=e.findIndex(x=>x.kind==='tool'&&x.activity.partID===a.partID);
+       if(at===-1)return[...e,line];
+       const next=e.slice();next[at]=line;return next;
+      });
+      break;}
      case 'permission':setEntries(e=>[...e,{kind:'permission',request:event.request}]);break;
      case 'permission-resolved':{
       // Reflect what was actually chosen, including decisions made elsewhere.
@@ -183,6 +195,7 @@ export default function AgentPanel(){
      {entries.map((entry,i)=>{
       if(entry.kind==='you')return <div className="terminal-entry" key={i}><div className="terminal-command"><span>❯</span> {entry.text}</div></div>;
       if(entry.kind==='agent')return <div className="terminal-entry" key={i}><pre>{entry.text}</pre></div>;
+      if(entry.kind==='tool')return <ToolLine key={i} activity={entry.activity}/>;
       if(entry.kind==='notice')return <div className="agent-notice" key={i}><FileEdit/><span>{entry.text}</span></div>;
       return <div className={'agent-permission '+(entry.resolved?'resolved':'')} key={i}>
        <div className="agent-permission-head"><ShieldAlert/><strong>{entry.request.action}</strong></div>
@@ -216,4 +229,33 @@ export default function AgentPanel(){
    </div>
   </div>
  </section>;
+}
+
+/** Verbs read better than tool names: "Writing calc.py", not "write". */
+const TOOL_VERBS:Record<string,string>={
+ write:'Writing',edit:'Editing',read:'Reading',patch:'Patching',
+ bash:'Running',grep:'Searching',glob:'Finding',list:'Listing',
+ webfetch:'Fetching',websearch:'Searching the web',task:'Delegating',todowrite:'Planning',
+};
+
+function ToolIcon({tool}:{tool:string}){
+ if(tool==='bash')return <SquareTerminal/>;
+ if(tool==='grep'||tool==='glob'||tool==='websearch')return <Search/>;
+ return <FileText/>;
+}
+
+function ToolLine({activity}:{activity:ToolActivity}){
+ const verb=TOOL_VERBS[activity.tool]??activity.tool;
+ const done=activity.status==='completed';
+ const failed=activity.status==='error';
+ // Long absolute paths are mostly noise; the tail identifies the file.
+ const target=activity.target.length>58?'…'+activity.target.slice(-57):activity.target;
+ return <div className={'agent-tool '+(done?'done':failed?'failed':'active')}>
+  <span className="agent-tool-icon">{done?<Check/>:failed?<ShieldAlert/>:<Loader2 className="spin"/>}</span>
+  <span className="agent-tool-body">
+   <ToolIcon tool={activity.tool}/>
+   <span className="agent-tool-verb">{verb}</span>
+   {target&&<code>{target}</code>}
+  </span>
+ </div>;
 }
