@@ -694,46 +694,56 @@
 .browse-visited code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 
 /* Browser chrome: a tab strip and one bar, which is all a browser really has.
-   The first version of this had a tab strip, a tab search box, a URL field, a
-   private toggle and an extensions badge stacked in two rows — a control panel
-   rather than a browser. An address bar that takes either an address or a
-   question is both simpler and closer to what people already use. */
-.browse-chrome{padding:8px 14px 10px;background:#ffffff03;border-bottom:1px solid #ffffff0b}
-.browse-tabstrip{display:flex;gap:3px;overflow-x:auto;scrollbar-width:none}
+   The first version had a tab strip, a tab-search box, a URL field, a private
+   pill and an extensions pill stacked in two rows — a control panel rather than
+   a browser. An address bar that takes either an address or a question is both
+   simpler and closer to what people already use. */
+/* Fixed height, deliberately.
+   The page below is an OS layer placed at a measured rectangle, so a toolbar
+   that changes height — a tab strip wrapping to a second row — moves the
+   rectangle after the fact and the page ends up sitting on the address bar.
+   A constant height makes the measurement correct whenever it is taken. */
+.browse-chrome{height:84px;box-sizing:border-box;padding:6px 12px;background:#ffffff05;
+  border-bottom:1px solid #ffffff0d;flex-shrink:0;display:flex;flex-direction:column;gap:6px}
+.browse-tabstrip{display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;
+  scrollbar-width:none;height:32px;flex-shrink:0}
 .browse-tabstrip::-webkit-scrollbar{display:none}
-.browse-tab{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;max-width:190px;
-  padding:7px 8px 7px 12px;border-radius:9px 9px 0 0;font-size:11px;color:#e8cdb8;
-  background:#ffffff0a;border:1px solid #ffffff10;border-bottom:0}
-.browse-tab-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.browse-tab button{display:grid;place-items:center;width:16px;height:16px;padding:0;border:0;
-  border-radius:50%;background:none;color:#a1806a;opacity:0;transition:opacity .15s}
-.browse-tab:hover button{opacity:1}
-.browse-tab button:hover{background:#ffffff18;color:#ffd9b8}
-.browse-tab button svg{width:10px;height:10px}
-.browse-tab-new{display:grid;place-items:center;width:28px;height:28px;flex-shrink:0;align-self:center;
-  margin-left:4px;padding:0;border:0;border-radius:50%;background:none;color:#a1806a}
+.browse-tab{display:inline-flex;align-items:center;gap:2px;flex:0 1 176px;min-width:92px;
+  padding:0 4px 0 12px;height:31px;border-radius:9px 9px 0 0;font-size:11px;color:#b6977e;
+  background:#ffffff07;border:1px solid transparent;border-bottom:0;transition:background .15s,color .15s}
+.browse-tab:hover{background:#ffffff0d;color:#e8cdb8}
+.browse-tab.active{background:#0e0805;color:#fff6ea;border-color:#ffffff14}
+.browse-tab-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  text-align:left;padding:0;border:0;background:none;color:inherit;font-size:inherit;font-family:inherit}
+.browse-tab-x{display:grid;place-items:center;width:17px;height:17px;flex-shrink:0;padding:0;border:0;
+  border-radius:50%;background:none;color:#8d6f5c;opacity:0;transition:opacity .15s}
+.browse-tab:hover .browse-tab-x,.browse-tab.active .browse-tab-x{opacity:1}
+.browse-tab-x:hover{background:#ffffff1a;color:#ffd9b8}
+.browse-tab-x svg{width:10px;height:10px}
+.browse-tab-new{display:grid;place-items:center;width:29px;height:29px;flex-shrink:0;margin-left:3px;
+  padding:0;border:0;border-radius:8px;background:none;color:#8d6f5c}
 .browse-tab-new:hover{background:#ffffff12;color:#ffd9b8}
 .browse-tab-new svg{width:14px;height:14px}
 
 /* One bar: an address, or a question. */
-.browse-bar{display:flex;align-items:center;gap:9px;margin:9px 0 0;padding:9px 13px;
-  border-radius:999px;border:1px solid #ffffff16;background:#ffffff08}
+.browse-bar{display:flex;align-items:center;gap:6px;flex:1;min-width:0;padding:5px 10px;
+  border-radius:999px;border:1px solid #ffffff14;background:#ffffff08}
 .browse-bar:focus-within{border-color:#ffc57755;background:#ffffff0d}
-.browse-bar>svg{width:14px;height:14px;color:#a1806a;flex-shrink:0}
+.browse-bar>svg{width:13px;height:13px;color:#8d6f5c;flex-shrink:0;margin-left:3px}
 .browse-bar input{flex:1;min-width:0;border:0;background:none;color:#f3dccb;font-size:12.5px;
-  font-family:inherit}
-.browse-bar input::placeholder{color:#9a7862}
-.browse-bar-go{display:grid;place-items:center;width:28px;height:28px;flex-shrink:0;padding:0;
+  font-family:inherit;padding:2px 4px}
+.browse-bar input::placeholder{color:#8d6f5c}
+.browse-bar-go{display:grid;place-items:center;width:26px;height:26px;flex-shrink:0;padding:0;
   border-radius:50%;border:1px solid #ffc57760;color:#fff6ea;
   background:linear-gradient(125deg,#fa8f12,#d53a00)}
-.browse-bar-go svg{width:13px;height:13px}
-.browse-bar-go:disabled{opacity:.35;cursor:not-allowed;background:#ffffff0f;border-color:#ffffff1a}
-.browse-icon{display:grid;place-items:center;width:26px;height:26px;flex-shrink:0;padding:0;
-  border:0;border-radius:50%;background:none;color:#a1806a}
+.browse-bar-go svg{width:12px;height:12px}
+.browse-bar-go:disabled{opacity:.3;cursor:not-allowed;background:#ffffff0f;border-color:#ffffff1a}
+.browse-icon{display:grid;place-items:center;width:25px;height:25px;flex-shrink:0;padding:0;
+  border:0;border-radius:50%;background:none;color:#8d6f5c}
 .browse-icon svg{width:13px;height:13px}
 .browse-icon:hover{background:#ffffff12;color:#ffd9b8}
 .browse-icon.on{color:#ffd9b8;background:linear-gradient(125deg,#fa8f1233,#d53a0033)}
-.browse-icon.quiet{cursor:default;opacity:.55}
+.browse-icon.quiet{cursor:default;opacity:.5}
 
 /* The page, inside Aira.
    Chrome is a separate process with its own window and cannot render into this
@@ -760,3 +770,19 @@
 .browse-canvas + .terminal-log{flex:0 0 auto;max-height:118px;border-top:1px solid #ffffff0b;
   background:#0d060399}
 
+
+/* The page view is an OS layer and cannot be clipped by CSS, so a rounded
+   surface leaves the browser's square corners hanging over the curve. On this
+   screen the surface is square, which is also what a browser window looks
+   like. */
+@container app (min-width:761px){
+ .surface.browse{border-radius:0}
+ .browse-page,.browse-page .terminal-window{overflow:hidden}
+}
+
+/* Navigation on the left, the address in the middle, page actions on the
+   right — the arrangement every browser already uses, instead of seven
+   controls crowded into one pill. */
+.browse-toolbar{display:flex;align-items:center;gap:8px;height:38px;flex-shrink:0}
+.browse-nav,.browse-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.browse-debug{font-size:9px;color:#ffb46e;white-space:nowrap;flex-shrink:0}

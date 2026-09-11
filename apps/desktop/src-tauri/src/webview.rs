@@ -53,8 +53,17 @@ pub fn webview_open(
     window
         .add_child(
             tauri::webview::WebviewBuilder::new(LABEL, WebviewUrl::External(parsed))
-                // Aira's own CSP governs Aira's UI; it must not be imposed on
-                // the open web, or most of it simply fails to load.
+                // A plain desktop Safari user agent.
+                //
+                // WKWebView's default marks itself as an embedded webview, and
+                // Google reads that as automation: google.com answers with the
+                // "unusual traffic" CAPTCHA at /sorry/ instead of a search box.
+                // This is the same engine Safari uses, so presenting as Safari
+                // is a description of what it is, not a disguise.
+                .user_agent(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15",
+                )
                 .disable_drag_drop_handler(),
             LogicalPosition::new(x, y),
             LogicalSize::new(width, height),

@@ -37,6 +37,8 @@ export interface StartOptions {
  * panel measures its content area and why leaving the screen must close it.
  */
 export const page = {
+  // Plain content-area coordinates. The shell adds the window's frame inset,
+  // where both coordinate spaces are authoritative.
   open: (url: string, r: DOMRect) =>
     invoke<void>('webview_open', { url, x: r.x, y: r.y, width: r.width, height: r.height }),
   bounds: (r: DOMRect) =>

@@ -16,6 +16,15 @@ import Markdown from './markdown';
 
 interface Step {n:number;url:string;action:string}
 
+/** Where a new tab lands. English Google, explicitly — the country redirect
+ *  otherwise decides the language for you. */
+const HOME='https://www.google.com/?hl=en&gl=us';
+
+/** "google.com/search?q=x" → "google.com" — enough to tell tabs apart. */
+function label(url:string):string{
+ try{const u=new URL(url);return u.hostname.replace(/^www\./,'')||'New tab'}catch{return 'New tab'}
+}
+
 export default function BrowserPanel(){
  const [status,setStatus]=useState<BrowserStatus|null>(null);
  const [task,setTask]=useState('');
@@ -27,7 +36,8 @@ export default function BrowserPanel(){
  const [starting,setStarting]=useState(false);
  const [error,setError]=useState('');
  const [model,setModel]=useState('');
- const [tabs,setTabs]=useState<Tab[]>([]);
+ const [tabs,setTabs]=useState<{id:string;url:string}[]>([{id:'t0',url:HOME}]);
+ const [activeTab,setActiveTab]=useState('t0');
  const [isPrivate,setPrivate]=useState(false);
  const [frame,setFrame]=useState<string|null>(null);
  const [pageUrl,setPageUrl]=useState('');
@@ -42,35 +52,26 @@ export default function BrowserPanel(){
 
  useEffect(()=>{trail.current?.scrollTo({top:trail.current.scrollHeight,behavior:'instant'})},[steps,result]);
 
- const refreshTabs=useCallback(async()=>{
-  const c=client.current;
-  if(!c)return;
-  // Listing must never be what launches Chrome, so a quiet failure here
-  // just leaves the strip empty rather than showing an error.
-  try{const state=await c.tabs();setTabs(state.tabs);setPrivate(state.private)}catch{/* not up yet */}
- },[]);
+ // Closed whenever this screen goes away, whatever state it was in. Tying this
+ // to `connected` left a stopped browser's page hanging over the panel, because
+ // the close only ran on the transition that had already happened.
+ useEffect(()=>()=>{opened.current=false;void page.close().catch(()=>{})},[]);
 
  /**
-  * Turns a pointer event on the frame into page coordinates.
+  * Stops the app scrolling while the page view is open.
   *
-  * The capture is the viewport at its own size and is drawn scaled to fit, so a
-  * click at panel coordinates has to be divided back by that ratio or every
-  * click lands somewhere else on the page.
+  * The webview is an OS layer positioned in window coordinates — nothing lays
+  * it out and nothing scrolls it. If Aira's own document moves underneath, the
+  * page stays nailed where it was and the two slide apart, which reads as the
+  * browser floating loose over the app.
   */
- function pagePoint(e:{clientX:number;clientY:number;currentTarget:HTMLImageElement}){
-  const img=e.currentTarget;
-  const box=img.getBoundingClientRect();
-  return {
-   x:(e.clientX-box.left)*(img.naturalWidth/box.width),
-   y:(e.clientY-box.top)*(img.naturalHeight/box.height),
-  };
- }
-
- const send=useCallback((event:Record<string,unknown>)=>{
-  // Fire and forget: a dropped click should not raise an error card, and the
-  // next frame shows whether it landed.
-  void client.current?.input(event).catch(()=>{});
- },[]);
+ useEffect(()=>{
+  if(!isDesktop||!connected)return;
+  const {body}=document;
+  const before=body.style.overflow;
+  body.style.overflow='hidden';
+  return()=>{body.style.overflow=before};
+ },[connected]);
 
  /**
   * Keeps the native page view exactly over the panel's content area.
@@ -88,36 +89,46 @@ export default function BrowserPanel(){
   let alive=true;
 
   const place=()=>{
-   const rect=area.getBoundingClientRect();
+   // Anchored to the bottom edge of the chrome rather than the top of the page
+   // div. The div's own rect was measured before the toolbar had laid out, and
+   // a ResizeObserver on it never corrected that — so the page sat over the
+   // address bar with nothing to move it.
+   const chrome=document.querySelector('.browse-chrome')?.getBoundingClientRect();
+   const box=area.getBoundingClientRect();
+   if(!chrome||chrome.height<40)return;
+   const top=Math.max(chrome.bottom,box.y);
+   const rect=new DOMRect(box.x,top,box.width,Math.max(0,box.bottom-top));
    if(rect.width<2||rect.height<2)return;
-   void (opened.current?page.bounds(rect):page.open('https://duckduckgo.com',rect).then(()=>{opened.current=true}))
+   void (opened.current?page.bounds(rect):page.open(HOME,rect).then(()=>{opened.current=true}))
     .catch(()=>{});
   };
+  // Placed again once layout has settled. The first measurement can be taken
+  // before the toolbar has its final height — a tab strip that grows by a row
+  // afterwards leaves the page sitting over the address bar, and nothing moves
+  // it back because the canvas never changed size.
   place();
+  requestAnimationFrame(place);
+  const settle=setTimeout(place,400);
   const observer=new ResizeObserver(()=>{if(alive)place()});
   observer.observe(area);
   window.addEventListener('resize',place);
 
   // The address bar shows where the page actually went, including links the
   // user followed inside it.
-  const poll=setInterval(()=>{void page.url().then(u=>{if(alive&&u)setPageUrl(u)}).catch(()=>{})},1200);
+  const poll=setInterval(()=>{void page.url().then(u=>{
+   if(!alive||!u)return;
+   setPageUrl(u);
+   setTabs(list=>list.map(t=>t.id===activeTab?{...t,url:u}:t));
+  }).catch(()=>{})},1200);
 
   return()=>{
    alive=false;observer.disconnect();window.removeEventListener('resize',place);
-   clearInterval(poll);
+   clearTimeout(settle);clearInterval(poll);
    opened.current=false;
    void page.close().catch(()=>{});
   };
  },[connected]);
 
- useEffect(()=>{
-  if(!connected)return;
-  void refreshTabs();
-  // While a browse runs the agent opens and closes tabs of its own, so the
-  // strip is polled rather than only read once.
-  const id=setInterval(()=>void refreshTabs(),busy?2500:8000);
-  return()=>clearInterval(id);
- },[connected,busy,refreshTabs]);
 
  useEffect(()=>{
   if(!isDesktop)return;
@@ -157,6 +168,8 @@ export default function BrowserPanel(){
   run.current?.abort();run.current=null;
   client.current=null;
   setBusy(false);
+  opened.current=false;
+  await page.close().catch(()=>{});
   try{await supervisor.stop()}catch{}
   setStatus(await supervisor.status().catch(()=>null));
  }
@@ -187,11 +200,28 @@ export default function BrowserPanel(){
   run.current?.abort();run.current=null;setBusy(false);
  }
 
- async function openTab(url='about:blank'){
-  const c=client.current;
-  if(!c)return;
-  try{const state=await c.openTab(url);setTabs(state.tabs)}
-  catch(e){setError(e instanceof Error?e.message:String(e))}
+ function openTab(url=HOME){
+  const id='t'+Date.now();
+  setTabs(list=>[...list,{id,url}]);
+  setActiveTab(id);
+  void page.navigate(url).catch(()=>{});
+ }
+
+ function selectTab(id:string){
+  const tab=tabs.find(t=>t.id===id);
+  if(!tab)return;
+  setActiveTab(id);
+  void page.navigate(tab.url).catch(()=>{});
+ }
+
+ function closeTab(id:string){
+  setTabs(list=>{
+   const next=list.filter(t=>t.id!==id);
+   // A browser with no tabs is a broken browser; the last close opens a new one.
+   if(!next.length){const fresh={id:'t'+Date.now(),url:HOME};setActiveTab(fresh.id);void page.navigate(HOME).catch(()=>{});return [fresh]}
+   if(id===activeTab){setActiveTab(next[0].id);void page.navigate(next[0].url).catch(()=>{})}
+   return next;
+  });
  }
 
  /** An address goes to the browser; anything else goes to the agent. */
@@ -217,18 +247,12 @@ export default function BrowserPanel(){
    setTask('');
    // Straight into the page view — this is the browser the person is looking
    // at. The agent's Chrome is a separate thing and gets its own tasks.
-   await page.navigate(/^[a-z]+:\/\//i.test(text)?text:`https://${text}`).catch(
-    (e:unknown)=>setError(e instanceof Error?e.message:String(e)));
+   const url=/^[a-z]+:\/\//i.test(text)?text:`https://${text}`;
+   setTabs(list=>list.map(t=>t.id===activeTab?{...t,url}:t));
+   await page.navigate(url).catch((e:unknown)=>setError(e instanceof Error?e.message:String(e)));
    return;
   }
   await go();
- }
-
- async function closeTab(id:string){
-  const c=client.current;
-  if(!c)return;
-  try{const state=await c.closeTab(id);setTabs(state.tabs)}
-  catch(e){setError(e instanceof Error?e.message:String(e))}
  }
 
  async function togglePrivate(){
@@ -238,9 +262,6 @@ export default function BrowserPanel(){
   try{
    const state=await c.setPrivate(want);
    setPrivate(state.private);
-   // The swap is a different Chrome, so whatever was open belonged to the old
-   // one. Clearing the strip now beats showing tabs that no longer exist.
-   setTabs([]);
   }catch(e){setError(e instanceof Error?e.message:String(e))}
  }
 
@@ -270,28 +291,34 @@ export default function BrowserPanel(){
 
     {connected&&<div className="browse-chrome">
      <div className="browse-tabstrip" role="tablist" aria-label="Open tabs">
-      {tabs.map(tab=><span className="browse-tab" key={tab.id} title={tab.url}>
-       <span className="browse-tab-title">{tab.title||tab.url||'New tab'}</span>
-       <button onClick={()=>void closeTab(tab.id)} aria-label={`Close ${tab.title||tab.url}`}><X/></button>
+      {tabs.map(tab=><span className={'browse-tab '+(tab.id===activeTab?'active':'')} key={tab.id} title={tab.url}>
+       <button className="browse-tab-title" onClick={()=>selectTab(tab.id)}>{label(tab.url)}</button>
+       <button className="browse-tab-x" onClick={()=>closeTab(tab.id)} aria-label={`Close ${label(tab.url)}`}><X/></button>
       </span>)}
-      <button className="browse-tab-new" onClick={()=>void openTab()} aria-label="New tab"><Plus/></button>
+      <button className="browse-tab-new" onClick={()=>openTab()} aria-label="New tab"><Plus/></button>
      </div>
-     <form className="browse-bar" onSubmit={e=>{e.preventDefault();void submit()}}>
-      <button type="button" className="browse-icon" onClick={()=>void page.history('back')} aria-label="Back"><ArrowLeft/></button>
-      <button type="button" className="browse-icon" onClick={()=>void page.history('forward')} aria-label="Forward"><ArrowRight/></button>
-      <button type="button" className="browse-icon" onClick={()=>void page.history('reload')} aria-label="Reload"><RotateCw/></button>
-      {isPrivate?<EyeOff/>:<Search/>}
-      <input aria-label="Address or question" value={task}
-       placeholder={pageUrl||'Search, ask, or type a web address'}
-       autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
-      {busy
-       ? <button type="button" className="browse-bar-go" onClick={interrupt} aria-label="Stop"><Square/></button>
-       : <button type="submit" className="browse-bar-go" disabled={!task.trim()} aria-label="Go"><Send/></button>}
-      <button type="button" className={'browse-icon '+(isPrivate?'on':'')} onClick={()=>void togglePrivate()}
-       aria-label={isPrivate?'Private browsing on':'Private browsing off'}
-       title={isPrivate?'Private: nothing is kept. Click for the saved profile.':'Browse privately — applies to the next browser'}><EyeOff/></button>
-      <span className="browse-icon quiet" title="Unpacked extensions in ~/.aira/browser/extensions load at start"><Puzzle/></span>
+     <div className="browse-toolbar">
+      <div className="browse-nav">
+       <button type="button" className="browse-icon" onClick={()=>void page.history('back')} aria-label="Back"><ArrowLeft/></button>
+       <button type="button" className="browse-icon" onClick={()=>void page.history('forward')} aria-label="Forward"><ArrowRight/></button>
+       <button type="button" className="browse-icon" onClick={()=>void page.history('reload')} aria-label="Reload"><RotateCw/></button>
+      </div>
+      <form className="browse-bar" onSubmit={e=>{e.preventDefault();void submit()}}>
+       {isPrivate?<EyeOff/>:<Search/>}
+       <input aria-label="Address or question" value={task}
+        placeholder={pageUrl||'Search, ask, or type a web address'}
+        autoComplete="off" spellCheck={false} onChange={e=>setTask(e.target.value)}/>
+       {busy
+        ? <button type="button" className="browse-bar-go" onClick={interrupt} aria-label="Stop"><Square/></button>
+        : <button type="submit" className="browse-bar-go" disabled={!task.trim()} aria-label="Go"><Send/></button>}
       </form>
+      <div className="browse-actions">
+       <button type="button" className={'browse-icon '+(isPrivate?'on':'')} onClick={()=>void togglePrivate()}
+        aria-label={isPrivate?'Private browsing on':'Private browsing off'}
+        title={isPrivate?'Private: nothing is kept.':'Browse privately — applies to the next browser'}><EyeOff/></button>
+       <span className="browse-icon quiet" title="Unpacked extensions in ~/.aira/browser/extensions load at start"><Puzzle/></span>
+      </div>
+     </div>
     </div>}
 
     {/* The native page view sits over this rectangle. Nothing is drawn here:
@@ -332,7 +359,7 @@ export default function BrowserPanel(){
      {error&&<div className="agent-notice error"><ShieldAlert/><span>{error}</span></div>}
     </div>}
 
-    {connected&&!sent&&<div className="terminal-shortcuts">
+    {!connected&&<div className="terminal-shortcuts">
      {['Summarise the top story on Hacker News','Find the latest Tauri release notes','What is on example.com?'].map(s=>
       <button key={s} disabled={busy} onClick={()=>setTask(s)}>{s}</button>)}
     </div>}
