@@ -114,10 +114,14 @@ export default function AgentPanel(){
    setStatus(next);
    if(!next.running||next.port==null||!next.password)throw new Error('OpenCode did not start.');
    const c=new OpenCodeClient(next.port,next.password);
-   // Poll health briefly: the process is spawned but the port takes a moment.
+   // The process is spawned but the port takes a moment to accept connections.
+   let ready=false;
    for(let attempt=0;attempt<25;attempt++){
-    try{await c.health();break}catch{await new Promise(r=>setTimeout(r,300))}
+    try{await c.health();ready=true;break}catch{await new Promise(r=>setTimeout(r,300))}
    }
+   // Without this the next call fails with the webview's own opaque wording
+   // ("Load failed"), which says nothing about what went wrong or what to do.
+   if(!ready)throw new Error(`Started OpenCode on port ${next.port}, but it never answered. Try again, or check that nothing else is holding that port.`);
    const s=await c.createSession();
    client.current=c;session.current=s.id;
    stream.current?.abort();

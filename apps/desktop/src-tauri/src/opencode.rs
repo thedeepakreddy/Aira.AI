@@ -77,16 +77,28 @@ fn free_port() -> Result<u16, String> {
         .map_err(|e| format!("could not read the reserved port: {e}"))
 }
 
-#[tauri::command]
-pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
-    let mut guard = state.inner.lock().unwrap();
-
-    // A child that has exited must not be reported as running.
-    if let Some(running) = guard.as_mut() {
-        if matches!(running.child.try_wait(), Ok(Some(_))) {
-            *guard = None;
+impl OpenCodeState {
+    /// Drops the handle if the child has exited.
+    ///
+    /// Both commands need this. Without it in `start`, an agent that crashed or
+    /// was killed from outside leaves a dead handle behind, `start` sees it as
+    /// already running, and the panel is handed a port nothing is listening on
+    /// — which surfaces as an unexplained connection failure that no amount of
+    /// pressing the button can clear.
+    fn reap(&self) {
+        let mut guard = self.inner.lock().unwrap();
+        if let Some(running) = guard.as_mut() {
+            if matches!(running.child.try_wait(), Ok(Some(_))) {
+                *guard = None;
+            }
         }
     }
+}
+
+#[tauri::command]
+pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
+    state.reap();
+    let guard = state.inner.lock().unwrap();
 
     match guard.as_ref() {
         Some(running) => Status {
@@ -158,6 +170,7 @@ pub fn opencode_start(
     token: String,
     model: String,
 ) -> Result<Status, String> {
+    state.reap();
     {
         let guard = state.inner.lock().unwrap();
         if guard.is_some() {
