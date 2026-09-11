@@ -31,6 +31,7 @@ pub fn run() {
             openclaw::openclaw_stop,
             openclaw::openclaw_agents,
             openclaw::openclaw_run,
+            openclaw::openclaw_stream,
             openclaw::openclaw_log,
             opencode::opencode_log,
         ])

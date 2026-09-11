@@ -85,13 +85,7 @@ export class OpenClawClient {
     return invoke<AgentEntry[]>('openclaw_agents', { port: this.port, token: this.token });
   }
 
-  /**
-   * Runs a task and resolves with the whole reply.
-   *
-   * Not streamed: crossing the bridge a token at a time needs an event channel
-   * on both sides, and the agent's answer is a finished piece of work rather
-   * than something you read as it arrives.
-   */
+  /** Runs a task and resolves with the whole reply. */
   run(agentId: string, message: string): Promise<string> {
     return invoke<string>('openclaw_run', {
       port: this.port,
@@ -99,5 +93,48 @@ export class OpenClawClient {
       agent: agentId,
       message,
     });
+  }
+
+  /**
+   * Runs a task, calling `onDelta` as the reply arrives.
+   *
+   * The shell reads the stream and re-emits each delta on a Tauri channel,
+   * since the webview cannot read it directly. The run id keeps several agents
+   * streaming at once separable — they all share one event bus.
+   */
+  async stream(
+    agentId: string,
+    message: string,
+    onDelta: (text: string) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const { listen } = await import('@tauri-apps/api/event');
+    const run = crypto.randomUUID();
+
+    const stops: (() => void)[] = [];
+    const finished = new Promise<void>((resolve) => {
+      void listen<string>(`openclaw://delta/${run}`, (e) => onDelta(e.payload)).then((off) =>
+        stops.push(off),
+      );
+      void listen(`openclaw://done/${run}`, () => resolve()).then((off) => stops.push(off));
+      signal?.addEventListener('abort', () => resolve());
+    });
+
+    try {
+      // Resolves when the shell finishes the stream; the `done` event may beat
+      // it, so whichever lands first ends the wait.
+      await Promise.race([
+        invoke<void>('openclaw_stream', {
+          port: this.port,
+          token: this.token,
+          agent: agentId,
+          message,
+          run,
+        }),
+        finished,
+      ]);
+    } finally {
+      for (const stop of stops) stop();
+    }
   }
 }

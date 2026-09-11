@@ -44,6 +44,17 @@ export default function TaskPanel(){
  const runs=useRef<AbortController|null>(null);
 
  const connected=Boolean(status?.running&&agents.length);
+ const working=agents.some(a=>a.phase==='working');
+
+ // A card's elapsed time is computed at render, and React only renders on a
+ // state change — so before the first delta arrives the clock reads 0.0s and
+ // a thirty-second model looks like a stuck one. This is the heartbeat.
+ const [,tick]=useState(0);
+ useEffect(()=>{
+  if(!working)return;
+  const id=setInterval(()=>tick(n=>n+1),200);
+  return()=>clearInterval(id);
+ },[working]);
 
  useEffect(()=>{
   if(!isDesktop)return;
@@ -129,9 +140,12 @@ export default function TaskPanel(){
 
   await Promise.all(agents.map(async({agent})=>{
    try{
-    const reply=await c.run(agent.id,text);
+    await c.stream(agent.id,text,delta=>{
+     setAgents(list=>list.map(a=>a.agent.id===agent.id
+      ?{...a,text:a.text+delta,received:a.received+delta.length}:a));
+    },controller.signal);
     if(controller.signal.aborted)return;
-    update(agent.id,{phase:'done',text:reply,received:reply.length,endedAt:Date.now()});
+    update(agent.id,{phase:'done',endedAt:Date.now()});
    }catch(e){
     if(controller.signal.aborted)return;
     // The bridge rejects with the agent's own wording, which says more than

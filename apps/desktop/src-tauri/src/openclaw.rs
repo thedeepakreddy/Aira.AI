@@ -361,6 +361,74 @@ pub async fn openclaw_agents(port: u16, token: String) -> Result<Vec<AgentEntry>
         .unwrap_or_default())
 }
 
+/// Runs a task and streams the reply back as Tauri events.
+///
+/// The webview cannot read this stream itself — see the note above on CORS — so
+/// the shell reads it and re-emits each delta on a channel the panel listens
+/// to. `run` is the per-run id, so several agents streaming at once stay
+/// separable on the receiving end.
+#[tauri::command]
+pub async fn openclaw_stream(
+    app: tauri::AppHandle,
+    port: u16,
+    token: String,
+    agent: String,
+    message: String,
+    run: String,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tauri::Emitter;
+
+    let response = client()?
+        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "model": agent,
+            "messages": [{ "role": "user", "content": message }],
+            "stream": true,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the agent: {e}"))?;
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| format!("the stream broke: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+        // SSE frames end at a blank line, and a chunk can split one anywhere —
+        // including mid-character — so only whole frames are parsed.
+        while let Some(cut) = buffer.find("\n\n") {
+            let frame: String = buffer.drain(..cut + 2).collect();
+            let Some(data) = frame.lines().find_map(|l| l.strip_prefix("data: ")) else {
+                continue;
+            };
+            if data.trim() == "[DONE]" {
+                let _ = app.emit(&format!("openclaw://done/{run}"), ());
+                return Ok(());
+            }
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) else {
+                continue;
+            };
+            // A failed run arrives as an error object inside a 200: by the time
+            // an upstream provider gives up, the response has already started.
+            if let Some(message) = parsed.pointer("/error/message").and_then(|m| m.as_str()) {
+                return Err(message.to_string());
+            }
+            if let Some(text) = parsed
+                .pointer("/choices/0/delta/content")
+                .and_then(|t| t.as_str())
+            {
+                let _ = app.emit(&format!("openclaw://delta/{run}"), text.to_string());
+            }
+        }
+    }
+    let _ = app.emit(&format!("openclaw://done/{run}"), ());
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn openclaw_run(
     port: u16,
