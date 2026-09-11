@@ -665,3 +665,30 @@
  .agent-node,.agent-node.open{width:100%}
  .canvas-meta{display:none}
 }
+
+/* ── Browsing agent ───────────────────────────────────────────────────────────
+   The trail is the interface. A browse spends most of a minute looking at a
+   page, so the steps are the only evidence anything is happening — and the only
+   way to see where the agent went, which matters on the one surface that acts
+   on what a page tells it. */
+.browse-profile{margin-left:auto;font-size:9.5px;color:#a1806a}
+.browse-step{display:flex;gap:10px;align-items:baseline;margin:6px 0;font-size:11.5px;line-height:1.5}
+.browse-step-n{display:grid;place-items:center;width:18px;height:18px;flex-shrink:0;border-radius:6px;
+  font-size:9.5px;color:#e8945a;border:1px solid #ffb26d2e;background:#1c080055}
+.browse-step-n svg{width:11px;height:11px}
+.browse-step-body{display:flex;gap:8px;align-items:baseline;min-width:0;flex-wrap:wrap}
+.browse-action{color:#dbbcaa}
+.browse-action.quiet{color:#a1806a}
+.browse-step code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;
+  color:#ffd0a4;overflow-wrap:anywhere}
+.browse-step.pending .browse-step-n{border-color:#ffa65255}
+
+.browse-result{margin:14px 0 4px;padding:13px 14px;border-radius:12px;
+  border:1px solid #ffb04d3d;background:linear-gradient(145deg,#4a210226,#1a08001f)}
+.browse-result-head{display:flex;align-items:center;gap:7px;margin-bottom:9px;font-size:11px;color:#ffd2a3}
+.browse-result-head svg{width:13px;height:13px;color:#7fc98a}
+.browse-visited{list-style:none;margin:12px 0 0;padding:11px 0 0;display:flex;flex-direction:column;gap:5px;
+  border-top:1px solid #ffffff0f}
+.browse-visited li{display:flex;gap:7px;align-items:baseline;font-size:10px;color:#a1806a}
+.browse-visited svg{width:10px;height:10px;flex-shrink:0}
+.browse-visited code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}

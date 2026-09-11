@@ -1,6 +1,8 @@
+mod browser;
 mod openclaw;
 mod opencode;
 
+use browser::BrowserState;
 use openclaw::OpenClawState;
 use opencode::OpenCodeState;
 use tauri::{Manager, RunEvent};
@@ -22,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(OpenCodeState::default())
         .manage(OpenClawState::default())
+        .manage(BrowserState::default())
         .invoke_handler(tauri::generate_handler![
             opencode::opencode_status,
             opencode::opencode_start,
@@ -34,6 +37,11 @@ pub fn run() {
             openclaw::openclaw_stream,
             openclaw::openclaw_log,
             opencode::opencode_log,
+            browser::browser_status,
+            browser::browser_start,
+            browser::browser_stop,
+            browser::browser_log,
+            browser::browser_run,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")
@@ -43,6 +51,7 @@ pub fn run() {
             if let RunEvent::Exit = event {
                 app.state::<OpenCodeState>().shutdown();
                 app.state::<OpenClawState>().shutdown();
+                app.state::<BrowserState>().shutdown();
             }
         });
 }

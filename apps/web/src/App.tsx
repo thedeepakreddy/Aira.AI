@@ -18,7 +18,15 @@ export function parseRoute(pathname: string): { view: View; screen: Screen } {
   const view: View = segments[0] === 'desktop' || segments[0] === 'mobile' ? segments[0] : 'auto';
   const rest = view === 'auto' ? segments : segments.slice(1);
   const screen: Screen =
-    rest[0] === 'cli' ? 'cli' : rest[0] === 'tasks' ? 'tasks' : rest[0] === 'login' ? 'login' : 'home';
+    rest[0] === 'cli'
+      ? 'cli'
+      : rest[0] === 'tasks'
+        ? 'tasks'
+        : rest[0] === 'browse'
+          ? 'browse'
+          : rest[0] === 'login'
+            ? 'login'
+            : 'home';
   return { view, screen };
 }
 

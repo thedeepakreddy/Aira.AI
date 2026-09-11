@@ -10,6 +10,7 @@ import {
   type TokenUsage,
 } from '../providers/types.ts';
 import { routeModel } from '../routing/router.ts';
+import { browseTools } from '../tools/browse.ts';
 import { contextFor, record, withContext } from '../memory/context.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
 
@@ -17,6 +18,7 @@ const SURFACES: Surface[] = ['chat', 'voice', 'code', 'task'];
 
 interface ChatBody {
   messages?: unknown;
+  canBrowse?: unknown;
   system?: unknown;
   surface?: unknown;
   model?: unknown;
@@ -31,6 +33,7 @@ function parseBody(body: ChatBody): {
   model?: string;
   conversationId: string | null;
   maxTokens?: number;
+  canBrowse: boolean;
 } {
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     throw new ProviderError('`messages` must be a non-empty array.', false, 400);
@@ -56,6 +59,9 @@ function parseBody(body: ChatBody): {
     model: typeof body.model === 'string' ? body.model : undefined,
     conversationId: typeof body.conversationId === 'string' ? body.conversationId : null,
     maxTokens: typeof body.maxTokens === 'number' ? body.maxTokens : undefined,
+    // Declared by the caller, because only the caller knows whether it has a
+    // browsing agent to run the tool with.
+    canBrowse: body.canBrowse === true,
   };
 }
 
@@ -110,6 +116,7 @@ export function createChatRoute(providers: ChatProvider[]) {
         for await (const event of provider.streamChat({
           ...parsed,
           system,
+          tools: browseTools(parsed.canBrowse),
           model: decision.model,
           signal: abort.signal,
         })) {
