@@ -31,6 +31,8 @@ pub fn run() {
             openclaw::openclaw_stop,
             openclaw::openclaw_agents,
             openclaw::openclaw_run,
+            openclaw::openclaw_log,
+            opencode::opencode_log,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")

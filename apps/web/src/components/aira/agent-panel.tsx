@@ -203,7 +203,15 @@ export default function AgentPanel(){
   }
   // Without this the next call fails with the webview's own opaque wording
   // ("Load failed"), which says nothing about what went wrong or what to do.
-  if(!ready)throw new Error(`Started OpenCode on port ${next.port}, but it never answered. Try again, or check that nothing else is holding that port.`);
+  if(!ready){
+   // Quote the agent rather than only reporting silence: every start failure so
+   // far has had a cause sitting in its own stderr.
+   const said=await supervisor.log().catch(()=>[] as string[]);
+   const tail=said.slice(-3).join(' · ');
+   throw new Error(`Started OpenCode on port ${next.port}, but it never answered.`
+    +(tail?` It last said: ${tail}`:' It printed nothing.')
+    +' Try again, or check that nothing else is holding that port.');
+  }
   // Always name the directory, even when the user picked none: a session
   // created without one does not land in the server's working directory — it
   // reopens whichever project the agent last worked in, which is a confusing

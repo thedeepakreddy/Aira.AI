@@ -42,6 +42,8 @@ export const supervisor = {
   status: () => invoke<OpenClawStatus>('openclaw_status'),
   start: (options: StartOptions) => invoke<OpenClawStatus>('openclaw_start', { ...options }),
   stop: () => invoke<void>('openclaw_stop'),
+  /** Tail of the agent's own stderr — what it said before it gave up. */
+  log: () => invoke<string[]>('openclaw_log'),
 };
 
 // ── server API ───────────────────────────────────────────────────────────────

@@ -21,8 +21,9 @@
 //!     commands, so an open port is local code execution for anything on the
 //!     machine.
 
+use std::collections::VecDeque;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::State;
@@ -34,6 +35,8 @@ pub struct OpenClawState {
 
 struct Running {
     child: Child,
+    /// Recent stderr, for saying why a start failed.
+    log: Arc<Mutex<VecDeque<String>>>,
     port: u16,
     token: String,
 }
@@ -105,6 +108,27 @@ impl OpenClawState {
             }
         }
     }
+}
+
+/// Keeps the tail of a child's stderr, and — more importantly — keeps reading it.
+///
+/// A piped stream nobody drains is not just a lost diagnostic. The pipe holds
+/// about 64KB; once it fills, the child blocks on its next write and stops
+/// making progress. These agents log every plugin they load at startup, so one
+/// would hang part-way through booting: the process is alive, nothing is
+/// listening, and the panel reports an agent that never answered.
+fn drain(stderr: Option<std::process::ChildStderr>, log: Arc<Mutex<VecDeque<String>>>) {
+    let Some(stderr) = stderr else { return };
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+            let mut guard = log.lock().unwrap();
+            if guard.len() >= 60 {
+                guard.pop_front();
+            }
+            guard.push_back(line);
+        }
+    });
 }
 
 #[tauri::command]
@@ -242,8 +266,13 @@ pub fn openclaw_start(
         .spawn()
         .map_err(|e| format!("could not start OpenClaw: {e}"))?;
 
+    let log: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let mut child = child;
+    drain(child.stderr.take(), Arc::clone(&log));
+
     *state.inner.lock().unwrap() = Some(Running {
         child,
+        log,
         port,
         token: gateway_token.clone(),
     });
@@ -364,4 +393,15 @@ pub async fn openclaw_run(
         .and_then(|c| c.as_str())
         .unwrap_or_default()
         .to_string())
+}
+
+/// The tail of the agent's own stderr, so a failed start can say what it said
+/// rather than only that it said nothing.
+#[tauri::command]
+pub fn openclaw_log(state: State<'_, OpenClawState>) -> Vec<String> {
+    let guard = state.inner.lock().unwrap();
+    guard
+        .as_ref()
+        .map(|r| r.log.lock().unwrap().iter().cloned().collect())
+        .unwrap_or_default()
 }

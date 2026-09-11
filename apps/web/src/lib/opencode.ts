@@ -59,6 +59,8 @@ export const supervisor = {
   status: () => invoke<OpenCodeStatus>('opencode_status'),
   start: (options: StartOptions) => invoke<OpenCodeStatus>('opencode_start', { ...options }),
   stop: () => invoke<void>('opencode_stop'),
+  /** Tail of the agent's own stderr — what it said before it gave up. */
+  log: () => invoke<string[]>('opencode_log'),
 };
 
 // ── server API ───────────────────────────────────────────────────────────────

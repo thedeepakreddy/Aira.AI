@@ -87,7 +87,15 @@ export default function TaskPanel(){
     try{if(await c.health()){ready=true;break}}catch{/* not up yet */}
     await new Promise(r=>setTimeout(r,500));
    }
-   if(!ready)throw new Error(`Started OpenClaw on port ${next.port}, but it never answered. Try again, or check that nothing else is holding that port.`);
+   if(!ready){
+    // Quote the agent rather than only reporting silence: every start
+    // failure so far has had a cause sitting in its own stderr.
+    const said=await supervisor.log().catch(()=>[] as string[]);
+    const tail=said.slice(-3).join(' · ');
+    throw new Error(`Started OpenClaw on port ${next.port}, but it never answered.`
+     +(tail?` It last said: ${tail}`:' It printed nothing.')
+     +' Try again, or check that nothing else is holding that port.');
+   }
    const found=await c.agents();
    if(!found.length)throw new Error('OpenClaw started but reported no agents.');
    client.current=c;
