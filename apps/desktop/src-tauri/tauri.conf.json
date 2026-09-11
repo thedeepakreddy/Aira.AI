@@ -20,7 +20,9 @@
         "resizable": true,
         "center": true,
         "theme": "Dark",
-        "backgroundColor": "#090301"
+        "backgroundColor": "#090301",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

@@ -703,7 +703,12 @@
    that changes height — a tab strip wrapping to a second row — moves the
    rectangle after the fact and the page ends up sitting on the address bar.
    A constant height makes the measurement correct whenever it is taken. */
-.browse-chrome{height:84px;box-sizing:border-box;padding:6px 12px;background:#ffffff05;
+/* No fixed height. It was pinned to 84px while the tab strip, the address
+   bar and the padding need more than that, so the content overflowed the
+   box — and since the page view is positioned at this element's measured
+   bottom, the overflow was exactly the strip of address bar the page was
+   drawn over. The content decides the height; the page follows it. */
+.browse-chrome{box-sizing:border-box;padding:6px 12px;background:#ffffff05;
   border-bottom:1px solid #ffffff0d;flex-shrink:0;display:flex;flex-direction:column;gap:6px}
 .browse-tabstrip{display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;
   scrollbar-width:none;height:32px;flex-shrink:0}
@@ -786,3 +791,10 @@
 .browse-toolbar{display:flex;align-items:center;gap:8px;height:38px;flex-shrink:0}
 .browse-nav,.browse-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .browse-debug{font-size:9px;color:#ffb46e;white-space:nowrap;flex-shrink:0}
+
+/* The window's content now runs under the title bar, so macOS draws the traffic
+   lights over Aira's own header. The brand shifts right to clear them — 78px is
+   the close/minimise/zoom cluster plus its margin. */
+@container app (min-width:761px){
+ .home-header{padding-left:78px}
+}

@@ -35,6 +35,9 @@ pub fn webview_open(
     height: f64,
 ) -> Result<(), String> {
     let parsed = parse(&url)?;
+    let window = app
+        .get_window("main")
+        .ok_or_else(|| "no main window to attach the page to".to_string())?;
 
     if let Some(existing) = app.get_webview(LABEL) {
         existing
@@ -45,10 +48,6 @@ pub fn webview_open(
             .map_err(|e| e.to_string())?;
         return existing.navigate(parsed).map_err(|e| e.to_string());
     }
-
-    let window = app
-        .get_window("main")
-        .ok_or_else(|| "no main window to attach the page to".to_string())?;
 
     window
         .add_child(

@@ -88,15 +88,25 @@ export default function BrowserPanel(){
   if(!area)return;
   let alive=true;
 
+  // No title-bar correction: the window uses an overlay title bar, so its
+  // frame and its content share an origin and a rectangle measured in the page
+  // is the rectangle the child webview gets. Deriving the offset was tried and
+  // failed — Tauri reports the window as undecorated in every metric, and
+  // `window.screenY` inside the webview reports the screen height, not the
+  // window's position.
   const place=()=>{
    // Anchored to the bottom edge of the chrome rather than the top of the page
    // div. The div's own rect was measured before the toolbar had laid out, and
    // a ResizeObserver on it never corrected that — so the page sat over the
    // address bar with nothing to move it.
-   const chrome=document.querySelector('.browse-chrome')?.getBoundingClientRect();
+   const chromeEl=document.querySelector('.browse-chrome');
+   const bar=document.querySelector('.browse-bar')?.getBoundingClientRect();
+   const chrome=chromeEl?.getBoundingClientRect();
    const box=area.getBoundingClientRect();
    if(!chrome||chrome.height<40)return;
-   const top=Math.max(chrome.bottom,box.y);
+   // The address bar's own bottom, not just the container's: if the two ever
+   // disagree again, the one that must not be covered wins.
+   const top=Math.max(chrome.bottom,bar?.bottom??0,box.y);
    const rect=new DOMRect(box.x,top,box.width,Math.max(0,box.bottom-top));
    if(rect.width<2||rect.height<2)return;
    void (opened.current?page.bounds(rect):page.open(HOME,rect).then(()=>{opened.current=true}))
