@@ -10,6 +10,7 @@ import {
   type TokenUsage,
 } from '../providers/types.ts';
 import { routeModel } from '../routing/router.ts';
+import { contextFor, record, withContext } from '../memory/context.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
 
 const SURFACES: Surface[] = ['chat', 'voice', 'code', 'task'];
@@ -82,6 +83,12 @@ export function createChatRoute(providers: ChatProvider[]) {
     const userId = c.get('userId');
     const startedAt = Date.now();
 
+    // What this user has been doing on Aira's other surfaces. Fetched before
+    // the stream opens, because once SSE has started there is no way to change
+    // the request that was sent.
+    const system = withContext(parsed.system, await contextFor(userId, parsed.surface));
+    const asked = [...parsed.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+
     return streamSSE(c, async (sse) => {
       // Propagates client disconnect down to the provider so an abandoned
       // stream stops being billed the moment the user navigates away.
@@ -97,13 +104,16 @@ export function createChatRoute(providers: ChatProvider[]) {
       let stopReason: string | null = null;
       let ok = false;
       let failure: string | null = null;
+      let answered = '';
 
       try {
         for await (const event of provider.streamChat({
           ...parsed,
+          system,
           model: decision.model,
           signal: abort.signal,
         })) {
+          if (event.type === 'text') answered += event.text;
           if (event.type === 'done') {
             usage = event.usage;
             stopReason = event.stopReason;
@@ -143,6 +153,12 @@ export function createChatRoute(providers: ChatProvider[]) {
           surface: parsed.surface,
           payload,
         });
+        // Only a turn that actually completed is worth remembering; a failed
+        // request would otherwise leave the question in memory with no answer.
+        if (ok) {
+          await record(userId, parsed.surface, 'user', asked);
+          await record(userId, parsed.surface, 'assistant', answered);
+        }
       }
     });
   };

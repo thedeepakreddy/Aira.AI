@@ -5,6 +5,7 @@ import { createAuthMiddleware, type AuthedVars } from './auth.ts';
 import { loadEnv } from './env.ts';
 import { AnthropicProvider } from './providers/anthropic.ts';
 import { OpenAICompatibleProvider } from './providers/openai.ts';
+import { initMemory } from './memory/store.ts';
 import { listModels, loadCatalogue } from './providers/registry.ts';
 import { routeModel } from './routing/router.ts';
 import type { ChatProvider } from './providers/types.ts';
@@ -16,6 +17,15 @@ loadCatalogue({
   openai: env.openaiModels,
   openrouter: env.openrouterModels,
   gemini: env.geminiModels,
+});
+
+// Cross-surface memory. Supabase when it is configured, an in-process ring
+// otherwise — the gateway says which at boot, because "memory works" and
+// "memory survives a restart" are different promises.
+const memoryStore = initMemory({
+  supabaseUrl: env.supabaseUrl,
+  supabaseServiceKey: env.supabaseServiceKey,
+  enabled: env.memoryEnabled,
 });
 
 const providers: ChatProvider[] = [];
@@ -120,6 +130,8 @@ serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.error(
     `[gateway] listening on :${info.port} — providers: ${
       providers.map((p) => p.id).join(', ') || 'none'
-    } — auth: ${env.requireAuth ? 'required' : 'DISABLED (dev)'}`,
+    } — auth: ${env.requireAuth ? 'required' : 'DISABLED (dev)'} — memory: ${
+      env.memoryEnabled ? memoryStore.kind : 'off'
+    }`,
   );
 });

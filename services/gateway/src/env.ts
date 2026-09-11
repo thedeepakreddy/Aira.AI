@@ -18,6 +18,7 @@ export interface Env {
   supabaseUrl: string | undefined;
   supabaseServiceKey: string | undefined;
   requireAuth: boolean;
+  memoryEnabled: boolean;
   allowedOrigins: string[];
 }
 
@@ -51,6 +52,9 @@ export function loadEnv(): Env {
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     // Defaults to on: a paid product must not ship with auth accidentally off.
     requireAuth: bool(process.env.AIRA_REQUIRE_AUTH, true),
+    // On by default: the surfaces are meant to feel like one assistant, and a
+    // memory layer nobody turns on is a memory layer nobody has.
+    memoryEnabled: bool(process.env.AIRA_MEMORY, true),
     allowedOrigins: [
       ...new Set([
         ...(process.env.AIRA_ALLOWED_ORIGINS ?? 'http://localhost:5180')

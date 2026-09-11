@@ -11,6 +11,7 @@ import {
   type ToolCall,
   type ToolDefinition,
 } from '../providers/types.ts';
+import { contextFor, record as remember, withContext } from '../memory/context.ts';
 import { routeModel } from '../routing/router.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
 
@@ -182,9 +183,17 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
     const id = `chatcmpl-${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
 
+    // The agents get the same cross-surface context the chat screen does. They
+    // reach this gateway directly and never touch the app, so this is the only
+    // point at which they can know what the user has been doing elsewhere.
+    const recalled = await contextFor(userId, surface);
+    // Last, not first: an agent's system prompt is its instructions, and
+    // context that displaces them changes what the agent is.
+    const asked = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+
     const request = {
       messages,
-      system: system.length ? system.join('\n\n') : undefined,
+      system: withContext(system.length ? system.join('\n\n') : undefined, recalled),
       surface,
       model: decision.model,
       maxTokens,
@@ -239,6 +248,8 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
         return c.json({ error: { message: pe.message, type: 'api_error' } }, (pe.status ?? 500) as 500);
       }
       await record(usage, stopReason, true, null);
+      await remember(userId, surface, 'user', asked);
+      await remember(userId, surface, 'assistant', text);
       return c.json({
         id,
         object: 'chat.completion',
@@ -278,11 +289,13 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
       let ok = false;
       let failure: string | null = null;
       let toolCalls = 0;
+      let streamed = '';
 
       try {
         await sse.writeSSE({ data: JSON.stringify(chunk({ role: 'assistant' }, null)) });
         for await (const event of provider.streamChat({ ...request, signal: abort.signal })) {
           if (event.type === 'text') {
+            streamed += event.text;
             await sse.writeSSE({ data: JSON.stringify(chunk({ content: event.text }, null)) });
           } else if (event.type === 'tool_call') {
             // Emitted whole rather than as fragments; clients accept either.
@@ -314,6 +327,10 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
         // OpenAI clients wait for this sentinel; without it they hang.
         await sse.writeSSE({ data: '[DONE]' });
         await record(usage, stopReason, ok, failure);
+        if (ok) {
+          await remember(userId, surface, 'user', asked);
+          await remember(userId, surface, 'assistant', streamed);
+        }
       }
     });
   };
