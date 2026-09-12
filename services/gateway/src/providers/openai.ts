@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { humanize } from './messages.ts';
 import { findModel } from './registry.ts';
+import { recallToolCallMetadata, rememberToolCallMetadata } from './signatures.ts';
 import {
   ProviderError,
   type ChatMessage,
@@ -85,7 +86,7 @@ export class OpenAICompatibleProvider implements ChatProvider {
       let stopReason: string | null = null;
       let usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
       // Tool calls arrive as fragments keyed by index; accumulate and emit whole.
-      const pending = new Map<number, { id: string; name: string; args: string }>();
+      const pending = new Map<number, { id: string; name: string; args: string; extra?: unknown }>();
 
       for await (const chunk of stream) {
         // The usage-bearing chunk arrives last and has an empty choices array.
@@ -108,6 +109,10 @@ export class OpenAICompatibleProvider implements ChatProvider {
           if (fragment.id) open.id = fragment.id;
           if (fragment.function?.name) open.name = fragment.function.name;
           if (fragment.function?.arguments) open.args += fragment.function.arguments;
+          // Vendor extension carrying Gemini's thought_signature. It is not part
+          // of the OpenAI shape, so the SDK types do not know about it.
+          const extra = (fragment as { extra_content?: unknown }).extra_content;
+          if (extra !== undefined) open.extra = extra;
           pending.set(fragment.index, open);
         }
       }
@@ -116,6 +121,9 @@ export class OpenAICompatibleProvider implements ChatProvider {
       for (const [, call] of [...pending].sort((a, b) => a[0] - b[0])) {
         if (!call.id || !call.name) throw new ProviderError('The model returned an incomplete tool call.', true, 502);
         try { JSON.parse(call.args || '{}'); } catch { throw new ProviderError('The model returned incomplete tool arguments. Please retry.', true, 502); }
+        // Held against the call id so it can be handed back on the next turn,
+        // whether or not the client preserves unknown fields.
+        rememberToolCallMetadata(call.id, call.extra);
         yield {
           type: 'tool_call',
           call: { id: call.id, name: call.name, arguments: call.args || '{}' },
@@ -157,11 +165,17 @@ function toOpenAIMessage(message: ChatMessage): OpenAI.Chat.ChatCompletionMessag
     return {
       role: 'assistant',
       content: message.content || null,
-      tool_calls: message.toolCalls.map((call) => ({
-        id: call.id,
-        type: 'function' as const,
-        function: { name: call.name, arguments: call.arguments },
-      })),
+      tool_calls: message.toolCalls.map((call) => {
+        // Without the remembered extension, Gemini 3 rejects the turn outright
+        // rather than degrading, so this is required rather than an optimisation.
+        const extra = recallToolCallMetadata(call.id);
+        return {
+          id: call.id,
+          type: 'function' as const,
+          function: { name: call.name, arguments: call.arguments },
+          ...(extra === undefined ? {} : { extra_content: extra }),
+        };
+      }),
     };
   }
   return { role: message.role, content: message.content };
