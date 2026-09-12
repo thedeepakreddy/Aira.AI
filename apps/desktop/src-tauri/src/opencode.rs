@@ -172,13 +172,30 @@ pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
 ///  * Setting `edit` and `bash` to "ask". OpenCode allows everything by
 ///    default, so without this the approval prompts in Aira's UI would never
 ///    fire and the agent would edit files unannounced.
+/// Builds OpenCode's configuration.
+///
+/// `catalogue` is every model the gateway serves; `model` is the one the
+/// coding surface routes to, which becomes the default.
+///
+/// Declaring the whole catalogue rather than just the routed model matters
+/// because OpenCode stores a model per session. With one model declared,
+/// changing AIRA_ROUTE_CODE strands every existing session on a name the
+/// config no longer contains, and OpenCode fails with "Model not found:
+/// aira/<old>. Did you mean: <new>?" — a dead session with no way back.
 fn build_config(
     gateway_url: &str,
     token: &str,
     model: &str,
+    catalogue: &[String],
     browser: Option<(u16, String)>,
 ) -> String {
     let qualified = format!("aira/{model}");
+    let mut models = serde_json::Map::new();
+    for id in catalogue.iter().map(String::as_str).chain(std::iter::once(model)) {
+        models.entry(id.to_string()).or_insert_with(|| {
+            serde_json::json!({ "name": if id == model { "Aira Agent" } else { id } })
+        });
+    }
     let mut config = serde_json::json!({
         "provider": {
             "aira": {
@@ -188,7 +205,7 @@ fn build_config(
                     "baseURL": format!("{}/openai/v1", gateway_url.trim_end_matches('/')),
                     "apiKey": token,
                 },
-                "models": { model: { "name": "Aira Agent" } },
+                "models": models,
             }
         },
         "model": qualified,
@@ -232,11 +249,13 @@ pub fn opencode_start(
     gateway_url: String,
     token: String,
     model: String,
+    catalogue: Option<Vec<String>>,
 ) -> Result<Status, String> {
     crate::runtime::validate_gateway(&gateway_url)?;
     if token.trim().is_empty() || model.trim().is_empty() {
         return Err("Sign in and select a coding model first".into());
     }
+    let catalogue = catalogue.unwrap_or_default();
     let selected = directory
         .filter(|d| !d.trim().is_empty())
         .ok_or("Choose a project folder before starting the coding agent")?;
@@ -280,7 +299,7 @@ pub fn opencode_start(
         // and the gateway token never reaches disk.
         .env(
             "OPENCODE_CONFIG_CONTENT",
-            build_config(&gateway_url, &token, &model, browser.connection()),
+            build_config(&gateway_url, &token, &model, &catalogue, browser.connection()),
         )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -355,11 +374,7 @@ mod tests {
     use super::*;
     #[test]
     fn mcp_connections_share_runtime_credentials_and_require_approval() {
-        let config: serde_json::Value = serde_json::from_str(&build_config(
-            "https://aira.example/",
-            "session-token",
-            "vendor/model",
-            Some((12345, "browser-token".into())),
+        let config: serde_json::Value = serde_json::from_str(&build_config("https://aira.example/", "session-token", "vendor/model", &[], Some((12345, "browser-token".into())),
         ))
         .unwrap();
         assert_eq!(
@@ -376,13 +391,40 @@ mod tests {
         );
         assert_eq!(config["permission"]["aira_browser*"], "ask");
         assert_eq!(config["permission"]["external_directory"], "deny");
-        let disconnected: serde_json::Value = serde_json::from_str(&build_config(
-            "https://aira.example",
-            "token",
-            "model",
-            None,
+        let disconnected: serde_json::Value = serde_json::from_str(&build_config("https://aira.example", "token", "model", &[], None,
         ))
         .unwrap();
         assert!(disconnected["mcp"].get("aira_browser").is_none());
+    }
+
+    /// OpenCode stores a model per session. If the config declares only the
+    /// routed model, changing AIRA_ROUTE_CODE strands every existing session
+    /// on a name the config no longer has, and the session dies with
+    /// "Model not found: aira/<old>".
+    #[test]
+    fn config_declares_every_catalogue_model_so_sessions_survive_a_route_change() {
+        let catalogue = vec!["gemini-3.7-flash".to_string(), "gemini-3.6-flash".to_string()];
+        let config: serde_json::Value = serde_json::from_str(&build_config(
+            "https://aira.example", "token", "gemini-3.6-flash", &catalogue, None,
+        ))
+        .expect("valid config");
+        let models = config["provider"]["aira"]["models"]
+            .as_object()
+            .expect("models is an object");
+        for id in &catalogue {
+            assert!(models.contains_key(id), "{id} missing from {models:?}");
+        }
+        // The routed model is still the default.
+        assert_eq!(config["model"], "aira/gemini-3.6-flash");
+    }
+
+    /// A gateway that reports nothing must still yield a usable config.
+    #[test]
+    fn config_falls_back_to_the_routed_model_when_the_catalogue_is_empty() {
+        let config: serde_json::Value =
+            serde_json::from_str(&build_config("https://aira.example", "t", "only-model", &[], None))
+                .expect("valid config");
+        assert!(config["provider"]["aira"]["models"]["only-model"].is_object());
+        assert_eq!(config["model"], "aira/only-model");
     }
 }

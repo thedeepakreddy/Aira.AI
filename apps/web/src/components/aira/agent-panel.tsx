@@ -210,6 +210,7 @@ export default function AgentPanel() {
     const next = await supervisor.start({
       gatewayUrl: (import.meta.env?.VITE_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787',
       token, model: chosen, directory: workdir,
+      catalogue: catalogue.models.map(m => m.id),
     });
     if (!alive.current) { await supervisor.stop(); throw new Error('The workspace was closed.'); }
     setStatus(next);

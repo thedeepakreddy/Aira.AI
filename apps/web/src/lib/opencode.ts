@@ -42,6 +42,14 @@ export interface StartOptions {
   token: string;
   /** Model id as the gateway knows it; the shell qualifies it as `aira/<id>`. */
   model: string;
+  /**
+   * Every model the gateway serves.
+   *
+   * All of them are declared in the agent's config, not just the routed one:
+   * OpenCode stores a model per session, so declaring only the current route
+   * strands existing sessions the moment that route changes.
+   */
+  catalogue?: string[];
 }
 
 /**
