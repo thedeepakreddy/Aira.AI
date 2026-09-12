@@ -1,8 +1,64 @@
 //! Shared supervision boundaries for the three local runtimes.
 use std::process::{Child, Command};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+/// The PATH a login shell would have.
+///
+/// An app launched from Finder inherits `/usr/bin:/bin:/usr/sbin:/sbin` and
+/// nothing else — not the PATH from the user's shell profile. Every runtime
+/// Aira supervises is a Node script whose shebang is `#!/usr/bin/env node`, so
+/// with that minimal PATH the spawn dies instantly with
+/// `env: node: No such file or directory` and no other explanation. It reads as
+/// a broken agent rather than a missing directory, and it only happens in the
+/// packaged app: from a terminal it always works.
+///
+/// Asked once and cached, because it costs a shell startup.
+fn login_path() -> String {
+    static CACHED: OnceLock<String> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            let from_shell = Command::new("sh")
+                .arg("-lc")
+                .arg("printf %s \"$PATH\"")
+                .output()
+                .ok()
+                .filter(|out| out.status.success())
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .filter(|path| !path.is_empty());
+
+            let mut parts: Vec<String> = from_shell
+                .map(|path| path.split(':').map(str::to_string).collect())
+                .unwrap_or_default();
+
+            // The usual homes for a user-installed Node, appended in case the
+            // login shell is non-interactive or its profile sets no PATH.
+            if let Ok(home) = std::env::var("HOME") {
+                for extra in [
+                    format!("{home}/.local/bin"),
+                    format!("{home}/.npm-global/bin"),
+                    format!("{home}/.volta/bin"),
+                    format!("{home}/.nvm/versions/node/current/bin"),
+                ] {
+                    if !parts.contains(&extra) {
+                        parts.push(extra);
+                    }
+                }
+            }
+            for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+                if !parts.iter().any(|p| p == extra) {
+                    parts.push(extra.to_string());
+                }
+            }
+            parts.join(":")
+        })
+        .clone()
+}
+
 pub fn prepare(command: &mut Command) {
+    // Without this the child cannot find `node`, and every supervised runtime
+    // fails to start in the packaged app while working fine from a terminal.
+    command.env("PATH", login_path());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -69,5 +125,38 @@ mod tests {
         assert!(validate_gateway("http://example.com").is_err());
         assert!(validate_gateway("https://user:secret@example.com").is_err());
         assert!(validate_gateway("file:///tmp/gateway").is_err());
+    }
+
+
+    /// The packaged app inherits `/usr/bin:/bin:/usr/sbin:/sbin` from Finder.
+    /// Every supervised runtime is a Node script, so a PATH without the
+    /// directory holding `node` kills the spawn before it prints anything.
+    #[test]
+    fn prepared_children_can_find_node() {
+        let mut command = Command::new("true");
+        prepare(&mut command);
+        let path = login_path();
+        let node = which_node().expect("this machine has no node on any searched path");
+        let dir = node.parent().expect("node has a parent directory");
+        assert!(
+            path.split(':').any(|entry| std::path::Path::new(entry) == dir),
+            "PATH given to children ({path}) does not contain {dir:?}, where node lives",
+        );
+    }
+
+    /// Finds node the way a child's shebang would, across the searched PATH.
+    fn which_node() -> Option<std::path::PathBuf> {
+        login_path().split(':').find_map(|dir| {
+            let candidate = std::path::Path::new(dir).join("node");
+            candidate.exists().then_some(candidate)
+        })
+    }
+
+    #[test]
+    fn login_path_always_includes_the_standard_directories() {
+        let path = login_path();
+        for required in ["/usr/bin", "/bin"] {
+            assert!(path.split(':').any(|entry| entry == required), "{required} missing from {path}");
+        }
     }
 }
