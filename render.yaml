@@ -1,0 +1,88 @@
+# Render blueprint for Aira.
+#
+# Two services from one repository: the gateway, which must be a long-lived
+# process, and the web app, which is static files.
+#
+# The gateway runs from its Dockerfile rather than Render's native Node runtime
+# on purpose. It executes TypeScript directly through Node 24's type stripping
+# and has no build step, so it needs that exact major version; the Dockerfile
+# pins it where a platform runtime setting could drift underneath it.
+#
+# No secret is written here. Everything sensitive is `sync: false`, which makes
+# Render prompt for it once and keeps it out of the repository.
+
+services:
+  - type: web
+    name: aira-gateway
+    runtime: docker
+    dockerfilePath: ./services/gateway/Dockerfile
+    dockerContext: ./services/gateway
+    region: oregon
+    plan: starter
+    # Free instances sleep when idle and cold-start on the next request. That is
+    # survivable for a web page and not for this: a model response is a stream
+    # held open for a minute or more, and the first request after a sleep can
+    # time out before the process is listening.
+    healthCheckPath: /health
+    envVars:
+      # Render injects PORT; the gateway already reads it.
+      - key: AIRA_REQUIRE_AUTH
+        value: "true"
+      - key: AIRA_MEMORY
+        value: "true"
+      # Must include the deployed site's origin, or the browser is CORS-blocked.
+      # The desktop app's origins are always allowed, so the Mac app keeps
+      # working and hides the failure — set this before testing the web app.
+      - key: AIRA_ALLOWED_ORIGINS
+        fromService:
+          type: web
+          name: aira-web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODELS
+        sync: false
+      - key: AIRA_ROUTE_CHAT
+        sync: false
+      - key: AIRA_ROUTE_VOICE
+        sync: false
+      - key: AIRA_ROUTE_CODE
+        sync: false
+      - key: AIRA_ROUTE_TASK
+        sync: false
+
+  - type: web
+    name: aira-web
+    runtime: static
+    rootDir: apps/web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Compiled into the bundle at build time, so a change here needs a rebuild,
+      # not just a restart. Only publishable values belong in this list.
+      - key: VITE_GATEWAY_URL
+        fromService:
+          type: web
+          name: aira-gateway
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+    routes:
+      # Aira routes on the path — /chat, /cli, /tasks, /browse, /connections,
+      # /login are read from location.pathname. Without this every one of them
+      # is a 404 on reload, and the deploy looks perfect until someone refreshes.
+      - type: rewrite
+        source: /*
+        destination: /index.html
