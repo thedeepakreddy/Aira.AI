@@ -156,14 +156,19 @@ export default function AgentCanvas(props: AgentCanvasProps) {
   const setZoomManually = setZoom;
   return <section className="agent-canvas-page screen-content" aria-label="Agent canvas">
     <div className="canvas-top">
-      <button className="canvas-top-button" onClick={props.onNewProject} disabled={props.busy}>
+      {/* Never disabled. It stops every run before clearing, so it is safe
+        * mid-task — and it is the way out of a board that will not settle,
+        * which is exactly when `disabled={busy}` took it away. */}
+      <button className="canvas-top-button" onClick={props.onNewProject}>
         <Plus />New Project
       </button>
-      <button className="canvas-top-button solid" onClick={props.onSave} disabled={!props.canSave}>
+      <button className="canvas-top-button solid" onClick={props.onSave} disabled={!props.canSave}
+        title={props.canSave ? 'Save this board as Markdown' : 'Nothing to save yet — run a task first'}>
         <Download />Save
       </button>
       <button className="canvas-share" onClick={props.onCopy} disabled={!props.canSave}
-        title="Copy the whole board" aria-label="Copy the whole board">
+        title={props.canSave ? 'Copy the whole board' : 'Nothing to copy yet — run a task first'}
+        aria-label="Copy the whole board">
         <Share2 />
       </button>
     </div>
@@ -284,7 +289,8 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
       {sent && <button onClick={props.onNewProject} disabled={busy}>New task<ChevronRight /></button>}
     </div>
     <div className="task-node-tools">
-      <button className="canvas-round" onClick={props.onNewProject} disabled={busy} aria-label="New task"><Plus /></button>
+      <button className="canvas-round" onClick={props.onNewProject} aria-label="New task"
+        title="Clear the board and start again"><Plus /></button>
       <button className="canvas-round quiet" onClick={props.onSelectAll}
         title="Send this task to every agent" aria-label="Select every agent"><Sparkles /></button>
       <label className="canvas-model">
@@ -295,7 +301,11 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
         </select>
       </label>
       <button className="canvas-round quiet" onClick={props.onToggleOutput}
-        title="Show or hide every agent's output" aria-label="Toggle all output"><Activity /></button>
+        disabled={!props.agents.some(a => a.text)}
+        title={props.agents.some(a => a.text)
+          ? "Show or hide every agent's output"
+          : 'No output yet — this expands every agent once they have written something'}
+        aria-label="Toggle all output"><Activity /></button>
       {/* Repeat, run by the gateway rather than the window — so a daily digest
         * still happens with Aira closed. Only one agent, deliberately: an
         * unattended board task that fans out to five is five times the spend

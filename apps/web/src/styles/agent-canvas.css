@@ -217,12 +217,17 @@
 .task-node-status button svg { width: 14px; height: 14px; }
 .task-node-status button:disabled { opacity: .4; cursor: not-allowed; }
 
+/* Wraps rather than overflowing. Six controls do not fit one row inside a
+   440px card, so Repeat was being pushed outside the pane entirely. */
 .task-node-tools {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 14px 18px 16px;
 }
+/* The run control keeps the end of the last row wherever that falls. */
+.task-node-tools .canvas-round.primary { margin-left: auto; }
 .canvas-round {
   display: grid;
   place-items: center;
@@ -253,13 +258,14 @@
   align-items: center;
   gap: 7px;
   height: 42px;
-  padding: 0 8px 0 16px;
+  min-width: 0;
+  padding: 0 8px 0 14px;
   border-radius: 999px;
   border: 1px solid var(--canvas-line);
   background: var(--canvas-glass);
   color: var(--canvas-ink);
   font-size: 13px;
-  max-width: 190px;
+  max-width: 170px;
 }
 .canvas-model select {
   border: 0;
