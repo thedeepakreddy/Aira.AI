@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, ArrowUpRight, Bot, Check, ChevronDown, Clock3, Copy, Cpu, Loader2, Plus, Power, RefreshCw, Send, ShieldCheck, Square, WifiOff } from 'lucide-react';
 import { isDesktop, supervisor, OpenClawClient, type Agent, type OpenClawStatus } from '@/lib/openclaw';
 import { getAccessToken } from '@/lib/supabase';
 import { listCatalogue, type ModelSpec } from '@/lib/gateway';
 import { createStreamBuffer } from '@/lib/stream-buffer';
-import Markdown from './markdown';
-import '@/styles/agent-workbench.css';
+import AgentCanvas from './agent-canvas';
 
 type Phase = 'idle' | 'working' | 'done' | 'error' | 'stopped';
 interface AgentState {
@@ -256,91 +254,42 @@ export default function TaskPanel() {
   const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : busy ? `${active} working` : connected ? 'Ready' : isDesktop ? 'Offline' : 'Desktop required';
   const missing = Boolean(status && !status.binary);
 
-  return <section className="cli-page agent-page task-workbench screen-content" aria-label="Task agents">
-    <div className="cli-heading">
-      <span className="eyebrow">AIRA AGENTS</span>
-      <div className="agent-title-row">
-        <h1>A little more possible.</h1>
-        <span className={`workbench-status ${connected ? 'connected' : ''}`} role="status"><span />{stateLabel}</span>
-      </div>
-      <p>Give your agents a clear goal. Follow the work, keep the result.</p>
-    </div>
-
-    <div className="task-workbench-layout">
-      <aside className="workbench-sidebar" aria-label="Agent setup">
-        <div className="workbench-section-label"><Bot /> YOUR TEAM</div>
-        <h2>One goal. The right agents.</h2>
-        <p className="workbench-muted">Choose who receives your task. Each selected agent runs separately.</p>
-        <div className="workbench-label-row"><label className="workbench-label" htmlFor="task-model">Model</label><button className="workbench-text-button" disabled={connected || starting || checking} aria-label="Refresh task runtime and models" onClick={() => void refreshSetup()}><RefreshCw /></button></div>
-        <select id="task-model" className="workbench-select" value={model} disabled={connected || busy || starting} onChange={e => setModel(e.target.value)}>
-          {!models.length && <option value="">No connected models</option>}
-          {models.map(m => <option key={m.id} value={m.id}>{m.label} · {m.provider}</option>)}
-        </select>
-        {connected && <p className="workbench-hint">Disconnect to change the model.</p>}
-        {agents.length > 0 && <div className="workbench-agent-list">
-          {agents.map(({ agent }) => <label className="workbench-agent-choice" key={agent.id}>
-            <input type="checkbox" checked={selected.includes(agent.id)} disabled={busy || starting} onChange={() => setSelected(ids => ids.includes(agent.id) ? ids.filter(id => id !== agent.id) : [...ids, agent.id])} />
-            <span><strong>{agent.name}</strong><small>{ROLES[agent.name] ?? 'Task agent'}</small></span><Bot />
-          </label>)}
-        </div>}
-        <button className={`workbench-primary ${connected ? 'secondary' : ''}`} disabled={!isDesktop || checking || starting || (!connected && missing)} onClick={() => void (connected ? stop() : start())}>
-          {starting ? <Loader2 className="spin" /> : <Power />}{connected ? busy ? 'Stop all agents' : 'Disconnect' : 'Connect agents'}
-        </button>
-        <div className="workbench-runtime-note"><ShieldCheck /><span>{!isDesktop ? 'Local tools run in the Aira desktop app. Your chat is available on the web.' : missing ? 'OpenClaw is not installed. Install the supported runtime, then reconnect.' : 'Agents run on this device. Stopping a task leaves them connected and ready.'}</span></div>
-        {missing && <code className="workbench-install">npm install -g openclaw</code>}
-        <a className="workbench-doc-link" href="https://docs.openclaw.ai/" target="_blank" rel="noreferrer noopener">Runtime setup guide <ArrowUpRight /></a>
-      </aside>
-
-      <div className="workbench-main">
-        <div className="workbench-output-heading"><span><Activity />Workspace</span><button className="workbench-text-button" disabled={busy || starting || !sent} onClick={() => { setSent(''); setAgents(list => list.map(a => blank(a.agent))); }}><Plus />New task</button></div>
-        {error && <div className="workbench-alert" role="alert"><WifiOff /><span>{error}</span></div>}
-        {notice && <div className="workbench-notice" role="status">{notice}</div>}
-        <div className="workbench-results">
-          {!sent ? <div className="workbench-empty">
-            <div className="workbench-empty-icon"><Bot /></div>
-            <span className="eyebrow">FROM IDEA TO OUTCOME</span>
-            <h2>What can we move forward?</h2>
-            <p>Planning, synthesis, and thoughtful second opinions.<br />Start with the outcome you want to reach.</p>
-            <div className="workbench-examples">{examples.map(example => <button key={example} onClick={() => setTask(example)}>{example}<ArrowUpRight /></button>)}</div>
-          </div> : <>
-            <div className="workbench-goal"><span className="eyebrow">YOUR TASK</span><p>{sent}</p></div>
-            {agents.filter(a => a.startedAt !== null).map(state => <AgentCard key={state.agent.id} state={state} open={expanded.includes(state.agent.id)} onToggle={() => setExpanded(ids => ids.includes(state.agent.id) ? ids.filter(id => id !== state.agent.id) : [...ids, state.agent.id])} />)}
-          </>}
-        </div>
-        <form className="workbench-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
-          <textarea aria-label="Task for selected agents" placeholder={!isDesktop ? 'Open Aira desktop to run local agents…' : connected ? 'Describe the outcome, context, and any constraints…' : 'Write a task, then connect your agents…'} value={task} onChange={e => setTask(e.target.value)} rows={3} disabled={busy || starting} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
-          <div className="workbench-composer-footer"><span>{selected.length ? `${selected.length} agent${selected.length === 1 ? '' : 's'} selected` : 'Select an agent'}<span className="workbench-key-hint"> · Enter to run, Shift + Enter for a new line</span></span>
-            {busy ? <button key="stop" className="workbench-primary compact" type="button" onClick={event => { event.preventDefault(); stopTask(); }}><Square />Stop task</button> : <button key="send" className="workbench-primary compact" disabled={!connected || !task.trim() || !selected.length || starting} type="submit"><Send />Run task</button>}
-          </div>
-        </form>
-      </div>
-    </div>
-  </section>;
-}
-
-const PHASE_LABEL: Record<Phase, string> = { idle: 'Ready', working: 'Working', done: 'Complete', error: 'Failed', stopped: 'Stopped' };
-
-function AgentCard({ state, open, onToggle }: { state: AgentState; open: boolean; onToggle: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState('');
-  const elapsed = state.startedAt ? Math.max(0, ((state.endedAt ?? Date.now()) - state.startedAt) / 1000) : 0;
-  async function copy() {
-    try { await navigator.clipboard.writeText(state.text); setCopied(true); setCopyError(''); }
-    catch { setCopyError('Clipboard access is unavailable. Select the output to copy it.'); }
-  }
-  useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 2_000); return () => clearTimeout(timer); }, [copied]);
-  return <article className={`workbench-result ${state.phase}`}>
-    <div className="workbench-result-header"><span className="workbench-result-avatar"><Bot /></span><div><strong>{state.agent.name}</strong><span>{PHASE_LABEL[state.phase]}</span></div>
-      <button className="workbench-icon-button" type="button" onClick={onToggle} aria-expanded={open} aria-label={`${open ? 'Collapse' : 'Expand'} output from ${state.agent.name}`}><ChevronDown className={open ? 'expanded' : ''} /></button>
-    </div>
-    {open && <div className="workbench-result-body">
-      {state.text ? <Markdown>{state.text}</Markdown> : <p className="workbench-muted">{state.phase === 'working' ? 'Working on your task. Output will appear here.' : 'No text was returned.'}</p>}
-      {state.error && <div className="workbench-alert" role="alert">{state.error}</div>}
-      {copyError && <p className="workbench-muted" role="status">{copyError}</p>}
-    </div>}
-    <div className="workbench-result-footer"><span><Clock3 />{Math.round(elapsed)}s</span><span><Cpu />{state.text.length.toLocaleString()} characters</span>
-      {state.phase === 'working' && <Loader2 className="spin" />}
-      {state.text && <button type="button" className="workbench-text-button" onClick={() => void copy()}>{copied ? <Check /> : <Copy />}{copied ? 'Copied' : 'Copy output'}</button>}
-    </div>
-  </article>;
+  return <AgentCanvas
+    agents={agents.map(a => ({
+      id: a.agent.id, name: a.agent.name, role: ROLES[a.agent.name] ?? 'Task agent',
+      phase: a.phase, text: a.text, startedAt: a.startedAt, endedAt: a.endedAt, error: a.error,
+    }))}
+    selected={selected}
+    onToggleSelect={id => setSelected(ids => ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id])}
+    task={task}
+    onTaskChange={setTask}
+    sent={sent}
+    busy={busy}
+    starting={starting || checking}
+    connected={connected}
+    error={error || notice}
+    models={models.map(m => ({ id: m.id, label: m.label }))}
+    model={model}
+    onModelChange={setModel}
+    modelLocked={connected || busy || starting}
+    examples={examples}
+    onRun={() => void send()}
+    onStop={() => (busy ? stopTask() : void stop())}
+    onNewProject={() => { setSent(''); setAgents(list => list.map(a => blank(a.agent))); setNotice(''); }}
+    onSave={() => {
+      // The board's own content, saved as one document.
+      const body = agents.filter(a => a.text).map(a => `## ${a.agent.name}\n\n${a.text}`).join('\n\n');
+      const file = new Blob([`# ${sent}\n\n${body}\n`], { type: 'text/markdown' });
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url; link.download = 'aira-project.md';
+      link.click();
+      URL.revokeObjectURL(url);
+    }}
+    canSave={Boolean(sent && agents.some(a => a.text))}
+    footnote={!isDesktop
+      ? 'Local agents run in the Aira desktop app. Your chat is available on the web.'
+      : missing ? 'OpenClaw is not installed. Install the runtime, then run a task.'
+      : 'Planning, synthesis, and thoughtful second opinions. Start with the outcome you want.'}
+  />;
 }

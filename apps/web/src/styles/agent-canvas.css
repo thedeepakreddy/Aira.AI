@@ -1,0 +1,516 @@
+/* Agent canvas.
+ *
+ * Follows the supplied design: a dark board, the task at the centre, agents
+ * arranged around it and joined by thin orthogonal connectors, with a dock
+ * along the bottom and a zoom cluster at the right.
+ *
+ * The reference lights its active card in blue. Everything here is the same
+ * geometry in Aira's orange, taken from the ramp the rest of the app already
+ * uses rather than sampled off the picture, so the canvas belongs to the
+ * product instead of sitting next to it.
+ */
+
+.agent-canvas-page {
+  --canvas-ink: #f4ece6;
+  --canvas-dim: #9c8578;
+  --canvas-line: #ffffff14;
+  --canvas-glass: #ffffff08;
+  /* The accent, and the glow it throws. */
+  --canvas-accent: #ff8a3d;
+  --canvas-accent-deep: #d4410a;
+  --canvas-glow: #ff6a0033;
+
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 42%, #2a0f0433 0%, transparent 70%),
+    radial-gradient(ellipse 90% 70% at 50% 120%, #1a070233 0%, transparent 60%),
+    #070405;
+  overflow: hidden;
+}
+
+/* ── top bar ─────────────────────────────────────────────────────────────── */
+
+.canvas-top {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 20px 0;
+  flex-shrink: 0;
+}
+.canvas-top-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid var(--canvas-line);
+  background: #ffffff0a;
+  color: var(--canvas-ink);
+  font-size: 13px;
+  backdrop-filter: blur(20px);
+  transition: background .2s, border-color .2s;
+}
+.canvas-top-button:hover:not(:disabled) { background: #ffffff14; }
+.canvas-top-button:disabled { opacity: .45; cursor: not-allowed; }
+.canvas-top-button svg { width: 15px; height: 15px; }
+/* The primary action is the one solid shape on the board. */
+.canvas-top-button.solid {
+  background: #f7f3ef;
+  border-color: transparent;
+  color: #1a0f08;
+  font-weight: 500;
+}
+.canvas-top-button.solid:hover:not(:disabled) { background: #fff; }
+.canvas-share {
+  position: absolute;
+  right: 20px;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid var(--canvas-line);
+  background: #ffffff0a;
+  color: var(--canvas-dim);
+}
+.canvas-share:hover { color: var(--canvas-ink); background: #ffffff14; }
+.canvas-share svg { width: 15px; height: 15px; }
+
+/* ── the board ───────────────────────────────────────────────────────────── */
+
+.canvas-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 12px 24px 88px;
+}
+.canvas-world {
+  position: relative;
+  display: grid;
+  /* Agents left and right of the task, which stays in the middle column. */
+  grid-template-columns: 268px minmax(300px, 440px) 268px;
+  align-items: center;
+  gap: 20px 62px;
+  /* `zoom`, not `transform: scale()`. A transform shrinks what is drawn and
+     leaves the layout box at full size, so the stage kept scrolling and the
+     board sat off-centre inside a box far taller than the picture. `zoom`
+     scales the layout, so a fitted board is genuinely the size it looks. */
+  zoom: var(--canvas-zoom, 1);
+}
+/* Staggered, as the reference arranges them — a card sits above the task on one
+   side and below it on the other, so the board reads as a graph rather than two
+   tidy lists. */
+.canvas-column { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.canvas-column:last-of-type { padding-top: 76px; }
+
+/* Connectors are drawn from measured positions, so they sit under the cards. */
+.canvas-wires {
+  position: absolute;
+  inset: 0;
+  /* Explicit, because an SVG with no width/height and no viewBox falls back to
+     its own intrinsic default rather than filling the box it is inset into —
+     it collapsed to 18px and clipped every connector out of sight. */
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 0;
+}
+.canvas-wires path {
+  fill: none;
+  stroke: #ffffff40;
+  stroke-width: 1.25;
+}
+.canvas-wires circle { fill: #ffffff5c; }
+
+/* ── task card ───────────────────────────────────────────────────────────── */
+
+.task-node {
+  position: relative;
+  z-index: 2;
+  border-radius: 26px;
+  border: 1px solid #ffffff14;
+  background: linear-gradient(168deg, #15100dfa, #0b0705fc);
+  box-shadow: 0 0 0 1px #ffffff08, 0 30px 90px #000000b3, 0 0 70px var(--canvas-glow);
+}
+/* The count sits on the card's top edge, half outside it. */
+.task-node-tab {
+  position: absolute;
+  top: -13px;
+  left: 34px;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--canvas-line);
+  background: #17110e;
+  color: var(--canvas-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.task-node-body { padding: 24px 24px 18px; min-height: 118px; }
+.task-node-body p {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--canvas-ink);
+  letter-spacing: -.2px;
+}
+.task-node-body textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: none;
+  border: 0;
+  background: none;
+  color: var(--canvas-ink);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.5;
+  letter-spacing: -.2px;
+}
+.task-node-body textarea::placeholder { color: #7d6558; }
+
+/* The status strip: lit while work is running, quiet when it is not. */
+.task-node-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 24px;
+  font-size: 13px;
+  color: var(--canvas-ink);
+  background: #ffffff05;
+  border-top: 1px solid #ffffff0d;
+}
+.task-node-status.live {
+  background: linear-gradient(97deg, #ff8a3d38, #d4410a1f 55%, #ffffff05);
+}
+.task-node-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--canvas-ink);
+  font-size: 13px;
+}
+.task-node-status button svg { width: 14px; height: 14px; }
+.task-node-status button:disabled { opacity: .4; cursor: not-allowed; }
+
+.task-node-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px 16px;
+}
+.canvas-round {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--canvas-line);
+  background: var(--canvas-glass);
+  color: var(--canvas-ink);
+  transition: background .2s;
+}
+.canvas-round:hover:not(:disabled) { background: #ffffff14; }
+.canvas-round:disabled { opacity: .4; cursor: not-allowed; }
+.canvas-round svg { width: 17px; height: 17px; }
+.canvas-round.quiet { color: var(--canvas-dim); }
+/* The run control: a solid disc, the brightest thing on the board. */
+.canvas-round.primary {
+  margin-left: auto;
+  background: #f7f3ef;
+  border-color: transparent;
+  color: #130a05;
+}
+.canvas-round.primary:hover:not(:disabled) { background: #fff; }
+.canvas-round.primary:disabled { background: #ffffff1a; color: var(--canvas-dim); }
+.canvas-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 42px;
+  padding: 0 8px 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--canvas-line);
+  background: var(--canvas-glass);
+  color: var(--canvas-ink);
+  font-size: 13px;
+  max-width: 190px;
+}
+.canvas-model select {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  max-width: 140px;
+  padding-right: 4px;
+}
+.canvas-model select:disabled { opacity: .55; }
+
+/* ── agent cards ─────────────────────────────────────────────────────────── */
+
+.agent-node-card {
+  position: relative;
+  z-index: 1;
+  border-radius: 22px;
+  padding: 15px 17px 16px;
+  border: 1px solid #ffffff0f;
+  background: #ffffff07;
+  backdrop-filter: blur(24px);
+  color: var(--canvas-ink);
+  text-align: left;
+  width: 100%;
+  transition: transform .25s, box-shadow .3s, background .3s, opacity .3s;
+}
+.agent-node-card:hover { transform: translateY(-2px); }
+/* Idle members recede rather than disappear, as in the reference. */
+.agent-node-card.idle { opacity: .5; }
+.agent-node-card.working {
+  opacity: 1;
+  border-color: #ffae6b66;
+  background: linear-gradient(158deg, var(--canvas-accent), var(--canvas-accent-deep) 92%);
+  box-shadow: 0 0 46px #ff6a0059, 0 22px 60px #00000080, inset 0 1px 0 #ffffff2e;
+}
+.agent-node-card.done { border-color: #7fc98a3d; }
+.agent-node-card.error { border-color: #ff8a6b4d; }
+
+.agent-node-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.agent-node-glyph {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  border: 1px solid #ffffff1f;
+  background: #ffffff12;
+  color: #fff;
+}
+.agent-node-glyph svg { width: 16px; height: 16px; }
+.agent-node-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid #ffffff14;
+  background: #00000038;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.agent-node-state i { width: 7px; height: 7px; border-radius: 50%; background: #9c8578; }
+/* Status colour stays semantic — the accent is the theme, these are meaning. */
+.agent-node-card.working .agent-node-state i { background: #5fd67f; animation: node-breathe 1.5s ease-in-out infinite; }
+.agent-node-card.done .agent-node-state i { background: #5fd67f; }
+.agent-node-card.stopped .agent-node-state i { background: #ffc94d; }
+.agent-node-card.error .agent-node-state i { background: #ff8a6b; }
+@keyframes node-breathe { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+
+.agent-node-card h3 {
+  margin: 13px 0 2px;
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: -.5px;
+  color: #fff;
+}
+.agent-node-role { margin: 0; font-size: 12px; color: #ffffff85; }
+.agent-node-card.idle .agent-node-role,
+.agent-node-card.done .agent-node-role { color: var(--canvas-dim); }
+
+.agent-node-tags { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.agent-node-tags li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: #ffffff12;
+  font-size: 12px;
+  color: #ffffffdb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-node-card.idle .agent-node-tags li { background: #ffffff08; color: var(--canvas-dim); }
+.agent-node-tags svg { width: 13px; height: 13px; flex-shrink: 0; opacity: .85; }
+
+.agent-node-metrics { margin: 13px 0 0; display: flex; flex-direction: column; }
+.agent-node-metrics > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid #ffffff17;
+  font-size: 12px;
+}
+.agent-node-metrics dt { display: inline-flex; align-items: center; gap: 8px; color: #ffffff9e; }
+.agent-node-card.idle .agent-node-metrics dt { color: var(--canvas-dim); }
+.agent-node-metrics dt svg { width: 14px; height: 14px; }
+.agent-node-metrics dd { margin: 0; color: #fff; display: inline-flex; align-items: center; gap: 8px; }
+.agent-node-card.idle .agent-node-metrics dd { color: #c9b3a5; }
+.agent-node-spark { width: 46px; height: 14px; overflow: visible; }
+.agent-node-spark polyline { fill: none; stroke: currentColor; stroke-width: 1.4; opacity: .8; }
+.agent-node-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #ffffff1c;
+  font-size: 11.5px;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-node-chip svg { width: 12px; height: 12px; }
+
+.agent-node-output {
+  margin: 12px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid #ffffff17;
+  font-size: 12.5px;
+  line-height: 1.6;
+  max-height: 160px;
+  overflow: auto;
+}
+.agent-node-output p { margin: 0 0 8px; }
+.agent-node-error { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: #ffb59f; }
+
+/* ── docks ───────────────────────────────────────────────────────────────── */
+
+.canvas-dock, .canvas-zoom {
+  position: absolute;
+  bottom: 20px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.canvas-dock { left: 50%; transform: translateX(-50%); }
+.canvas-zoom { right: 20px; }
+.canvas-dock button, .canvas-zoom > button, .canvas-zoom > span {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  border: 1px solid var(--canvas-line);
+  background: #0d0705cc;
+  color: var(--canvas-dim);
+  backdrop-filter: blur(20px);
+}
+.canvas-dock button:hover:not(:disabled) { color: var(--canvas-ink); background: #ffffff14; }
+.canvas-dock button:disabled { opacity: .4; cursor: not-allowed; }
+.canvas-dock svg, .canvas-zoom svg { width: 16px; height: 16px; }
+.canvas-zoom-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 42px;
+  padding: 0 6px;
+  border-radius: 13px;
+  border: 1px solid var(--canvas-line);
+  background: #0d0705cc;
+  color: var(--canvas-ink);
+  font-size: 12.5px;
+  backdrop-filter: blur(20px);
+}
+.canvas-zoom-level button {
+  width: 26px;
+  height: 30px;
+  border: 0;
+  background: none;
+  color: var(--canvas-dim);
+  font-size: 15px;
+  border-radius: 9px;
+}
+.canvas-zoom-level button:hover { color: var(--canvas-ink); background: #ffffff14; }
+.canvas-zoom-level span { min-width: 38px; text-align: center; }
+
+/* ── states with nothing on the board ────────────────────────────────────── */
+
+.canvas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 440px;
+  text-align: center;
+  color: var(--canvas-dim);
+}
+.canvas-empty-glyph {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  border: 1px solid #ffb87526;
+  background: linear-gradient(150deg, #ff8a3d26, #d4410a14);
+  color: var(--canvas-accent);
+}
+.canvas-empty-glyph svg { width: 24px; height: 24px; }
+.canvas-empty h2 { margin: 0; font-size: 27px; font-weight: 400; letter-spacing: -.9px; color: var(--canvas-ink); }
+.canvas-empty p { margin: 0; font-size: 13px; line-height: 1.7; }
+.canvas-examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 4px; }
+.canvas-examples button {
+  padding: 9px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--canvas-line);
+  background: var(--canvas-glass);
+  color: #d9c3b3;
+  font-size: 12px;
+}
+.canvas-examples button:hover { background: #ffffff14; color: var(--canvas-ink); }
+
+.canvas-alert {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  max-width: min(440px, 52%);
+  padding: 11px 14px;
+  border-radius: 13px;
+  border: 1px solid #ff8a6b3d;
+  background: #2a0a04f2;
+  color: #ffc3b0;
+  font-size: 12px;
+  line-height: 1.55;
+  backdrop-filter: blur(20px);
+}
+.canvas-alert svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; }
+
+/* One column once the three no longer fit, with the task first. */
+@container app (max-width: 1100px) {
+  .canvas-world { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .canvas-world .canvas-column { flex-direction: row; flex-wrap: wrap; }
+  .canvas-world .canvas-column > * { flex: 1 1 260px; }
+  .canvas-wires { display: none; }
+  .canvas-stage { place-items: start center; padding-top: 16px; }
+}
+@container app (max-width: 760px) {
+  .canvas-world .canvas-column { flex-direction: column; }
+  .canvas-zoom { display: none; }
+  .task-node-body p, .task-node-body textarea { font-size: 15px; }
+}
