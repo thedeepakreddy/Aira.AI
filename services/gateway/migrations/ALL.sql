@@ -1,0 +1,96 @@
+-- Aira memory schema — all migrations, in order.
+-- Paste this whole file into the Supabase SQL editor and run it once.
+-- Every statement is 'if not exists', so re-running it is safe.
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 001_memory.sql
+-- ─────────────────────────────────────────────────────────────────────
+-- Cross-surface memory for Aira.
+--
+-- Run this, 002_memory_preferences.sql and 003_memory_facts.sql in the Supabase
+-- SQL editor.
+--
+-- Without them the gateway falls back to local, per-process memory and says so
+-- once in its log: `kind` then reports 'ephemeral' rather than claiming a
+-- database it cannot reach. That keeps memory working; it does not make it
+-- durable, and the fallback is gone on restart.
+--
+-- Only the gateway touches this table. It holds the service_role key, so RLS is
+-- enabled with no policy: that denies every anon and authenticated client by
+-- default, and service_role bypasses it. A user's turns must never be readable
+-- from a browser bundle.
+
+create table if not exists public.aira_memory (
+  id          bigint generated always as identity primary key,
+  user_id     text        not null,
+  surface     text        not null,
+  role        text        not null check (role in ('user', 'assistant')),
+  text        text        not null,
+  at          timestamptz not null default now()
+);
+
+-- Recall is always "the newest N for one user", which is exactly this index.
+create index if not exists aira_memory_user_at_idx
+  on public.aira_memory (user_id, at desc);
+
+alter table public.aira_memory enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 002_memory_preferences.sql
+-- ─────────────────────────────────────────────────────────────────────
+-- Apply after 001_memory.sql in every environment before this gateway revision.
+create table if not exists public.aira_memory_preferences (
+  user_id text primary key,
+  enabled boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.aira_memory_preferences enable row level security;
+revoke all on public.aira_memory_preferences from anon, authenticated;
+revoke all on public.aira_memory from anon, authenticated;
+
+-- Recall is restricted to the last 30 days. Schedule this deletion with your
+-- database maintenance scheduler if physical retention must also be 30 days:
+-- delete from public.aira_memory where at < now() - interval '30 days';
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 003_memory_facts.sql
+-- ─────────────────────────────────────────────────────────────────────
+-- Semantic memory, and faster recall for it.
+--
+-- Run after 001 and 002 in the Supabase SQL editor.
+--
+-- Facts live in the same table as episodes, under the reserved surface
+-- '__facts', so they inherit the row-level isolation and the service_role-only
+-- access already established rather than needing a second table with a second
+-- set of rules to get wrong. What they do not inherit is expiry: an episode is
+-- worth a month, a fact is worth keeping.
+
+-- Recall asks for "this user's facts" on most requests, and the existing
+-- (user_id, at desc) index makes that a scan over their episodes first. This
+-- partial index covers only fact rows, so it stays small however much
+-- conversation accumulates around it.
+create index if not exists aira_memory_facts_idx
+  on public.aira_memory (user_id, at desc)
+  where surface = '__facts';
+
+-- Retention is enforced by the gateway, which exempts facts. This comment
+-- exists so a future scheduled deletion job does not quietly undo that:
+-- any physical-deletion policy must carry the same exemption.
+comment on table public.aira_memory is
+  'Aira cross-surface memory. Rows with surface = ''__facts'' are derived, durable facts and must be exempt from any retention or deletion policy applied to conversational rows.';
+
+-- ── Vector recall (optional) ────────────────────────────────────────────────
+--
+-- Recall matches text with ILIKE today, which finds "launch" and never matches
+-- "release" to it. pgvector fixes that, and is left commented because it is
+-- not free to turn on: every stored row needs an embedding, which means an
+-- embeddings provider configured on the gateway and a backfill for existing
+-- rows. Enable it when that is in place rather than creating a column nothing
+-- populates.
+--
+-- create extension if not exists vector;
+-- alter table public.aira_memory add column if not exists embedding vector(768);
+-- create index if not exists aira_memory_embedding_idx
+--   on public.aira_memory using hnsw (embedding vector_cosine_ops);
+
