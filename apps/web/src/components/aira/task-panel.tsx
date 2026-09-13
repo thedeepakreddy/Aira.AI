@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isDesktop, supervisor, OpenClawClient, type Agent, type OpenClawStatus } from '@/lib/openclaw';
+import { isDesktop, supervisor, OpenClawClient, type Agent, type OpenClawStatus, type Schedule } from '@/lib/openclaw';
 import { getAccessToken, getSession } from '@/lib/supabase';
 import { BOARD_KEY, loadBoard, saveBoard } from '@/lib/agent-board';
 import { fetchUsage, listCatalogue, type ModelSpec, type UsageSummary } from '@/lib/gateway';
@@ -62,6 +62,7 @@ export default function TaskPanel() {
   const connecting = useRef<Promise<Agent[]> | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
   const connected = Boolean(status?.running && client.current && agents.length);
   const active = agents.filter(a => a.phase === 'working').length;
   const busy = active > 0;
@@ -102,6 +103,15 @@ export default function TaskPanel() {
       })),
     });
   }, [account, sent, busy, agents]);
+
+  // Schedules live in the runtime, so they are only readable while it is up.
+  const refreshSchedules = useCallback(() => {
+    if (!isDesktop || !connected) { setSchedules([]); return; }
+    void supervisor.schedules()
+      .then(next => { if (alive.current) setSchedules(next); })
+      .catch(() => { if (alive.current) setSchedules([]); });
+  }, [connected]);
+  useEffect(refreshSchedules, [refreshSchedules]);
 
   useEffect(() => {
     if (busy) return;
@@ -157,6 +167,7 @@ export default function TaskPanel() {
     const next = await supervisor.start({
       gatewayUrl: (import.meta.env?.VITE_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787',
       token, model: chosen,
+      catalogue: catalogue.models.map(m => `${m.id}|${m.tier}`),
     });
     if (!alive.current) { await supervisor.stop(); throw new Error('The workspace was closed.'); }
     setStatus(next);
@@ -457,7 +468,23 @@ export default function TaskPanel() {
         .catch(() => setError('Clipboard access is unavailable. Use Save instead.'));
     }}
     helpUrl="https://docs.openclaw.ai/"
-    usage={usage} 
+    usage={usage}
+    schedules={schedules}
+    onSchedule={async (every, agent) => {
+      const text = task.trim() || sent;
+      if (!text) { setError('Write the task you want repeated first.'); return; }
+      try {
+        await supervisor.addSchedule({
+          name: text.slice(0, 60), every, agent, prompt: text,
+        });
+        setNotice(`Repeating every ${every}.`);
+        refreshSchedules();
+      } catch (e) { setError(messageOf(e)); }
+    }}
+    onUnschedule={async id => {
+      try { await supervisor.removeSchedule(id); refreshSchedules(); }
+      catch (e) { setError(messageOf(e)); }
+    }} 
     onNewProject={() => {
       // A new project is a clean board: stop what is running, clear the cards,
       // the headline task, the composer and any leftover message. It used to

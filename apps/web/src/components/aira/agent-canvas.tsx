@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Activity, BarChart3, Bot, ChevronRight, CircleHelp, Cloud, Download, Eye,
   FileText, Gauge, Layers, Loader2, Minus, Plus, Scale, Send, Share2, Square,
-  Sparkles, Trash2, WifiOff, ArrowRight, Crown, Coins,
+  Sparkles, Trash2, WifiOff, ArrowRight, Crown, Coins, Clock3, X,
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -89,6 +89,10 @@ export interface AgentCanvasProps {
   usage: {
     complete: boolean; requests: number; failed: number; costUsd: number; windowHours: number;
   } | null;
+  /** Tasks the runtime repeats on its own. */
+  schedules: { id: string; name: string; when: string; agent: string }[];
+  onSchedule: (every: string, agent: string) => void;
+  onUnschedule: (id: string) => void;
   onNewProject: () => void;
   onSave: () => void;
   canSave: boolean;
@@ -196,6 +200,15 @@ export default function AgentCanvas(props: AgentCanvasProps) {
         <div className="canvas-column">{columns[1].map(agent => renderNode(agent))}</div>
       </div>
 
+      {props.schedules.length > 0 && <div className="canvas-schedules">
+        <span className="canvas-schedules-title"><Clock3 />Repeating</span>
+        {props.schedules.map(job => <span className="canvas-schedule" key={job.id}>
+          <strong>{job.when}</strong>{job.name}
+          <button onClick={() => props.onUnschedule(job.id)}
+            aria-label={`Stop repeating ${job.name}`}><X /></button>
+        </span>)}
+      </div>}
+
       {props.error && <div className="canvas-alert" role="alert"><WifiOff /><span>{props.error}</span></div>}
     </div>
 
@@ -283,6 +296,24 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
       </label>
       <button className="canvas-round quiet" onClick={props.onToggleOutput}
         title="Show or hide every agent's output" aria-label="Toggle all output"><Activity /></button>
+      {/* Repeat, run by the gateway rather than the window — so a daily digest
+        * still happens with Aira closed. Only one agent, deliberately: an
+        * unattended board task that fans out to five is five times the spend
+        * with nobody watching it. */}
+      <label className="canvas-repeat" title="Repeat this task without anyone present">
+        <Clock3 />
+        <select aria-label="Repeat this task" value="" onChange={e => {
+          if (!e.target.value) return;
+          props.onSchedule(e.target.value, props.selected[0] ?? '');
+          e.target.value = '';
+        }} disabled={!connected || !props.selected.length}>
+          <option value="">Repeat…</option>
+          <option value="1h">Every hour</option>
+          <option value="6h">Every 6 hours</option>
+          <option value="1d">Every day</option>
+        </select>
+      </label>
+
       {/* The primary button follows what can actually be done. Showing Stop
         * whenever any agent was working meant a new board task could not be
         * started until everything finished — the opposite of running them

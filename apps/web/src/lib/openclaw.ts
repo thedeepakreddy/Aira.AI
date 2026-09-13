@@ -37,6 +37,14 @@ export interface StartOptions {
   token: string;
   /** Model id as the gateway knows it. */
   model: string;
+  /**
+   * "id|tier" per model the gateway serves.
+   *
+   * Lets each role take a model that suits it — synthesis and review on the
+   * strongest, drafting on a cheaper one — rather than the whole fleet sharing
+   * the routed model.
+   */
+  catalogue?: string[];
 }
 
 export const supervisor = {
@@ -45,6 +53,11 @@ export const supervisor = {
   stop: () => invoke<void>('openclaw_stop'),
   /** Tail of the agent's own stderr — what it said before it gave up. */
   log: () => invoke<string[]>('openclaw_log'),
+  /** Recurring tasks the gateway runs on its own. */
+  schedules: () => invoke<Schedule[]>('openclaw_schedules'),
+  addSchedule: (job: { name: string; every: string; agent: string; prompt: string }) =>
+    invoke<void>('openclaw_schedule_add', job),
+  removeSchedule: (id: string) => invoke<void>('openclaw_schedule_remove', { id }),
 };
 
 // ── server API ───────────────────────────────────────────────────────────────
@@ -155,4 +168,15 @@ export async function streamTask(
     if (abort) signal?.removeEventListener('abort', abort);
     off();
   }
+}
+
+/** A task the gateway repeats without anyone present. */
+export interface Schedule {
+  id: string;
+  name: string;
+  /** "every 2h", or the cron expression the job was created with. */
+  when: string;
+  agent: string;
+  prompt: string;
+  enabled: boolean;
 }

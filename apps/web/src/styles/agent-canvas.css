@@ -655,3 +655,76 @@
   backdrop-filter: blur(20px);
   cursor: default;
 }
+
+/* Repeat, and what is already repeating. */
+.canvas-repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 42px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--canvas-line);
+  background: var(--canvas-glass);
+  color: var(--canvas-dim);
+  font-size: 12.5px;
+}
+.canvas-repeat svg { width: 14px; height: 14px; }
+.canvas-repeat select {
+  border: 0;
+  background: none;
+  color: var(--canvas-ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+.canvas-repeat select:disabled { opacity: .5; }
+
+.canvas-schedules {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: min(520px, 55%);
+  padding: 8px 12px;
+  border-radius: 13px;
+  border: 1px solid var(--canvas-line);
+  background: #0d0705cc;
+  backdrop-filter: blur(20px);
+  font-size: 11.5px;
+  color: var(--canvas-dim);
+}
+.canvas-schedules-title { display: inline-flex; align-items: center; gap: 6px; }
+.canvas-schedules-title svg { width: 13px; height: 13px; }
+.canvas-schedule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 999px;
+  background: #ffffff0f;
+  color: var(--canvas-ink);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.canvas-schedule strong { font-weight: 500; color: var(--canvas-accent); }
+.canvas-schedule button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--canvas-dim);
+}
+.canvas-schedule button:hover { background: #ffffff1f; color: var(--canvas-ink); }
+.canvas-schedule button svg { width: 11px; height: 11px; }
+/* The alert shares this corner; it wins when both are present. */
+.canvas-schedules:has(~ .canvas-alert) { display: none; }
