@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isDesktop, supervisor, OpenClawClient, type Agent, type OpenClawStatus, type Schedule } from '@/lib/openclaw';
+import { isDesktop, supervisor, OpenClawClient, collectFleet, type Agent, type OpenClawStatus, type Schedule } from '@/lib/openclaw';
 import { getAccessToken, getSession } from '@/lib/supabase';
 import { BOARD_KEY, loadBoard, saveBoard } from '@/lib/agent-board';
 import { fetchUsage, listCatalogue, type ModelSpec, type UsageSummary } from '@/lib/gateway';
@@ -134,7 +134,7 @@ export default function TaskPanel() {
         if (next.model) setModel(next.model);
         if (next.running && next.port && next.token) {
           const c = new OpenClawClient(next.port, next.token);
-          const found = await c.agents();
+          const found = await collectFleet(c, next.fleet ?? 0, () => !cancelled && alive.current);
           if (cancelled) return;
           if (!found.length) throw new Error('The runtime is running but has no available agents. Reconnect to try again.');
           client.current = c;
@@ -174,11 +174,7 @@ export default function TaskPanel() {
     setModel(chosen);
     if (!next.running || !next.port || !next.token) throw new Error('The task runtime could not start.');
     const c = new OpenClawClient(next.port, next.token);
-    let found: Agent[] = [];
-    for (let attempt = 0; attempt < 60 && alive.current; attempt++) {
-      try { found = await c.agents(); if (found.length) break; } catch { /* startup can take a moment */ }
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
+    const found = await collectFleet(c, next.fleet ?? 0, () => alive.current);
     if (!alive.current) { await supervisor.stop(); throw new Error('The workspace was closed.'); }
     if (!found.length) {
       const tail = (await supervisor.log().catch(() => [])).slice(-3).join(' · ');

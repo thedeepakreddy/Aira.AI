@@ -20,6 +20,8 @@ export interface OpenClawStatus {
   /** Path to the binary, or null when OpenClaw is not installed. */
   binary: string | null;
   model?: string | null;
+  /** How many members the runtime was configured with; 0 when unknown. */
+  fleet?: number;
 }
 
 /** True inside the Tauri shell; false in a browser tab. */
@@ -179,4 +181,34 @@ export interface Schedule {
   agent: string;
   prompt: string;
   enabled: boolean;
+}
+
+/**
+ * Waits for the whole fleet to register.
+ *
+ * Members appear in the runtime's model list one at a time as they come up, so
+ * a single read taken during startup sees whichever ones happen to have landed
+ * — usually just the lead. `expected` is the count the runtime was configured
+ * with; without it (an older shell than this build) wait for the list to stop
+ * growing instead, which arrives at the same answer a beat later.
+ */
+export async function collectFleet(
+  client: { agents: () => Promise<AgentEntry[]> },
+  expected: number,
+  running: () => boolean,
+  /** Overridable so tests need no real clock. */
+  delayMs = 500,
+): Promise<AgentEntry[]> {
+  let found: AgentEntry[] = [];
+  let previous = -1;
+  for (let attempt = 0; attempt < 60 && running(); attempt++) {
+    try {
+      const seen = await client.agents();
+      if (seen.length >= found.length) found = seen;
+      if (expected > 0 ? found.length >= expected : found.length > 0 && seen.length === previous) break;
+      previous = seen.length;
+    } catch { /* startup can take a moment */ }
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  return found;
 }

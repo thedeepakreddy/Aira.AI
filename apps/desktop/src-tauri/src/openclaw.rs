@@ -62,6 +62,13 @@ pub struct Status {
     /// Absolute path to the binary, or None when OpenClaw is not installed.
     pub binary: Option<String>,
     pub model: Option<String>,
+    /// How many members the runtime was configured with.
+    ///
+    /// The panel polls `/v1/models` while the gateway starts, and members
+    /// appear there one at a time as they register. Without a target it could
+    /// only wait for the list to be non-empty, which is satisfied the moment
+    /// the first one lands — so the board settled on a single card.
+    pub fleet: usize,
 }
 
 /// Looks for the openclaw binary on PATH and in the usual install locations.
@@ -173,6 +180,7 @@ pub fn openclaw_status(state: State<'_, OpenClawState>) -> Status {
             token: Some(running.token.clone()),
             binary: find_binary(),
             model: Some(running.model.clone()),
+            fleet: FLEET.len(),
         },
         None => Status {
             running: false,
@@ -180,6 +188,7 @@ pub fn openclaw_status(state: State<'_, OpenClawState>) -> Status {
             token: None,
             binary: find_binary(),
             model: None,
+            fleet: FLEET.len(),
         },
     }
 }
@@ -550,6 +559,7 @@ pub fn openclaw_start(
         token: Some(gateway_token),
         binary: Some(binary),
         model: Some(model),
+        fleet: FLEET.len(),
     })
 }
 
