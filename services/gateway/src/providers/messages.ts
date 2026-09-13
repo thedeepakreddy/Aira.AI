@@ -15,7 +15,12 @@ const PATTERNS: Array<{ match: RegExp; message: string }> = [
     // contradict either. It used to claim "this is on our side" for every
     // billing failure, which sent the one person who could fix it hunting for
     // a bug in Aira.
-    match: /credit balance is too low|insufficient_quota|credit_balance_exhausted|billing|exceeded your current quota/i,
+    // OpenRouter phrases this as "requires more credits, or fewer max_tokens"
+    // and reserves the whole `max_tokens` up front, so a well-funded-looking
+    // balance still fails on a large request. Without its wording here the
+    // error fell through to the generic "try again" — advice that can only
+    // ever be wrong, since no number of retries adds credit.
+    match: /credit balance is too low|insufficient_quota|credit_balance_exhausted|billing|exceeded your current quota|requires more credits|more credits, or fewer/i,
     message: 'This model is unavailable: the provider account has run out of credit or quota.',
   },
   {
