@@ -21,7 +21,16 @@ export type StreamEvent =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'done'; usage: unknown; stopReason: string | null }
-  | { type: 'error'; message: string; retryable: boolean };
+  | { type: 'error'; message: string; retryable: boolean; fault?: Fault; advice?: string };
+
+/**
+ * Whose problem a failure is, mirrored from the gateway.
+ *
+ * `account` means the user's provider account — credit, quota, an expired key.
+ * `provider` means the vendor is busy or down. `gateway` means Aira. Without
+ * the distinction the interface apologises for billing problems it cannot fix.
+ */
+export type Fault = 'account' | 'provider' | 'gateway';
 
 export interface StreamChatOptions {
   messages: ChatMessage[];
@@ -63,12 +72,13 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
       type: 'error',
       message: 'Aira could not connect. Check Connections and try again.',
       retryable: true,
+      fault: 'gateway',
     };
     return;
   }
 
   if (response.status === 401) {
-    yield { type: 'error', message: 'Please sign in to continue.', retryable: false };
+    yield { type: 'error', message: 'Please sign in to continue.', retryable: false, fault: 'account' };
     return;
   }
 
@@ -80,7 +90,10 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
     } catch {
       // Non-JSON error body; the status line is all we have.
     }
-    yield { type: 'error', message, retryable: response.status >= 500 };
+    yield {
+      type: 'error', message, retryable: response.status >= 500,
+      fault: response.status === 402 || response.status === 403 ? 'account' : response.status >= 500 ? 'provider' : 'gateway',
+    };
     return;
   }
 
@@ -97,7 +110,7 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
         // A malformed frame shouldn't kill an otherwise healthy stream.
       }
     }
-    if (!completed && !signal?.aborted) yield { type: 'error', message: 'The response ended early. You can retry this message.', retryable: true };
+    if (!completed && !signal?.aborted) yield { type: 'error', message: 'The response ended early. You can retry this message.', retryable: true, fault: 'provider' };
   } catch (error) {
     if (signal?.aborted) return;
     yield { type: 'error', message: 'The connection dropped mid-response.', retryable: true };

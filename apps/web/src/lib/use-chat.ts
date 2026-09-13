@@ -65,7 +65,12 @@ export function useChat(userId: string | null) {
             if (first) return [...previous, { role: 'assistant', text: event.text }];
             return previous.map((message, index) => index === previous.length - 1 ? { ...message, text: message.text + event.text } : message);
           });
-        } else if (event.type === 'error') setError(event.message);
+        } else if (event.type === 'error') {
+          // The advice says whose problem it is. A billing failure that reads
+          // as an Aira outage sends the only person who can fix it looking in
+          // the wrong place.
+          setError(event.advice ? `${event.message} ${event.advice}` : event.message);
+        }
       }
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Aira could not finish this response. Please retry.');

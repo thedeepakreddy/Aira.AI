@@ -101,7 +101,7 @@ export type StreamEvent =
    */
   | { type: 'tool_call'; call: ToolCall }
   | { type: 'done'; usage: TokenUsage; stopReason: string | null }
-  | { type: 'error'; message: string; retryable: boolean };
+  | { type: 'error'; message: string; retryable: boolean; fault: Fault };
 
 export type ProviderId = string;
 
@@ -113,17 +113,42 @@ export interface ChatProvider {
 }
 
 /** Thrown when a provider fails in a way the caller may want to retry. */
+/**
+ * Whose problem a failure is.
+ *
+ * Without this every failure read as Aira's fault — a "credit balance is too
+ * low" reply was shown as "Aira is temporarily unable to reach this model.
+ * This is on our side", which sends the one person who can fix it looking for
+ * a bug instead of a billing page. The client cannot offer the right next step
+ * unless it knows who has to take it.
+ */
+export type Fault =
+  /** The user's provider account: no credit, expired key, quota exhausted. */
+  | 'account'
+  /** The provider's service: rate limits, overload, a dropped stream. */
+  | 'provider'
+  /** Aira itself: bad translation, missing config, a defect. */
+  | 'gateway';
+
 export class ProviderError extends Error {
   readonly retryable: boolean;
   readonly status?: number;
   /** Original vendor text. Logged for diagnosis; never shown to a user. */
   readonly raw?: string;
+  readonly fault: Fault;
 
-  constructor(message: string, retryable: boolean, status?: number, raw?: string) {
+  constructor(
+    message: string,
+    retryable: boolean,
+    status?: number,
+    raw?: string,
+    fault: Fault = 'gateway',
+  ) {
     super(message);
     this.name = 'ProviderError';
     this.retryable = retryable;
     this.status = status;
     this.raw = raw;
+    this.fault = fault;
   }
 }

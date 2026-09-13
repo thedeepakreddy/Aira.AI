@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AuthedVars } from '../auth.ts';
+import { faultAdvice } from '../providers/fault.ts';
 import { estimateCostUsd, findModel, listModels } from '../providers/registry.ts';
 import {
   ProviderError,
@@ -201,13 +202,13 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
             usage = event.usage;
             stopReason = event.stopReason;
             completed = true;
-          } else if (event.type === 'error') throw new ProviderError(event.message, event.retryable);
+          } else if (event.type === 'error') throw new ProviderError(event.message, event.retryable, undefined, undefined, event.fault);
         }
         if (!completed) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
       } catch (error) {
-        const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false);
+        const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false, undefined, undefined, 'provider');
         await record(empty, null, false, pe.raw ?? pe.message);
-        return c.json({ error: { message: pe.message, type: 'api_error' } }, (pe.status ?? 500) as 500);
+        return c.json({ error: { message: pe.message, type: 'api_error', fault: pe.fault, advice: faultAdvice(pe.fault) } }, (pe.status ?? 500) as 500);
       }
       await record(usage, stopReason, true, null);
       if (useMemory) {
@@ -289,7 +290,7 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
         const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false);
         failure = pe.raw ?? pe.message;
         ok = false;
-        if (!signal.aborted) await sse.writeSSE({ data: JSON.stringify({ error: { message: pe.message, type: 'api_error' } }) });
+        if (!signal.aborted) await sse.writeSSE({ data: JSON.stringify({ error: { message: pe.message, type: 'api_error', fault: pe.fault, advice: faultAdvice(pe.fault) } }) });
       } finally {
         // OpenAI clients wait for this sentinel; without it they hang.
         if (!signal.aborted) await sse.writeSSE({ data: '[DONE]' }).catch(() => {});

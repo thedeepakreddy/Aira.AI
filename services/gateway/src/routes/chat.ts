@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AuthedVars } from '../auth.ts';
+import { faultAdvice } from '../providers/fault.ts';
 import { estimateCostUsd, findModel } from '../providers/registry.ts';
 import {
   ProviderError,
@@ -154,7 +155,15 @@ export function createChatRoute(providers: ChatProvider[]) {
         console.error(`[gateway] ${provider.id}/${decision.model} failed:`, failure);
         if (!signal.aborted) await sse.writeSSE({
           event: 'error',
-          data: JSON.stringify({ type: 'error', message: pe.message, retryable: pe.retryable }),
+          data: JSON.stringify({
+            type: 'error',
+            message: pe.message,
+            retryable: pe.retryable,
+            // Whose problem it is, so the client can offer the right next step
+            // instead of apologising for a billing failure it cannot fix.
+            fault: pe.fault,
+            advice: faultAdvice(pe.fault),
+          }),
         });
       } finally {
         const payload: ModelRequestPayload = {

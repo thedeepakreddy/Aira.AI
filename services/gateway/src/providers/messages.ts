@@ -7,9 +7,16 @@
  */
 const PATTERNS: Array<{ match: RegExp; message: string }> = [
   {
-    // Ours to fix, not the user's — never send them to a billing page.
-    match: /credit balance is too low|insufficient_quota|credit_balance_exhausted|billing/i,
-    message: 'Aira is temporarily unable to reach this model. This is on our side — please try again shortly.',
+    // States the condition without assigning blame, because who is at fault
+    // depends on who owns the provider account. Hosted, that is Aira and the
+    // end user can do nothing; self-hosted, the person reading this owns the
+    // key and needs to know. The `fault` and `advice` fields carry the
+    // direction, so the client decides how much to say — this message must not
+    // contradict either. It used to claim "this is on our side" for every
+    // billing failure, which sent the one person who could fix it hunting for
+    // a bug in Aira.
+    match: /credit balance is too low|insufficient_quota|credit_balance_exhausted|billing|exceeded your current quota/i,
+    message: 'This model is unavailable: the provider account has run out of credit or quota.',
   },
   {
     match: /rate limit|too many requests|429/i,
@@ -21,7 +28,7 @@ const PATTERNS: Array<{ match: RegExp; message: string }> = [
   },
   {
     match: /authentication|invalid.{0,10}api key|unauthorized|401/i,
-    message: 'Aira could not authenticate with the model provider. This is on our side.',
+    message: 'This model is unavailable: the provider rejected the API key.',
   },
   {
     match: /overloaded|capacity|503|502|internal server error/i,

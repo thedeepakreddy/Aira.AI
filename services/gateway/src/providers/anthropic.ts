@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { humanize } from './messages.ts';
+import { classifyFault } from './fault.ts';
 import { findModel } from './registry.ts';
 import {
   ProviderError,
@@ -104,6 +105,7 @@ export class AnthropicProvider implements ChatProvider {
           type: 'error',
           message: 'The model declined this request.',
           retryable: false,
+          fault: 'provider',
         };
         return;
       }
@@ -210,17 +212,17 @@ function safeParse(json: string): unknown {
 function toProviderError(error: unknown): ProviderError {
   if (error instanceof ProviderError) return error;
   if (error instanceof Anthropic.NotFoundError) {
-    return new ProviderError('Model not found or unavailable.', false, 404);
+    return new ProviderError('Model not found or unavailable.', false, 404, undefined, 'gateway');
   }
   if (error instanceof Anthropic.RateLimitError) {
-    return new ProviderError('Rate limited by Anthropic.', true, 429);
+    return new ProviderError('Rate limited by Anthropic.', true, 429, undefined, 'provider');
   }
   if (error instanceof Anthropic.APIConnectionError) {
-    return new ProviderError('Could not reach Anthropic.', true);
+    return new ProviderError('Could not reach Anthropic.', true, undefined, undefined, 'provider');
   }
   if (error instanceof Anthropic.APIError) {
     const status = error.status ?? 500;
-    return new ProviderError(humanize(error.message), status >= 500, status, error.message);
+    return new ProviderError(humanize(error.message), status >= 500, status, error.message, classifyFault(status, error.message));
   }
-  return new ProviderError('The model request could not complete. Please retry.', false, 502, error instanceof Error ? error.message : undefined);
+  return new ProviderError('The model request could not complete. Please retry.', false, 502, error instanceof Error ? error.message : undefined, 'provider');
 }
