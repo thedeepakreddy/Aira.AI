@@ -32,7 +32,6 @@ export default function TaskPanel() {
   const [selected, setSelected] = useState<string[]>([]);
   const [task, setTask] = useState('');
   const [sent, setSent] = useState('');
-  const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState(false);
   const [checking, setChecking] = useState(isDesktop);
   const [error, setError] = useState('');
@@ -41,12 +40,14 @@ export default function TaskPanel() {
   const [model, setModel] = useState('');
   const [expanded, setExpanded] = useState<string[]>([]);
   const client = useRef<OpenClawClient | null>(null);
-  const runs = useRef<AbortController | null>(null);
+  /** One controller per agent, so runs are independent. */
+  const runs = useRef(new Map<string, AbortController>());
   const alive = useRef(true);
   const changing = useRef(false);
   const activeToken = useRef<string | null>(null);
   const connected = Boolean(status?.running && client.current && agents.length);
   const active = agents.filter(a => a.phase === 'working').length;
+  const busy = active > 0;
 
   const [, tick] = useState(0);
   useEffect(() => {
@@ -86,7 +87,8 @@ export default function TaskPanel() {
     return () => {
       cancelled = true;
       alive.current = false;
-      runs.current?.abort();
+      for (const controller of runs.current.values()) controller.abort();
+      runs.current.clear();
       // Panels remain mounted while navigating. Unmount means account change
       // or application exit; credentials and local work must not cross users.
       queueMicrotask(() => { if (isDesktop && !alive.current) void supervisor.stop().catch(() => undefined); });
@@ -147,25 +149,31 @@ export default function TaskPanel() {
     }
   }
 
-  /** Stops the running task and leaves the runtime up, so the next one is instant. */
+  /** Stops every running agent and leaves the runtime up. */
   function stopTask() {
-    runs.current?.abort();
-    runs.current = null;
-    setBusy(false);
-    setAgents(list => list.map(a => a.phase === 'working' ? { ...a, phase: 'stopped', endedAt: Date.now() } : a));
+    for (const controller of runs.current.values()) controller.abort();
+    runs.current.clear();
+    setAgents(list => list.map(a => a.phase === 'working'
+      ? { ...a, phase: 'stopped', endedAt: Date.now() } : a));
+  }
+
+  /** Stops one agent without touching the others. */
+  function stopAgent(id: string) {
+    runs.current.get(id)?.abort();
+    runs.current.delete(id);
+    update(id, { phase: 'stopped', endedAt: Date.now() });
   }
 
   async function stop() {
     if (changing.current) return;
     changing.current = true; setStarting(true); setError('');
     try {
-      runs.current?.abort();
+      for (const controller of runs.current.values()) controller.abort();
+      runs.current.clear();
       await supervisor.stop();
-      runs.current = null;
       client.current = null; activeToken.current = null;
       setStatus(await supervisor.status());
       setAgents(list => list.map(a => a.phase === 'working' ? { ...a, phase: 'stopped', endedAt: Date.now() } : a));
-      setBusy(false);
       setNotice('Agents disconnected. Your output is preserved.');
     } catch (e) { setError(`Could not stop the task runtime: ${messageOf(e)}`); }
     finally { changing.current = false; if (alive.current) setStarting(false); }
@@ -186,69 +194,92 @@ export default function TaskPanel() {
     if (alive.current) setAgents(list => list.map(a => a.agent.id === id ? { ...a, ...patch } : a));
   }, []);
 
-  async function send() {
-    const text = task.trim();
-    if (!text || busy || changing.current) return;
-    changing.current = true; setStarting(true); setError(''); setNotice('');
+  /**
+   * Starts a run on each named agent.
+   *
+   * Runs are tracked per agent rather than one controller for the whole board.
+   * A single shared controller meant a second task could not begin until the
+   * first finished — so giving one agent a follow-up, or handing a result to
+   * another, was impossible while anything was still working. Each agent now
+   * owns its own run and its own Stop.
+   */
+  async function dispatch(text: string, targets: string[], options: { headline?: boolean } = {}) {
+    const body = text.trim();
+    if (!body || !targets.length || changing.current) return;
+    changing.current = true; setError(''); setNotice('');
     try {
       const token = await getAccessToken();
       if (!token) throw new Error('Sign in again to continue.');
-      // A refreshed login token must reach the child process before another run.
-      // Connect on demand. Making this a separate button the user had to find
-      // and press first put a fifteen-second wall in front of the one thing
-      // they came to do; the task they typed is a clear enough instruction to
-      // start the runtime for.
-      let targets = selected;
+      // Connect on demand: the task the user typed is instruction enough to
+      // start a runtime for, and a separate button put a fifteen-second wall
+      // in front of the only thing they came to do.
+      let ids = targets;
       if (!connected || activeToken.current !== token) {
-        setNotice(connected ? '' : 'Starting your agents…');
+        setNotice('Starting your agents…');
         const available = await connect(token);
-        targets = selected.filter(id => available.some(agent => agent.id === id));
-        if (!targets.length) targets = available.slice(0, 1).map(agent => agent.id);
+        ids = targets.filter(id => available.some(agent => agent.id === id));
+        if (!ids.length) ids = available.slice(0, 1).map(agent => agent.id);
         setNotice('');
       }
       const c = client.current;
       if (!c) throw new Error('Connect the task runtime first.');
-      const controller = new AbortController(); runs.current = controller;
-      setSent(text); setTask(''); setBusy(true); setExpanded(targets); setSelected(targets);
-      setAgents(list => list.map(a => targets.includes(a.agent.id) ? { ...blank(a.agent), phase: 'working', startedAt: Date.now() } : blank(a.agent)));
-      changing.current = false; setStarting(false);
-      // One render a frame for all agents together. Appending per token rebuilt
-      // the agent list for every token of every agent at once, so running three
-      // agents cost three times the renders for the same answer.
+      if (options.headline) setSent(body);
+      setExpanded(previous => [...new Set([...previous, ...ids])]);
+      changing.current = false;
+
       const buffer = createStreamBuffer<string>(batch => {
-        if (!alive.current || controller.signal.aborted) return;
+        if (!alive.current) return;
         setAgents(list => list.map(a => {
           const delta = batch.get(a.agent.id);
           return delta ? { ...a, text: a.text + delta } : a;
         }));
       });
-      try {
-      await Promise.all(targets.map(async id => {
+
+      await Promise.all(ids.map(async id => {
+        // A fresh run replaces whatever that agent was doing, and leaves every
+        // other agent alone.
+        runs.current.get(id)?.abort();
+        const controller = new AbortController();
+        runs.current.set(id, controller);
+        setAgents(list => list.map(a => a.agent.id === id
+          ? { ...blank(a.agent), phase: 'working', startedAt: Date.now() } : a));
         try {
-          await c.stream(id, text, delta => {
+          await c.stream(id, body, delta => {
             if (!alive.current || controller.signal.aborted) return;
             buffer.push(id, delta);
           }, controller.signal);
           if (!controller.signal.aborted) update(id, { phase: 'done', endedAt: Date.now() });
         } catch (e) {
-          if (!controller.signal.aborted) update(id, { phase: 'error', error: messageOf(e), endedAt: Date.now() });
+          if (!controller.signal.aborted) {
+            update(id, { phase: 'error', error: messageOf(e), endedAt: Date.now() });
+          }
+        } finally {
+          if (runs.current.get(id) === controller) runs.current.delete(id);
         }
       }));
-      } finally {
-        // Whatever arrived in the final frame still has to be shown.
-        if (alive.current && !controller.signal.aborted) buffer.finish(); else buffer.dispose();
-      }
-      if (runs.current === controller) runs.current = null;
-      if (alive.current) {
-        setBusy(false);
-        const current = await supervisor.status();
-        if (alive.current) {
-          setStatus(current);
-          if (!current.running) { client.current = null; activeToken.current = null; }
-        }
-      }
-    } catch (e) { if (alive.current) setError(messageOf(e)); }
-    finally { changing.current = false; if (alive.current) setStarting(false); }
+      buffer.finish();
+    } catch (e) {
+      if (alive.current) setError(messageOf(e));
+    } finally {
+      changing.current = false;
+      if (alive.current) setStarting(false);
+    }
+  }
+
+  /** The board composer: the task goes to everyone selected. */
+  function send() {
+    void dispatch(task, selected, { headline: true });
+    setTask('');
+  }
+
+  /** Hands one agent's result to another, with an instruction. */
+  function handOff(fromId: string, toId: string, instruction: string) {
+    const source = agents.find(a => a.agent.id === fromId);
+    if (!source?.text) return;
+    void dispatch(
+      `${instruction}\n\nHere is ${source.agent.name}'s work to build on:\n\n${source.text}`,
+      [toId],
+    );
   }
 
   const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : busy ? `${active} working` : connected ? 'Ready' : isDesktop ? 'Offline' : 'Desktop required';
@@ -273,8 +304,23 @@ export default function TaskPanel() {
     onModelChange={setModel}
     modelLocked={connected || busy || starting}
     examples={examples}
-    onRun={() => void send()}
+    onRun={send}
     onStop={() => (busy ? stopTask() : void stop())}
+    onRunAgent={(id, text) => void dispatch(text, [id])}
+    onStopAgent={stopAgent}
+    onHandOff={handOff}
+    onSelectAll={() => setSelected(agents.map(a => a.agent.id))}
+    onToggleOutput={() => setExpanded(previous =>
+      previous.length ? [] : agents.filter(a => a.text).map(a => a.agent.id))}
+    onRefresh={() => void refreshSetup()}
+    onCopy={() => {
+      const body = agents.filter(a => a.text)
+        .map(a => `## ${a.agent.name}\n\n${a.text}`).join('\n\n');
+      void navigator.clipboard.writeText(`# ${sent}\n\n${body}\n`)
+        .then(() => setNotice('Board copied to the clipboard.'))
+        .catch(() => setError('Clipboard access is unavailable. Use Save instead.'));
+    }}
+    helpUrl="https://docs.openclaw.ai/" 
     onNewProject={() => { setSent(''); setAgents(list => list.map(a => blank(a.agent))); setNotice(''); }}
     onSave={() => {
       // The board's own content, saved as one document.

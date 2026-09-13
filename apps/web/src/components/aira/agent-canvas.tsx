@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Activity, BarChart3, Bot, ChevronRight, CircleHelp, Cloud, Download, Eye,
   FileText, Gauge, Layers, Loader2, Minus, Plus, Scale, Send, Share2, Square,
-  Sparkles, Trash2, WifiOff,
+  Sparkles, Trash2, WifiOff, ArrowRight,
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -67,8 +67,24 @@ export interface AgentCanvasProps {
   onModelChange: (id: string) => void;
   modelLocked: boolean;
   examples: string[];
+  /** Selects the whole team for the next task. */
+  onSelectAll: () => void;
+  /** Expands or collapses every agent's output. */
+  onToggleOutput: () => void;
   onRun: () => void;
   onStop: () => void;
+  /** Sends a task to one agent, leaving every other run alone. */
+  onRunAgent: (id: string, text: string) => void;
+  /** Stops one agent without touching the others. */
+  onStopAgent: (id: string) => void;
+  /** Passes one agent's output to another with an instruction. */
+  onHandOff: (fromId: string, toId: string, instruction: string) => void;
+  /** Re-reads the runtime and model catalogue. */
+  onRefresh: () => void;
+  /** Copies the board to the clipboard. */
+  onCopy: () => void;
+  /** Where the runtime setup guide lives. */
+  helpUrl: string;
   onNewProject: () => void;
   onSave: () => void;
   canSave: boolean;
@@ -108,10 +124,13 @@ export default function AgentCanvas(props: AgentCanvasProps) {
   const renderNode = (agent: CanvasAgent) => <AgentNode
     key={agent.id}
     agent={agent}
+    peers={agents.filter(a => a.id !== agent.id)}
     selected={props.selected.includes(agent.id)}
     open={open.includes(agent.id)}
-    busy={props.busy}
     model={props.model}
+    onRun={text => props.onRunAgent(agent.id, text)}
+    onStop={() => props.onStopAgent(agent.id)}
+    onHandOff={(toId, instruction) => props.onHandOff(agent.id, toId, instruction)}
     onToggleOpen={() => setOpen(ids => ids.includes(agent.id) ? ids.filter(i => i !== agent.id) : [...ids, agent.id])}
     onToggleSelect={() => props.onToggleSelect(agent.id)}
     register={node => {
@@ -135,7 +154,8 @@ export default function AgentCanvas(props: AgentCanvasProps) {
       <button className="canvas-top-button solid" onClick={props.onSave} disabled={!props.canSave}>
         <Download />Save
       </button>
-      <button className="canvas-share" onClick={props.onSave} disabled={!props.canSave} aria-label="Export this project">
+      <button className="canvas-share" onClick={props.onCopy} disabled={!props.canSave}
+        title="Copy the whole board" aria-label="Copy the whole board">
         <Share2 />
       </button>
     </div>
@@ -184,13 +204,16 @@ export default function AgentCanvas(props: AgentCanvasProps) {
     </div>
 
     <div className="canvas-zoom">
-      <span title={connected ? 'Agents run on this device' : 'Not connected'}><Cloud /></span>
+      <button onClick={props.onRefresh} disabled={props.busy}
+        title={connected ? 'Agents run on this device — click to re-check' : 'Not connected — click to re-check'}
+        aria-label="Re-check the runtime"><Cloud /></button>
       <span className="canvas-zoom-level">
         <button onClick={() => setZoomManually(Math.max(50, shown - 10))} aria-label="Zoom out">−</button>
         <span>{shown}%</span>
         <button onClick={() => setZoomManually(Math.min(160, shown + 10))} aria-label="Zoom in">+</button>
       </span>
-      <span title={props.footnote}><CircleHelp /></span>
+      <a className="canvas-help" href={props.helpUrl} target="_blank" rel="noreferrer noopener"
+        title="Runtime setup guide" aria-label="Runtime setup guide"><CircleHelp /></a>
     </div>
   </section>;
 }
@@ -225,7 +248,8 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
     </div>
     <div className="task-node-tools">
       <button className="canvas-round" onClick={props.onNewProject} disabled={busy} aria-label="New task"><Plus /></button>
-      <span className="canvas-round quiet" aria-hidden="true"><Sparkles /></span>
+      <button className="canvas-round quiet" onClick={props.onSelectAll}
+        title="Send this task to every agent" aria-label="Select every agent"><Sparkles /></button>
       <label className="canvas-model">
         <select aria-label="Model" value={props.model} disabled={props.modelLocked}
           onChange={e => props.onModelChange(e.target.value)}>
@@ -233,7 +257,8 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
           {props.models.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
       </label>
-      <span className="canvas-round quiet" aria-hidden="true"><Activity /></span>
+      <button className="canvas-round quiet" onClick={props.onToggleOutput}
+        title="Show or hide every agent's output" aria-label="Toggle all output"><Activity /></button>
       {busy || starting
         ? <button className="canvas-round primary" onClick={props.onStop} aria-label="Stop"><Square /></button>
         : <button className="canvas-round primary" onClick={props.onRun}
@@ -242,10 +267,15 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
   </div>;
 }
 
-function AgentNode({ agent, selected, open, busy, model, onToggleOpen, onToggleSelect, register }: {
-  agent: CanvasAgent; selected: boolean; open: boolean; busy: boolean; model: string;
+function AgentNode({ agent, peers, selected, open, model, onRun, onStop, onHandOff, onToggleOpen, onToggleSelect, register }: {
+  agent: CanvasAgent; peers: CanvasAgent[]; selected: boolean; open: boolean; model: string;
+  onRun: (text: string) => void; onStop: () => void;
+  onHandOff: (toId: string, instruction: string) => void;
   onToggleOpen: () => void; onToggleSelect: () => void; register: (node: HTMLElement | null) => void;
 }) {
+  const [prompt, setPrompt] = useState('');
+  const [handing, setHanding] = useState(false);
+  const working = agent.phase === 'working';
   const Glyph = GLYPHS[agent.name] ?? Bot;
   const elapsed = agent.startedAt ? Math.max(0, ((agent.endedAt ?? Date.now()) - agent.startedAt) / 1000) : 0;
   const words = agent.text ? agent.text.trim().split(/\s+/).length : 0;
@@ -276,11 +306,14 @@ function AgentNode({ agent, selected, open, busy, model, onToggleOpen, onToggleS
     <p className="agent-node-role">{agent.role}</p>
 
     <ul className="agent-node-tags">
-      {agent.phase === 'idle' ? <li>
-        <input type="checkbox" checked={selected} disabled={busy} onChange={onToggleSelect}
-          aria-label={`Include ${agent.name} in the next task`} />
-        {selected ? 'Included in the next task' : 'Not included'}
-      </li> : <>
+      {/* Never disabled: switching who gets the next task while another agent
+        * is still working is the point of running them independently. */}
+      <li>
+        <input type="checkbox" checked={selected} onChange={onToggleSelect}
+          aria-label={`Include ${agent.name} in the next board task`} />
+        {selected ? 'Gets the next board task' : 'Not in the next board task'}
+      </li>
+      {agent.phase === 'idle' ? null : <>
         <li><Loader2 className={agent.phase === 'working' ? 'spin' : ''} />{
           agent.phase === 'working' ? `${agent.role}` : PHASE_LABEL[agent.phase]
         }</li>
@@ -314,6 +347,40 @@ function AgentNode({ agent, selected, open, busy, model, onToggleOpen, onToggleS
       </button>
       {open && <div className="agent-node-output"><Markdown>{agent.text}</Markdown></div>}
     </>}
+
+    {/* This agent's own prompt. Runs independently of the board task and of
+      * whatever anyone else is doing, so a follow-up never waits. */}
+    <form className="agent-node-compose" onSubmit={e => { e.preventDefault(); onRun(prompt); setPrompt(''); }}>
+      <input
+        value={prompt}
+        placeholder={working ? `Queue another for ${agent.name}…` : `Ask ${agent.name} directly…`}
+        aria-label={`Task for ${agent.name}`}
+        onChange={e => setPrompt(e.target.value)}
+      />
+      {working
+        ? <button type="button" onClick={onStop} aria-label={`Stop ${agent.name}`}><Square /></button>
+        : <button type="submit" disabled={!prompt.trim()} aria-label={`Send to ${agent.name}`}><Send /></button>}
+    </form>
+
+    {/* Hand this agent's work to another — how a set of tasks gets finished by
+      * more than one of them without the user copying text between cards. */}
+    {agent.text && peers.length > 0 && <div className="agent-node-handoff">
+      {handing ? <>
+        <span>Continue with</span>
+        <select aria-label={`Pass ${agent.name}'s work to another agent`} defaultValue=""
+          onChange={e => {
+            if (!e.target.value) return;
+            onHandOff(e.target.value, `Continue this work. ${prompt.trim() || 'Build on it and take the next step.'}`);
+            setHanding(false); setPrompt('');
+          }}>
+          <option value="" disabled>Choose an agent…</option>
+          {peers.map(peer => <option key={peer.id} value={peer.id}>{peer.name}</option>)}
+        </select>
+        <button type="button" onClick={() => setHanding(false)}>Cancel</button>
+      </> : <button type="button" onClick={() => setHanding(true)}>
+        Continue with another agent<ArrowRight />
+      </button>}
+    </div>}
   </article>;
 }
 
