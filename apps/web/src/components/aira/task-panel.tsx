@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { isDesktop, supervisor, OpenClawClient, type Agent, type OpenClawStatus } from '@/lib/openclaw';
 import { getAccessToken, getSession } from '@/lib/supabase';
 import { BOARD_KEY, loadBoard, saveBoard } from '@/lib/agent-board';
-import { listCatalogue, type ModelSpec } from '@/lib/gateway';
+import { fetchUsage, listCatalogue, type ModelSpec, type UsageSummary } from '@/lib/gateway';
 import { createStreamBuffer } from '@/lib/stream-buffer';
 import AgentCanvas from './agent-canvas';
 
@@ -61,6 +61,7 @@ export default function TaskPanel() {
   /** In-flight connect, shared so concurrent tasks await it rather than race. */
   const connecting = useRef<Promise<Agent[]> | null>(null);
   const [account, setAccount] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const connected = Boolean(status?.running && client.current && agents.length);
   const active = agents.filter(a => a.phase === 'working').length;
   const busy = active > 0;
@@ -101,6 +102,11 @@ export default function TaskPanel() {
       })),
     });
   }, [account, sent, busy, agents]);
+
+  useEffect(() => {
+    if (busy) return;
+    void fetchUsage('task').then(next => { if (alive.current) setUsage(next); }).catch(() => undefined);
+  }, [busy, sent]);
 
   useEffect(() => {
     alive.current = true;
@@ -450,7 +456,8 @@ export default function TaskPanel() {
         .then(() => setNotice('Board copied to the clipboard.'))
         .catch(() => setError('Clipboard access is unavailable. Use Save instead.'));
     }}
-    helpUrl="https://docs.openclaw.ai/" 
+    helpUrl="https://docs.openclaw.ai/"
+    usage={usage} 
     onNewProject={() => {
       // A new project is a clean board: stop what is running, clear the cards,
       // the headline task, the composer and any leftover message. It used to

@@ -641,3 +641,17 @@
 }
 .task-node-answer ul, .task-node-answer ol { padding-left: 20px; margin: 8px 0; }
 .task-node-answer code { font-size: 12.5px; }
+
+/* Recent spend, beside the zoom cluster. */
+.canvas-spend {
+  height: 42px;
+  padding: 0 11px;
+  border-radius: 13px;
+  border: 1px solid var(--canvas-line);
+  background: #0d0705cc;
+  color: var(--canvas-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(20px);
+  cursor: default;
+}

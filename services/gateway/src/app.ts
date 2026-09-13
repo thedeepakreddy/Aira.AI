@@ -10,6 +10,7 @@ import { routeModel } from './routing/router.ts';
 import { createChatRoute } from './routes/chat.ts';
 import { createOpenAIChatRoute, createOpenAIModelsRoute } from './routes/openai.ts';
 import { createMemoryRoutes } from './routes/memory.ts';
+import { createUsageRoutes } from './routes/usage.ts';
 import { createMcpRoutes } from './routes/mcp.ts';
 import { requestLimits } from './limits.ts';
 
@@ -53,6 +54,7 @@ export function createApp(env: Env, providers: ChatProvider[]) {
   secure.get('/openai/task/v1/models', createOpenAIModelsRoute());
   secure.post('/openai/task/v1/chat/completions', createOpenAIChatRoute(providers, 'task'));
   secure.route('/v1/memory', createMemoryRoutes());
+  secure.route('/v1/usage', createUsageRoutes());
   secure.route('/mcp', createMcpRoutes(env.allowedOrigins));
   app.route('/', secure);
   return app;

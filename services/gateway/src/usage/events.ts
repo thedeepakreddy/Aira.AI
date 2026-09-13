@@ -12,6 +12,8 @@
  * never cause a request to go unmetered.
  */
 
+import { recordUsage } from './recent.ts';
+
 export type EventKind = 'model_request' | 'agent_action' | 'session';
 
 export interface AiraEvent {
@@ -52,7 +54,9 @@ const stdoutSink: EventSink = (event) => {
   process.stdout.write(JSON.stringify(event) + '\n');
 };
 
-const sinks: EventSink[] = [stdoutSink];
+// Kept alongside stdout so the gateway can answer "what did that cost?"
+// without anyone having to parse its log.
+const sinks: EventSink[] = [stdoutSink, recordUsage];
 
 export function addEventSink(sink: EventSink): void {
   sinks.push(sink);

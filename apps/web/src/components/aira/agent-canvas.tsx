@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Activity, BarChart3, Bot, ChevronRight, CircleHelp, Cloud, Download, Eye,
   FileText, Gauge, Layers, Loader2, Minus, Plus, Scale, Send, Share2, Square,
-  Sparkles, Trash2, WifiOff, ArrowRight, Crown,
+  Sparkles, Trash2, WifiOff, ArrowRight, Crown, Coins,
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -85,6 +85,10 @@ export interface AgentCanvasProps {
   onCopy: () => void;
   /** Where the runtime setup guide lives. */
   helpUrl: string;
+  /** Recent spend on this surface, or null when it cannot be read. */
+  usage: {
+    complete: boolean; requests: number; failed: number; costUsd: number; windowHours: number;
+  } | null;
   onNewProject: () => void;
   onSave: () => void;
   canSave: boolean;
@@ -207,6 +211,15 @@ export default function AgentCanvas(props: AgentCanvasProps) {
       <button onClick={props.onRefresh} disabled={props.busy}
         title={connected ? 'Agents run on this device — click to re-check' : 'Not connected — click to re-check'}
         aria-label="Re-check the runtime"><Cloud /></button>
+      {/* What the last day of agent work cost. A total with an unpriced model
+        * in it is shown as a floor rather than a figure. */}
+      {props.usage && props.usage.requests > 0 && <span className="canvas-pill canvas-spend"
+        title={`${props.usage.requests} agent request${props.usage.requests === 1 ? '' : 's'} in the last `
+          + `${props.usage.windowHours} hours`
+          + (props.usage.failed ? `, ${props.usage.failed} failed` : '')
+          + (props.usage.complete ? '' : ' — some models have no published price, so this is a floor')}>
+        <Coins />{props.usage.complete ? '' : '≥'}${props.usage.costUsd.toFixed(2)}
+      </span>}
       <span className="canvas-zoom-level">
         <button onClick={() => setZoomManually(Math.max(50, shown - 10))} aria-label="Zoom out">−</button>
         <span>{shown}%</span>

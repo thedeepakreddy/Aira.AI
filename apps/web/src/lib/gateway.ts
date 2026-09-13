@@ -171,3 +171,27 @@ export async function gatewayRequest<T>(path: string, options: RequestInit = {})
   }
   return response.json() as Promise<T>;
 }
+
+/** Recent spend for the signed-in user, as the gateway sees it. */
+export interface UsageSummary {
+  /** False when a model in the window has no verified price, so the total is a floor. */
+  complete: boolean;
+  requests: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  windowHours: number;
+  /** Always false today: the window lives in the gateway's memory. */
+  durable: boolean;
+}
+
+export async function fetchUsage(surface?: string): Promise<UsageSummary | null> {
+  const token = await getAccessToken();
+  if (!token) return null;
+  const url = new URL(`${GATEWAY_URL}/v1/usage`);
+  if (surface) url.searchParams.set('surface', surface);
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) return null;
+  return response.json() as Promise<UsageSummary>;
+}
