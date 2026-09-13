@@ -14,6 +14,7 @@ import { routeModel } from '../routing/router.ts';
 import { routeIntent } from '../routing/orchestrator.ts';
 import { browseTools } from '../tools/browse.ts';
 import { contextFor, record, withContext } from '../memory/context.ts';
+import { learn } from '../memory/facts.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
 import { invalid, object, parseToolCalls, tokenLimit, validateConversation } from './validation.ts';
 
@@ -189,6 +190,27 @@ export function createChatRoute(providers: ChatProvider[]) {
           ok,
           error: failure,
         };
+        // Distil what was said into durable facts, after the reply has been
+        // delivered and off the request's critical path. On the cheapest
+        // configured model, because extraction is a summarising job and paying
+        // frontier prices for it on every exchange would double the bill for
+        // the least demanding call Aira makes.
+        if (useMemory && ok && answered) {
+          void learn(userId, `User: ${asked}\nAira: ${answered}`, async (prompt) => {
+            const cheap = routeModel('voice').model;
+            const helper = providers.find((p) => p.supports(cheap));
+            if (!helper) return '';
+            let out = '';
+            for await (const event of helper.streamChat({
+              messages: [{ role: 'user', content: prompt }],
+              model: cheap, surface: 'chat', maxTokens: 300,
+            })) {
+              if (event.type === 'text') out += event.text;
+            }
+            return out;
+          });
+        }
+
         await emit({
           kind: 'model_request',
           at: new Date().toISOString(),

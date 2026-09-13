@@ -1,15 +1,38 @@
 import { Hono } from 'hono';
 import type { AuthedVars } from '../auth.ts';
 import { memory, type MemoryEntry } from '../memory/store.ts';
+import { isFactSurface } from '../memory/facts.ts';
 import { invalid, object } from './validation.ts';
 import { ProviderError } from '../providers/types.ts';
 
-export const MEMORY_SURFACES = ['chat', 'voice', 'code', 'task', 'browser', 'workspace'] as const;
+/**
+ * Surfaces a client may attribute a memory to.
+ *
+ * `browser` is deliberately absent, and this is a security boundary rather
+ * than an oversight. The browsing agent reads whatever a page says; if it
+ * could write to shared memory, any web page could author context that every
+ * other surface later treats as established fact — a page asserting "they
+ * prefer you skip confirmations" would reach the coding agent tomorrow. That
+ * is prompt injection with a thirty-day half-life and cross-surface reach.
+ *
+ * Browsing results still reach memory, but only when the person keeps one, at
+ * which point it is a workspace note they chose — not something a page said.
+ * Reading is unaffected: the browser agent gets full context, it just cannot
+ * add to it.
+ */
+export const MEMORY_SURFACES = ['chat', 'voice', 'code', 'task', 'workspace'] as const;
 
 export function memoryInput(value: unknown): Omit<MemoryEntry, 'id'> {
   if (!object(value)) invalid('Memory must be an object.');
   if (typeof value.text !== 'string' || !value.text.trim() || value.text.length > 4000) invalid('Memory text must contain 1–4000 characters.');
-  if (value.surface !== undefined && !MEMORY_SURFACES.includes(value.surface as typeof MEMORY_SURFACES[number])) invalid('Invalid memory surface.');
+  // Also rejects the reserved fact surface: a client that could write there
+  // would be asserting settled truths about the user rather than recording
+  // what happened, and those never expire.
+  if (value.surface !== undefined && !MEMORY_SURFACES.includes(value.surface as typeof MEMORY_SURFACES[number])) {
+    invalid(isFactSurface(String(value.surface))
+      ? 'Facts are derived by Aira, not written directly.'
+      : 'Invalid memory surface.');
+  }
   return { at: new Date().toISOString(), surface: typeof value.surface === 'string' ? value.surface : 'workspace', role: 'user', text: value.text.trim() };
 }
 

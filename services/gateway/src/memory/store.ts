@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { FACT_SURFACE } from './facts.ts';
 
 /**
  * Cross-surface memory.
@@ -63,7 +64,11 @@ class EphemeralStore implements MemoryStore {
       user = { entries: [], enabled: true };
       this.byUser.set(userId, user);
     }
-    user.entries = user.entries.filter((entry) => Date.parse(entry.at) > Date.now() - RETENTION_MS);
+    // Facts are exempt: they are what stays true, so ageing them out after a
+    // month would make "durable" mean "durable for four weeks" and quietly
+    // relearn the same things forever.
+    user.entries = user.entries.filter((entry) =>
+      entry.surface === FACT_SURFACE || Date.parse(entry.at) > Date.now() - RETENTION_MS);
     return user;
   }
 
@@ -195,7 +200,8 @@ class SupabaseStore implements MemoryStore {
       .from('aira_memory')
       .select('id, at, surface, role, text')
       .eq('user_id', userId)
-      .gte('at', new Date(Date.now() - RETENTION_MS).toISOString());
+      // Facts never age out; episodes do. `or` keeps both in one round trip.
+      .or(`at.gte.${new Date(Date.now() - RETENTION_MS).toISOString()},surface.eq.${FACT_SURFACE}`);
     if (query) request = request.ilike('text', `%${query.replace(/[\\%_]/g, '\\$&')}%`);
     const { data, error } = await request.order('at', { ascending: false }).limit(limit);
     if (error) {
