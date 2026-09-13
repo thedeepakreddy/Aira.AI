@@ -311,7 +311,16 @@ fn build_config(gateway_url: &str, model: &str, port: u16, workspace: &str) -> s
             // A fleet, not one agent under two names. `ownership: explicit` is
             // what OpenClaw stamps on a multi-agent install.
             "ownership": "explicit",
-            "defaults": { "model": { "primary": qualified }, "workspace": workspace },
+            "defaults": {
+                "model": { "primary": qualified },
+                "workspace": workspace,
+                // With a fleet, ambient work — the memory plugin's reconciliation
+                // job, Custodian consults, unscoped operator reads — has no
+                // obvious owner and fails closed: "Agent-less cron job has no
+                // resolvable owner". Naming one keeps those working without
+                // letting them land on whichever agent happened to be asked.
+                "systemAgent": { "agentId": FLEET[0].id },
+            },
             "entries": fleet_entries(model, std::path::Path::new(workspace)),
         },
         "models": {
