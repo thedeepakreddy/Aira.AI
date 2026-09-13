@@ -11,6 +11,7 @@ import {
   type TokenUsage,
 } from '../providers/types.ts';
 import { routeModel } from '../routing/router.ts';
+import { routeIntent } from '../routing/orchestrator.ts';
 import { browseTools } from '../tools/browse.ts';
 import { contextFor, record, withContext } from '../memory/context.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
@@ -102,8 +103,17 @@ export function createChatRoute(providers: ChatProvider[]) {
     // the stream opens, because once SSE has started there is no way to change
     // the request that was sent.
     const useMemory = c.req.header('x-aira-memory')?.toLowerCase() !== 'off';
-    const system = withContext(parsed.system, useMemory ? await contextFor(userId, parsed.surface) : '');
     const asked = [...parsed.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+
+    // What the turn is about decides how the model is briefed, not which model
+    // answers: the surface router owns that, and changing model mid
+    // conversation would discard the prompt cache. Rules only here — no
+    // classifier call — so this costs nothing per turn.
+    const capability = await routeIntent(asked);
+    const system = withContext(
+      capability.system ? `${capability.system}\n\n${parsed.system ?? ''}`.trim() : parsed.system,
+      useMemory ? await contextFor(userId, parsed.surface) : '',
+    );
 
     return streamSSE(c, async (sse) => {
       // Propagates client disconnect down to the provider so an abandoned
@@ -170,6 +180,8 @@ export function createChatRoute(providers: ChatProvider[]) {
           provider: provider.id,
           model: decision.model,
           routedBy: decision.reason,
+          intent: capability.intent,
+          intentReason: capability.reason,
           ...usage,
           costUsd: estimateCostUsd(decision.model, usage),
           durationMs: Date.now() - startedAt,
