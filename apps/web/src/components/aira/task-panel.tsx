@@ -361,7 +361,16 @@ export default function TaskPanel() {
         .catch(() => setError('Clipboard access is unavailable. Use Save instead.'));
     }}
     helpUrl="https://docs.openclaw.ai/" 
-    onNewProject={() => { setSent(''); setAgents(list => list.map(a => blank(a.agent))); setNotice(''); }}
+    onNewProject={() => {
+      // A new project is a clean board: stop what is running, clear the cards,
+      // the headline task, the composer and any leftover message. It used to
+      // reset only the cards, so the text you had typed survived into the
+      // "new" project and agents kept working on the old one.
+      stopTask();
+      setSent(''); setTask(''); setNotice(''); setError('');
+      setExpanded([]);
+      setAgents(list => list.map(a => blank(a.agent)));
+    }}
     onSave={() => {
       // The board's own content, saved as one document.
       const body = agents.filter(a => a.text).map(a => `## ${a.agent.name}\n\n${a.text}`).join('\n\n');

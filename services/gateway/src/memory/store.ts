@@ -103,29 +103,77 @@ class DisabledStore implements MemoryStore {
   async forget(): Promise<boolean> { return false; }
 }
 
+/**
+ * Thrown when Supabase answers but the schema is not there.
+ *
+ * PostgREST reports a missing table as PGRST205 with "Could not find the table
+ * ... in the schema cache" — a deployment that skipped the migrations, not a
+ * transient fault, so retrying it forever is pointless.
+ */
+function isMissingSchema(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === 'PGRST205'
+    || /could not find the table|schema cache|does not exist/i.test(error.message ?? '');
+}
+
 class SupabaseStore implements MemoryStore {
-  readonly kind = 'supabase' as const;
+  private degraded = false;
+  /** Reports what it is actually doing, not what it was configured to do. */
+  get kind(): 'supabase' | 'ephemeral' { return this.degraded ? 'ephemeral' : 'supabase'; }
+  /** Takes over when the schema is missing, so memory keeps working. */
+  private readonly fallback = new EphemeralStore();
   private readonly client: SupabaseClient;
 
-  constructor(url: string, serviceKey: string) {
-    this.client = createClient(url, serviceKey, {
+  /** `client` is a test seam: production always builds its own. */
+  constructor(url: string, serviceKey: string, client?: SupabaseClient) {
+    this.client = client ?? createClient(url, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5000) }) },
     });
   }
 
+  /**
+   * Switches to the local store the first time the schema turns out to be
+   * missing.
+   *
+   * Without this the gateway kept reporting `storage: supabase` while every
+   * read and write failed — 168 silent failures in one session — so the
+   * interface showed shared memory as on and working while nothing was being
+   * remembered at all. Degrading loudly once beats failing quietly forever.
+   */
+  private degrade(error: { code?: string; message?: string } | null): boolean {
+    if (!isMissingSchema(error)) return false;
+    if (!this.degraded) {
+      this.degraded = true;
+      console.error(
+        '[memory] Supabase schema is missing — falling back to local, ephemeral memory. '
+          + 'Apply services/gateway/migrations to store memory durably.',
+      );
+    }
+    return true;
+  }
+
   async enabled(userId: string): Promise<boolean> {
+    if (this.degraded) return this.fallback.enabled(userId);
     const { data, error } = await this.client.from('aira_memory_preferences').select('enabled').eq('user_id', userId).maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (this.degrade(error)) return this.fallback.enabled(userId);
+      throw new Error(error.message);
+    }
     return data?.enabled ?? true;
   }
 
   async setEnabled(userId: string, enabled: boolean): Promise<void> {
+    if (this.degraded) return this.fallback.setEnabled(userId, enabled);
     const { error } = await this.client.from('aira_memory_preferences').upsert({ user_id: userId, enabled, updated_at: new Date().toISOString() });
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (this.degrade(error)) return this.fallback.setEnabled(userId, enabled);
+      throw new Error(error.message);
+    }
   }
 
   async remember(userId: string, entry: MemoryEntry): Promise<MemoryEntry> {
+    if (this.degraded) return this.fallback.remember(userId, entry);
     if (!await this.enabled(userId)) throw new Error('Shared memory is paused for this user.');
     const { data, error } = await this.client.from('aira_memory').insert({
       user_id: userId,
@@ -134,11 +182,15 @@ class SupabaseStore implements MemoryStore {
       text: entry.text,
       at: entry.at,
     }).select('id, at, surface, role, text').single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (this.degrade(error)) return this.fallback.remember(userId, entry);
+      throw new Error(error.message);
+    }
     return { ...data, id: String(data.id) } as MemoryEntry;
   }
 
   async recall(userId: string, limit: number, query?: string): Promise<MemoryEntry[]> {
+    if (this.degraded) return this.fallback.recall(userId, limit, query);
     let request = this.client
       .from('aira_memory')
       .select('id, at, surface, role, text')
@@ -146,17 +198,24 @@ class SupabaseStore implements MemoryStore {
       .gte('at', new Date(Date.now() - RETENTION_MS).toISOString());
     if (query) request = request.ilike('text', `%${query.replace(/[\\%_]/g, '\\$&')}%`);
     const { data, error } = await request.order('at', { ascending: false }).limit(limit);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (this.degrade(error)) return this.fallback.recall(userId, limit, query);
+      throw new Error(error.message);
+    }
     // Newest-first from the query, oldest-first for reading.
     return (data ?? []).reverse().map((entry) => ({ ...entry, id: String(entry.id) })) as MemoryEntry[];
   }
 
   async forget(userId: string, id?: string): Promise<boolean> {
+    if (this.degraded) return this.fallback.forget(userId, id);
     if (id && !/^\d+$/.test(id)) return false;
     let request = this.client.from('aira_memory').delete().eq('user_id', userId);
     if (id) request = request.eq('id', id);
     const { data, error } = await request.select('id');
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (this.degrade(error)) return this.fallback.forget(userId, id);
+      throw new Error(error.message);
+    }
     return !id || !!data?.length;
   }
 }
@@ -167,13 +226,15 @@ export function initMemory(options: {
   supabaseUrl?: string;
   supabaseServiceKey?: string;
   enabled: boolean;
+  /** Test seam. Supplying a client skips the real one. */
+  client?: SupabaseClient;
 }): MemoryStore {
   if (!options.enabled) {
     store = new DisabledStore();
     return store;
   }
-  store = options.supabaseUrl && options.supabaseServiceKey
-    ? new SupabaseStore(options.supabaseUrl, options.supabaseServiceKey)
+  store = options.client || (options.supabaseUrl && options.supabaseServiceKey)
+    ? new SupabaseStore(options.supabaseUrl ?? '', options.supabaseServiceKey ?? '', options.client)
     : new EphemeralStore();
   return store;
 }
