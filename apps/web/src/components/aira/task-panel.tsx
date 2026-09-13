@@ -45,6 +45,8 @@ export default function TaskPanel() {
   const alive = useRef(true);
   const changing = useRef(false);
   const activeToken = useRef<string | null>(null);
+  /** In-flight connect, shared so concurrent tasks await it rather than race. */
+  const connecting = useRef<Promise<Agent[]> | null>(null);
   const connected = Boolean(status?.running && client.current && agents.length);
   const active = agents.filter(a => a.phase === 'working').length;
   const busy = active > 0;
@@ -203,29 +205,58 @@ export default function TaskPanel() {
    * another, was impossible while anything was still working. Each agent now
    * owns its own run and its own Stop.
    */
-  async function dispatch(text: string, targets: string[], options: { headline?: boolean } = {}) {
+  /**
+   * Starts a run on each named agent.
+   *
+   * Runs are tracked per agent rather than one controller for the whole board,
+   * so a follow-up to one agent — or handing a result to another — never waits
+   * on anything else.
+   */
+  async function dispatch(
+    text: string,
+    targets: string[],
+    options: { headline?: boolean; reset?: boolean } = {},
+  ) {
     const body = text.trim();
-    if (!body || !targets.length || changing.current) return;
-    changing.current = true; setError(''); setNotice('');
+    if (!body) return;
+    // Not `!targets.length`: before the first connect there are no agents to
+    // have selected, so that guard returned here every time — the composer
+    // cleared itself and nothing happened, which is what "the buttons do
+    // nothing" looked like. An empty selection is only meaningless once agents
+    // exist to choose from; otherwise connecting is what produces them.
+    if (!targets.length && connected) {
+      setError('Choose at least one agent for this task.');
+      return;
+    }
+    setError(''); setNotice('');
     try {
       const token = await getAccessToken();
       if (!token) throw new Error('Sign in again to continue.');
-      // Connect on demand: the task the user typed is instruction enough to
-      // start a runtime for, and a separate button put a fifteen-second wall
-      // in front of the only thing they came to do.
+
       let ids = targets;
       if (!connected || activeToken.current !== token) {
+        // A second task pressed during the fifteen-second connect used to be
+        // dropped on the floor by a `changing` guard — the button did nothing
+        // and said nothing. Concurrent callers now await the same connect
+        // instead of racing it or being discarded.
+        setStarting(true);
         setNotice('Starting your agents…');
-        const available = await connect(token);
+        connecting.current ??= connect(token).finally(() => { connecting.current = null; });
+        const available = await connecting.current;
         ids = targets.filter(id => available.some(agent => agent.id === id));
+        // Nothing was selected because nothing existed to select. Default to
+        // the first agent rather than the whole team: five agents on a first
+        // task is five bills for one question.
         if (!ids.length) ids = available.slice(0, 1).map(agent => agent.id);
+        setSelected(ids);
         setNotice('');
+        if (alive.current) setStarting(false);
       }
+
       const c = client.current;
       if (!c) throw new Error('Connect the task runtime first.');
       if (options.headline) setSent(body);
       setExpanded(previous => [...new Set([...previous, ...ids])]);
-      changing.current = false;
 
       const buffer = createStreamBuffer<string>(batch => {
         if (!alive.current) return;
@@ -241,15 +272,23 @@ export default function TaskPanel() {
         runs.current.get(id)?.abort();
         const controller = new AbortController();
         runs.current.set(id, controller);
-        setAgents(list => list.map(a => a.agent.id === id
-          ? { ...blank(a.agent), phase: 'working', startedAt: Date.now() } : a));
+        setAgents(list => list.map(a => {
+          if (a.agent.id !== id) return a;
+          // A new board task starts the card clean. A follow-up keeps what the
+          // agent already wrote and adds to it — wiping it would throw away the
+          // work the follow-up is asking it to build on.
+          const kept = options.reset || !a.text ? '' : `${a.text}\n\n---\n\n`;
+          return { ...blank(a.agent), text: kept, phase: 'working', startedAt: Date.now() };
+        }));
         try {
           await c.stream(id, body, delta => {
             if (!alive.current || controller.signal.aborted) return;
             buffer.push(id, delta);
           }, controller.signal);
+          buffer.finish();
           if (!controller.signal.aborted) update(id, { phase: 'done', endedAt: Date.now() });
         } catch (e) {
+          buffer.finish();
           if (!controller.signal.aborted) {
             update(id, { phase: 'error', error: messageOf(e), endedAt: Date.now() });
           }
@@ -257,19 +296,20 @@ export default function TaskPanel() {
           if (runs.current.get(id) === controller) runs.current.delete(id);
         }
       }));
-      buffer.finish();
     } catch (e) {
       if (alive.current) setError(messageOf(e));
     } finally {
-      changing.current = false;
       if (alive.current) setStarting(false);
     }
   }
 
   /** The board composer: the task goes to everyone selected. */
   function send() {
-    void dispatch(task, selected, { headline: true });
+    const text = task;
     setTask('');
+    // Put it back if it could not be sent, rather than losing what they wrote.
+    void dispatch(text, selected, { headline: true, reset: true })
+      .catch(() => { if (alive.current) setTask(current => current || text); });
   }
 
   /** Hands one agent's result to another, with an instruction. */

@@ -259,10 +259,16 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
       </label>
       <button className="canvas-round quiet" onClick={props.onToggleOutput}
         title="Show or hide every agent's output" aria-label="Toggle all output"><Activity /></button>
-      {busy || starting
-        ? <button className="canvas-round primary" onClick={props.onStop} aria-label="Stop"><Square /></button>
-        : <button className="canvas-round primary" onClick={props.onRun}
-            disabled={!props.task.trim() || (connected && !props.selected.length)} aria-label="Run task"><Send /></button>}
+      {/* The primary button follows what can actually be done. Showing Stop
+        * whenever any agent was working meant a new board task could not be
+        * started until everything finished — the opposite of running them
+        * independently. With text in the box it always offers Run. */}
+      {props.task.trim()
+        ? <button className="canvas-round primary" onClick={props.onRun}
+            disabled={connected && !props.selected.length} aria-label="Run task"><Send /></button>
+        : busy || starting
+          ? <button className="canvas-round primary" onClick={props.onStop} aria-label="Stop everything"><Square /></button>
+          : <button className="canvas-round primary" disabled aria-label="Run task"><Send /></button>}
     </div>
   </div>;
 }
