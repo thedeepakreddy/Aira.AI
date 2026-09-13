@@ -3,6 +3,7 @@ import { Activity, ArrowUpRight, Bot, Check, ChevronDown, Clock3, Copy, Cpu, Loa
 import { isDesktop, supervisor, OpenClawClient, type Agent, type OpenClawStatus } from '@/lib/openclaw';
 import { getAccessToken } from '@/lib/supabase';
 import { listCatalogue, type ModelSpec } from '@/lib/gateway';
+import { createStreamBuffer } from '@/lib/stream-buffer';
 import Markdown from './markdown';
 import '@/styles/agent-workbench.css';
 
@@ -205,17 +206,32 @@ export default function TaskPanel() {
       setSent(text); setTask(''); setBusy(true); setExpanded(targets); setSelected(targets);
       setAgents(list => list.map(a => targets.includes(a.agent.id) ? { ...blank(a.agent), phase: 'working', startedAt: Date.now() } : blank(a.agent)));
       changing.current = false; setStarting(false);
+      // One render a frame for all agents together. Appending per token rebuilt
+      // the agent list for every token of every agent at once, so running three
+      // agents cost three times the renders for the same answer.
+      const buffer = createStreamBuffer<string>(batch => {
+        if (!alive.current || controller.signal.aborted) return;
+        setAgents(list => list.map(a => {
+          const delta = batch.get(a.agent.id);
+          return delta ? { ...a, text: a.text + delta } : a;
+        }));
+      });
+      try {
       await Promise.all(targets.map(async id => {
         try {
           await c.stream(id, text, delta => {
             if (!alive.current || controller.signal.aborted) return;
-            setAgents(list => list.map(a => a.agent.id === id ? { ...a, text: a.text + delta } : a));
+            buffer.push(id, delta);
           }, controller.signal);
           if (!controller.signal.aborted) update(id, { phase: 'done', endedAt: Date.now() });
         } catch (e) {
           if (!controller.signal.aborted) update(id, { phase: 'error', error: messageOf(e), endedAt: Date.now() });
         }
       }));
+      } finally {
+        // Whatever arrived in the final frame still has to be shown.
+        if (alive.current && !controller.signal.aborted) buffer.finish(); else buffer.dispose();
+      }
       if (runs.current === controller) runs.current = null;
       if (alive.current) {
         setBusy(false);

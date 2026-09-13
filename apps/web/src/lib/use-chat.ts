@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createStreamBuffer } from './stream-buffer.ts';
 import { streamChat } from './gateway';
 import { messageContent, type TextAttachment } from './attachments';
 import { HISTORY_KEY, historyKey, parseHistory, saveConversation, type Conversation, type Message } from './workspace-state';
@@ -50,8 +51,20 @@ export function useChat(userId: string | null) {
     const controller = new AbortController();
     request.current = controller;
     setBusy(true); setError(''); setAnsweredBy('');
-    let started = false;
     try {
+      // Deltas are batched to a frame. Appending per token rebuilt the whole
+      // message list sixty times a second, and the cost grew with the length
+      // of the answer.
+      const buffer = createStreamBuffer<'reply'>(batch => {
+        const delta = batch.get('reply');
+        if (!delta || controller.signal.aborted || request.current !== controller) return;
+        setMessages(previous => {
+          const last = previous[previous.length - 1];
+          if (!last || last.role !== 'assistant') return [...previous, { role: 'assistant', text: delta }];
+          return previous.map((message, index) => index === previous.length - 1 ? { ...message, text: message.text + delta } : message);
+        });
+      });
+      try {
       for await (const event of streamChat({
         messages: history.map(message => ({ role: message.role, content: messageContent(message) })),
         surface: 'chat', model: model || undefined, conversationId: id, signal: controller.signal,
@@ -59,18 +72,17 @@ export function useChat(userId: string | null) {
         if (controller.signal.aborted || request.current !== controller) return;
         if (event.type === 'start') setAnsweredBy(event.model);
         if (event.type === 'text') {
-          const first = !started;
-          started = true;
-          setMessages(previous => {
-            if (first) return [...previous, { role: 'assistant', text: event.text }];
-            return previous.map((message, index) => index === previous.length - 1 ? { ...message, text: message.text + event.text } : message);
-          });
+          buffer.push('reply', event.text);
         } else if (event.type === 'error') {
           // The advice says whose problem it is. A billing failure that reads
           // as an Aira outage sends the only person who can fix it looking in
           // the wrong place.
           setError(event.advice ? `${event.message} ${event.advice}` : event.message);
         }
+      }
+      } finally {
+        // The last tokens are still in the buffer when the stream ends.
+        if (!controller.signal.aborted) buffer.finish(); else buffer.dispose();
       }
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Aira could not finish this response. Please retry.');
