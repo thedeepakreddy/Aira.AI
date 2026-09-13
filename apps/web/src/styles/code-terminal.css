@@ -1,0 +1,399 @@
+/*
+ * The coding surface, shaped like the terminal agents it drives.
+ *
+ * The previous design was a product page: a serif hero, a sidebar of cards, a
+ * boxed transcript in the remaining third. That reads well in a screenshot and
+ * badly in use — the thing a coding agent produces is a long, dense log, and
+ * every pixel spent on chrome is a line of that log you cannot see.
+ *
+ * So this follows the shape Claude Code and Codex settled on: one monospace
+ * column, full bleed, prefix characters instead of labelled boxes, and setup
+ * that appears only before you are connected. The palette stays Aira's amber —
+ * the reference UIs are blue, and the colour is the part that should not match.
+ */
+
+.code-term {
+  --ct-bg: #0a0604;
+  --ct-ink: #f2e6dc;
+  --ct-dim: #9a8375;
+  --ct-faint: #6b574c;
+  --ct-line: #ffffff14;
+  --ct-accent: #ff9a3d;
+  --ct-accent-soft: #ffb877;
+  --ct-ok: #6fd08c;
+  --ct-bad: #ff7a5c;
+  --ct-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  gap: 0;
+  background: var(--ct-bg);
+  border: 1px solid var(--ct-line);
+  border-radius: 14px;
+  overflow: hidden;
+  font-family: var(--ct-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ct-ink);
+}
+
+/* ── status strip ─────────────────────────────────────────────────────────── */
+
+.ct-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px;
+  height: 36px;
+  border-bottom: 1px solid var(--ct-line);
+  background: #ffffff05;
+  font-size: 11.5px;
+  color: var(--ct-dim);
+  white-space: nowrap;
+}
+.ct-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ct-faint);
+  flex: none;
+}
+.ct-dot.live { background: var(--ct-ok); box-shadow: 0 0 8px #6fd08c80; }
+.ct-dot.busy { background: var(--ct-accent); animation: ct-pulse 1.4s ease-in-out infinite; }
+.ct-dot.bad { background: var(--ct-bad); }
+@keyframes ct-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+
+.ct-name { color: var(--ct-accent-soft); }
+/* The path is the one thing here that can be long, so it is the one that gives. */
+.ct-path { color: var(--ct-dim); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; direction: rtl; text-align: left; }
+.ct-sep { color: var(--ct-faint); flex: none; }
+.ct-bar-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
+
+.ct-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--ct-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.ct-btn:hover:not(:disabled) { background: #ffffff0f; color: var(--ct-ink); }
+.ct-btn:disabled { opacity: .35; cursor: not-allowed; }
+.ct-btn svg { width: 13px; height: 13px; flex: none; }
+.ct-btn.on { border-color: #ffa85c4d; color: var(--ct-accent-soft); }
+.ct-btn.danger:hover:not(:disabled) { background: #ff7a5c1f; color: #ffb4a0; }
+
+/* ── transcript ───────────────────────────────────────────────────────────── */
+
+.ct-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 14px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #5c4438 transparent;
+}
+.ct-log > * + * { margin-top: 2px; }
+
+/* Prefix rows: a marker column, then content that wraps under itself. */
+.ct-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+.ct-mark { color: var(--ct-faint); text-align: center; user-select: none; }
+
+.ct-you { margin-top: 14px; }
+.ct-you .ct-mark { color: var(--ct-accent); }
+.ct-you .ct-text { color: var(--ct-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.ct-agent { margin-top: 8px; }
+.ct-agent .ct-mark { color: var(--ct-accent-soft); }
+/* Markdown inside the log keeps the monospace column; only code gets a panel. */
+.ct-agent .ct-text { color: #e7d8cc; overflow-wrap: anywhere; }
+.ct-agent .ct-text > :first-child { margin-top: 0; }
+.ct-agent .ct-text > :last-child { margin-bottom: 0; }
+.ct-agent .ct-text p { margin: 0 0 8px; }
+.ct-agent .ct-text ul, .ct-agent .ct-text ol { margin: 0 0 8px; padding-left: 20px; }
+.ct-agent .ct-text h1, .ct-agent .ct-text h2, .ct-agent .ct-text h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ct-accent-soft);
+  margin: 12px 0 6px;
+  letter-spacing: 0;
+}
+.ct-agent .ct-text pre {
+  border: 1px solid var(--ct-line);
+  border-radius: 8px;
+  background: #ffffff08;
+  padding: 10px 12px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.ct-agent .ct-text :not(pre) > code {
+  background: #ffffff0f;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  color: var(--ct-accent-soft);
+}
+
+/* Tool lines: one row each, the way a terminal agent reports its work. */
+.ct-tool { margin-top: 2px; }
+.ct-tool .ct-mark { color: var(--ct-faint); }
+.ct-tool.active .ct-mark { color: var(--ct-accent); }
+.ct-tool.done .ct-mark { color: var(--ct-ok); }
+.ct-tool.failed .ct-mark { color: var(--ct-bad); }
+.ct-tool-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ct-verb { color: var(--ct-dim); flex: none; }
+.ct-tool.active .ct-verb { color: var(--ct-accent-soft); }
+.ct-target {
+  color: var(--ct-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.ct-note { margin-top: 2px; }
+.ct-note .ct-mark, .ct-note .ct-text { color: var(--ct-faint); }
+
+.ct-working { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--ct-dim); }
+.ct-working svg { width: 13px; height: 13px; }
+
+.ct-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 10px 0;
+  padding: 9px 11px;
+  border: 1px solid #ff7a5c3d;
+  border-radius: 8px;
+  background: #ff7a5c12;
+  color: #ffb9a7;
+  font-size: 12px;
+}
+.ct-alert svg { width: 14px; height: 14px; flex: none; margin-top: 2px; }
+
+/* ── approvals and questions ──────────────────────────────────────────────── */
+
+/*
+ * These interrupt the log, so they are the one place that gets a border. An
+ * approval the eye can skim past is an approval that gets clicked by reflex.
+ */
+.ct-ask {
+  margin: 10px 0 10px 24px;
+  border: 1px solid #ffa85c40;
+  border-left: 2px solid var(--ct-accent);
+  border-radius: 8px;
+  background: #ff9a3d0d;
+  padding: 11px 13px;
+}
+.ct-ask.resolved { border-color: var(--ct-line); border-left-color: var(--ct-faint); background: #ffffff05; }
+.ct-ask-head { display: flex; align-items: center; gap: 8px; color: var(--ct-accent-soft); margin-bottom: 8px; }
+.ct-ask.resolved .ct-ask-head { color: var(--ct-dim); }
+.ct-ask-head svg { width: 14px; height: 14px; flex: none; }
+.ct-ask ul { margin: 0 0 10px; padding-left: 18px; color: var(--ct-dim); font-size: 12px; }
+.ct-ask li { overflow-wrap: anywhere; }
+.ct-ask-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ct-ask-actions button {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid #ffa85c4d;
+  border-radius: 7px;
+  background: #ff9a3d1a;
+  color: var(--ct-accent-soft);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.ct-ask-actions button:hover:not(:disabled) { background: #ff9a3d2e; }
+.ct-ask-actions button.deny { border-color: #ff7a5c40; background: #ff7a5c14; color: #ffab98; }
+.ct-ask-actions button.deny:hover:not(:disabled) { background: #ff7a5c26; }
+.ct-ask-actions button:disabled { opacity: .4; cursor: not-allowed; }
+.ct-ask-done { color: var(--ct-dim); font-size: 12px; }
+
+.ct-q-item { margin-bottom: 12px; }
+.ct-q-head { color: var(--ct-accent-soft); font-size: 11px; letter-spacing: .5px; }
+.ct-q-item p { margin: 3px 0 8px; color: var(--ct-ink); }
+.ct-q-options { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.ct-q-options button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: 7px;
+  background: #ffffff06;
+  color: var(--ct-ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ct-q-options button:hover:not(:disabled) { background: #ffffff0f; }
+.ct-q-options button.on { border-color: var(--ct-accent); background: #ff9a3d1f; }
+.ct-q-options button:disabled { opacity: .4; cursor: not-allowed; }
+.ct-q-options small { display: block; color: var(--ct-faint); font-size: 11px; margin-top: 2px; }
+.ct-q-custom {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: 7px;
+  background: #ffffff06;
+  color: var(--ct-ink);
+  font: inherit;
+  font-size: 12px;
+}
+.ct-q-custom:focus-visible { outline: 2px solid var(--ct-accent); outline-offset: 2px; }
+.ct-q-answer { color: var(--ct-dim); font-size: 12px; }
+
+/* ── composer ─────────────────────────────────────────────────────────────── */
+
+/*
+ * A bordered box inset from the edges, not a strip welded to the bottom. This
+ * is the shape the reference CLIs use, and it is doing work: the border is what
+ * separates "what the agent said" from "what you are about to say" in a view
+ * where both are the same typeface at the same size.
+ */
+.ct-composer {
+  flex: none;
+  margin: 0 12px 10px;
+  border: 1px solid #ffa85c33;
+  border-radius: 10px;
+  background: #ffffff07;
+  transition: border-color .18s;
+}
+.ct-composer:focus-within { border-color: #ffa85c73; }
+.ct-input-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; padding: 9px 11px 2px; }
+.ct-input-row > .ct-mark { color: var(--ct-accent); line-height: 1.65; }
+.ct-composer textarea {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--ct-ink);
+  font: inherit;
+  resize: none;
+  min-height: 42px;
+  max-height: 180px;
+  padding: 0;
+}
+.ct-composer textarea::placeholder { color: var(--ct-faint); }
+.ct-composer textarea:focus { outline: none; }
+.ct-composer textarea:disabled { opacity: .5; }
+
+.ct-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 11px 8px 35px;
+  font-size: 11px;
+  color: var(--ct-faint);
+}
+.ct-foot-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.ct-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 27px;
+  padding: 0 12px;
+  border: 1px solid #ffa85c59;
+  border-radius: 7px;
+  background: linear-gradient(115deg, #f99729, #cf570d);
+  color: #1d0a02;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ct-send:disabled { opacity: .35; cursor: not-allowed; }
+.ct-send svg { width: 13px; height: 13px; }
+.ct-send.stop { background: none; border-color: #ff7a5c4d; color: #ffab98; font-weight: 400; }
+
+/* ── setup, shown only before connecting ──────────────────────────────────── */
+
+/*
+ * Claude Code has no setup screen because its configuration is flags and files.
+ * Aira's is clicked, so it needs somewhere to live — but only until it is done,
+ * after which this is replaced by the log it was blocking.
+ */
+.ct-setup { max-width: 470px; margin: 26px auto; padding: 0 14px; }
+.ct-setup-title { color: var(--ct-accent-soft); margin-bottom: 4px; }
+.ct-setup-sub { color: var(--ct-dim); margin-bottom: 18px; }
+.ct-field { margin-bottom: 12px; }
+.ct-field-label { display: flex; align-items: center; justify-content: space-between; color: var(--ct-faint); font-size: 11px; margin-bottom: 5px; }
+.ct-select, .ct-folder {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--ct-line);
+  border-radius: 8px;
+  background: #ffffff08;
+  color: var(--ct-ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.ct-select:disabled, .ct-folder:disabled { opacity: .5; cursor: not-allowed; }
+.ct-folder { display: flex; align-items: center; gap: 9px; }
+.ct-folder svg { width: 14px; height: 14px; color: var(--ct-dim); flex: none; }
+.ct-folder small { display: block; color: var(--ct-faint); font-size: 11px; overflow-wrap: anywhere; }
+.ct-connect {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  margin-top: 16px;
+  border: 1px solid #ffa85c59;
+  border-radius: 8px;
+  background: linear-gradient(115deg, #f99729, #cf570d);
+  color: #1d0a02;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ct-connect:disabled { opacity: .4; cursor: not-allowed; }
+.ct-connect svg { width: 14px; height: 14px; }
+.ct-setup-note { display: flex; gap: 8px; margin-top: 16px; color: var(--ct-faint); font-size: 11px; line-height: 1.6; }
+.ct-setup-note svg { width: 13px; height: 13px; flex: none; margin-top: 3px; }
+.ct-setup code { display: block; margin-top: 9px; padding: 8px 10px; border-radius: 7px; background: #ffffff08; color: var(--ct-accent-soft); font-size: 11.5px; overflow-wrap: anywhere; }
+.ct-setup a { color: var(--ct-accent-soft); font-size: 11px; }
+
+/* ── first-run hints inside an empty, connected log ───────────────────────── */
+
+.ct-hints { color: var(--ct-faint); }
+.ct-hints button {
+  display: block;
+  border: 0;
+  background: none;
+  color: var(--ct-dim);
+  font: inherit;
+  text-align: left;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.ct-hints button:hover { color: var(--ct-accent-soft); }
+
+@media (max-width: 640px) {
+  .code-term { font-size: 12px; }
+  .ct-bar { gap: 7px; padding: 0 9px; }
+  .ct-path { display: none; }
+}

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronRight, Code2, FileEdit, FileText, Folder, FolderOpen, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Search, Send, ShieldAlert, ShieldCheck, Square, SquareTerminal, Terminal, WifiOff } from 'lucide-react';
+import { FolderOpen, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
 import { isDesktop, supervisor, pickDirectory, OpenCodeClient, toolTarget, type AgentEvent, type OpenCodeStatus, type PermissionRequest, type QuestionRequest, type ToolActivity } from '@/lib/opencode';
 import { getAccessToken } from '@/lib/supabase';
 import { listCatalogue, type ModelSpec } from '@/lib/gateway';
 import Markdown from './markdown';
 import '@/styles/agent-workbench.css';
+import '@/styles/code-terminal.css';
 
 type Reply = 'once' | 'always' | 'reject';
 type Entry =
@@ -347,68 +348,113 @@ export default function AgentPanel() {
   const missing = Boolean(status && !status.binary);
   const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : !isDesktop ? 'Desktop required' : !connected ? 'Offline' : streamState !== 'live' ? 'Reconnecting…' : waiting ? 'Needs your input' : busy ? 'Working' : 'Ready';
 
-  return <section className="cli-page agent-page agent-workbench screen-content" aria-label="Coding workspace">
-    <div className="cli-heading">
-      <span className="eyebrow">AIRA CODE</span>
-      <div className="agent-title-row"><h1>From thought to shipped.</h1><span className={`workbench-status ${ready ? 'connected' : ''}`} role="status"><span />{stateLabel}</span></div>
-      <p>Your project, a capable coding agent, and a clear view of every step.</p>
-    </div>
+  const folderName = workdir ? workdir.split('/').filter(Boolean).at(-1) : null;
+  const modelLabel = models.find(item => item.id === model)?.label ?? model ?? 'no model';
+  const dot = !isDesktop || missing ? 'bad' : busy ? 'busy' : ready ? 'live' : '';
 
-    <div className="task-workbench-layout">
-      <aside className="workbench-sidebar" aria-label="Coding setup">
-        <div className="workbench-section-label"><Code2 /> YOUR WORKSPACE</div>
-        <h2>Good work starts here.</h2>
-        <p className="workbench-muted">Connect a project and a model to explore, build, and test together.</p>
-        <div className="workbench-label-row"><label className="workbench-label" htmlFor="code-model">Model</label><button className="workbench-text-button" disabled={connected || starting || checking} aria-label="Refresh coding runtime and models" onClick={() => void refreshSetup()}><RefreshCw /></button></div>
-        <select id="code-model" className="workbench-select" value={model} disabled={connected || starting || busy} onChange={e => setModel(e.target.value)}>
-          {!models.length && <option value="">No connected models</option>}
-          {models.map(item => <option key={item.id} value={item.id}>{item.label} · {item.provider}</option>)}
-        </select>
-        <span className="workbench-label">Project folder</span>
-        <button className="workbench-folder" disabled={!isDesktop || connected || busy || starting} onClick={() => void chooseFolder()}><FolderOpen /><span>{workdir ? workdir.split('/').filter(Boolean).at(-1) : 'Choose project'}<small>{workdir || 'Select a local folder'}</small></span></button>
-        {connected && <p className="workbench-hint">Disconnect to change project or model.</p>}
-        <button className={`workbench-primary ${connected ? 'secondary' : ''}`} disabled={!isDesktop || checking || starting || (!connected && (missing || !workdir))} onClick={() => void (connected ? stop() : start())}>{starting ? <Loader2 className="spin" /> : <Power />}{connected ? 'Disconnect' : 'Connect coding agent'}</button>
-        <div className="workbench-runtime-note"><ShieldCheck /><span>{!isDesktop ? 'File access and command execution are available in Aira desktop.' : missing ? 'Install the supported OpenCode runtime to connect this project.' : 'File changes and commands request your approval. You control remembered permissions.'}</span></div>
-        {missing && <code className="workbench-install">npm install -g opencode-ai</code>}
-        <a className="workbench-doc-link" href="https://opencode.ai/docs/" target="_blank" rel="noreferrer noopener">Coding runtime guide <ArrowUpRight /></a>
-        {isDesktop && <p className="workbench-hint">For shared browser tools, start Browser before connecting Code. Reconnect Code if you start Browser later.</p>}
-        {sessionID && <div className="workbench-session"><span>Conversation</span><code title={sessionID}>{sessionID.slice(0, 19)}</code></div>}
-      </aside>
-
-      <div className="workbench-main code-main">
-        <div className="workbench-output-heading"><span><Terminal />Coding session</span><div className="workbench-inline-actions">
-          {connected && streamState !== 'live' && <button className="workbench-text-button" disabled={starting} onClick={() => void reconnect()}><RefreshCw />Reconnect</button>}
-          <button className="workbench-text-button" disabled={!ready || busy} onClick={() => void newSession()}><Plus />New session</button>
-        </div></div>
-        {workdir && <div className="workbench-project-path"><Folder /><span title={workdir}>{workdir}</span></div>}
-        {error && <div className="workbench-alert" role="alert"><WifiOff /><span>{error}</span></div>}
-        <div className="workbench-results code-transcript" ref={log} role="log" aria-label="Coding activity" aria-live="off" onScroll={() => { const el = log.current; if (el) followOutput.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
-          {!entries.length && <div className="workbench-empty"><div className="workbench-empty-icon"><Code2 /></div><span className="eyebrow">LET’S BUILD SOMETHING</span><h2>A clear path from here.</h2><p>Ask a question about your code, describe a fix,<br />or bring the next feature to life.</p><div className="workbench-examples">{examples.map(example => <button key={example} onClick={() => setTask(example)}>{example}<ArrowUpRight /></button>)}</div></div>}
-          {entries.map((entry, index) => {
-            if (entry.kind === 'you') return <div className="code-message user" key={index}><span className="workbench-section-label">YOU</span><p>{entry.text}</p></div>;
-            if (entry.kind === 'agent') return <div className="code-message assistant" key={index}><span className="workbench-section-label"><Code2 />AIRA CODE</span><Markdown>{entry.text}</Markdown></div>;
-            if (entry.kind === 'tool') return <ToolLine key={index} activity={entry.activity} />;
-            if (entry.kind === 'notice') return <div className="agent-notice" key={index}><FileEdit /><span>{entry.text}</span></div>;
-            if (entry.kind === 'question') return <QuestionCard key={entry.request.id} request={entry.request} answers={entry.answers} skipped={entry.skipped} pending={pending.includes(entry.request.id) || !ready}
-              onAnswer={answers => void respond(entry.request.id, c => c.replyQuestion(entry.request.id, answers), item => item.kind === 'question' && item.request.id === entry.request.id ? { ...item, answers } : item)}
-              onSkip={() => void respond(entry.request.id, c => c.rejectQuestion(entry.request.id), item => item.kind === 'question' && item.request.id === entry.request.id ? { ...item, skipped: true } : item)} />;
-            if (entry.kind !== 'permission') return null;
-            return <div className={`agent-permission ${entry.resolved ? 'resolved' : ''}`} key={entry.request.id}>
-              <div className="agent-permission-head"><ShieldAlert /><strong>Approve {entry.request.action}</strong></div>
-              {entry.request.resources.length > 0 && <ul>{entry.request.resources.map((resource, i) => <li key={i}>{resource}</li>)}</ul>}
-              {entry.resolved ? <span className="agent-permission-done">{entry.resolved === 'reject' ? 'Denied' : entry.resolved === 'always' ? 'Allowed and remembered' : 'Allowed once'}</span> : <div className="agent-permission-actions">
-                {(['once', 'always', 'reject'] as Reply[]).map(reply => <button key={reply} disabled={pending.includes(entry.request.id) || !ready} className={reply === 'reject' ? 'deny' : ''} title={reply === 'always' ? 'Remember this permission for matching future requests' : undefined} onClick={() => void respond(entry.request.id, c => c.replyPermission(entry.request.id, reply), item => item.kind === 'permission' && item.request.id === entry.request.id ? { ...item, resolved: reply } : item)}>{reply === 'once' ? 'Allow once' : reply === 'always' ? 'Allow & remember' : 'Deny'}</button>)}
-              </div>}
-            </div>;
-          })}
-          {busy && <div className="workbench-working" role="status"><Loader2 className="spin" />{waiting ? 'Waiting for your response above' : 'Working on your task…'}</div>}
-        </div>
-        <form className="workbench-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
-          <textarea aria-label="Task for coding agent" value={task} rows={3} disabled={busy || starting} placeholder={!isDesktop ? 'Open Aira desktop to work with local code…' : connected ? 'Ask about your project or describe what to build…' : 'Write a task, then connect your project…'} onChange={e => setTask(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
-          <div className="workbench-composer-footer"><span><ShieldCheck />Approvals enabled<span className="workbench-key-hint"> · ⌘ / Ctrl + Enter</span></span>{busy ? <button key="stop" className="workbench-primary compact" type="button" disabled={starting} onClick={event => { event.preventDefault(); void interrupt(); }}><Square />Stop task</button> : <button key="send" className="workbench-primary compact" type="submit" disabled={!ready || !task.trim() || waiting}><Send />Send task</button>}</div>
-        </form>
+  return <section className="cli-page agent-page code-term screen-content" aria-label="Coding workspace">
+    <div className="ct-bar">
+      <span className={`ct-dot ${dot}`} aria-hidden="true" />
+      <span className="ct-name">aira-code</span>
+      <span className="ct-sep">·</span>
+      {/* Reads right-to-left so a long path truncates at the front, keeping the
+          part that identifies the project rather than the part that repeats. */}
+      <span className="ct-path" title={workdir || undefined}>{workdir || stateLabel}</span>
+      <div className="ct-bar-actions">
+        <span className="ct-sep" title={`Model: ${modelLabel}`}>{modelLabel}</span>
+        {connected && streamState !== 'live' && <button className="ct-btn" disabled={starting} onClick={() => void reconnect()} title="Reconnect the event stream"><RefreshCw />reconnect</button>}
+        <button className="ct-btn" disabled={!ready || busy} onClick={() => void newSession()} title="Start a fresh conversation"><Plus />new</button>
+        {connected && <button className="ct-btn danger" disabled={starting} onClick={() => void stop()} title="Disconnect the coding agent"><Power />disconnect</button>}
       </div>
     </div>
+
+    <div className="ct-log" ref={log} role="log" aria-label="Coding activity" aria-live="off"
+      onScroll={() => { const el = log.current; if (el) followOutput.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
+
+      {error && <div className="ct-alert" role="alert"><WifiOff /><span>{error}</span></div>}
+
+      {!connected && <div className="ct-setup">
+        <div className="ct-setup-title">aira-code — {stateLabel.toLowerCase()}</div>
+        <p className="ct-setup-sub">Point the agent at a project and a model to begin.</p>
+
+        <div className="ct-field">
+          <span className="ct-field-label">model
+            <button className="ct-btn" disabled={starting || checking} aria-label="Refresh coding runtime and models" onClick={() => void refreshSetup()}><RefreshCw /></button>
+          </span>
+          <select id="code-model" className="ct-select" value={model} disabled={starting || busy} onChange={e => setModel(e.target.value)}>
+            {!models.length && <option value="">no connected models</option>}
+            {models.map(item => <option key={item.id} value={item.id}>{item.label} · {item.provider}</option>)}
+          </select>
+        </div>
+
+        <div className="ct-field">
+          <span className="ct-field-label">project</span>
+          <button className="ct-folder" disabled={!isDesktop || busy || starting} onClick={() => void chooseFolder()}>
+            <FolderOpen /><span>{folderName ?? 'choose a folder'}<small>{workdir || 'no project selected'}</small></span>
+          </button>
+        </div>
+
+        <button className="ct-connect" disabled={!isDesktop || checking || starting || missing || !workdir} onClick={() => void start()}>
+          {starting ? <Loader2 className="spin" /> : <Power />}{starting ? 'connecting…' : 'connect'}
+        </button>
+
+        <div className="ct-setup-note"><ShieldCheck /><span>{!isDesktop
+          ? 'File access and command execution are available in Aira desktop.'
+          : missing ? 'Install the supported OpenCode runtime to connect this project.'
+          : 'File changes and commands request your approval. You control what is remembered.'}</span></div>
+        {missing && <code>npm install -g opencode-ai</code>}
+        {isDesktop && <div className="ct-setup-note"><Terminal /><span>For shared browser tools, start Browser before connecting Code.</span></div>}
+        <div className="ct-setup-note"><a href="https://opencode.ai/docs/" target="_blank" rel="noreferrer noopener">Coding runtime guide ↗</a></div>
+      </div>}
+
+      {connected && !entries.length && <div className="ct-hints">
+        <div className="ct-row"><span className="ct-mark">·</span><span className="ct-text">Ready in {folderName ?? 'this project'}. Try:</span></div>
+        {examples.map(example => <div className="ct-row" key={example}>
+          <span className="ct-mark" />
+          <button onClick={() => setTask(example)}>› {example}</button>
+        </div>)}
+      </div>}
+
+      {entries.map((entry, index) => {
+        if (entry.kind === 'you') return <div className="ct-row ct-you" key={index}><span className="ct-mark">›</span><span className="ct-text">{entry.text}</span></div>;
+        if (entry.kind === 'agent') return <div className="ct-row ct-agent" key={index}><span className="ct-mark">⏺</span><div className="ct-text"><Markdown>{entry.text}</Markdown></div></div>;
+        if (entry.kind === 'tool') return <ToolLine key={index} activity={entry.activity} />;
+        if (entry.kind === 'notice') return <div className="ct-row ct-note" key={index}><span className="ct-mark">·</span><span className="ct-text">{entry.text}</span></div>;
+        if (entry.kind === 'question') return <QuestionCard key={entry.request.id} request={entry.request} answers={entry.answers} skipped={entry.skipped} pending={pending.includes(entry.request.id) || !ready}
+          onAnswer={answers => void respond(entry.request.id, c => c.replyQuestion(entry.request.id, answers), item => item.kind === 'question' && item.request.id === entry.request.id ? { ...item, answers } : item)}
+          onSkip={() => void respond(entry.request.id, c => c.rejectQuestion(entry.request.id), item => item.kind === 'question' && item.request.id === entry.request.id ? { ...item, skipped: true } : item)} />;
+        if (entry.kind !== 'permission') return null;
+        return <div className={`ct-ask ${entry.resolved ? 'resolved' : ''}`} key={entry.request.id}>
+          <div className="ct-ask-head"><ShieldAlert /><strong>approve {entry.request.action}</strong></div>
+          {entry.request.resources.length > 0 && <ul>{entry.request.resources.map((resource, i) => <li key={i}>{resource}</li>)}</ul>}
+          {entry.resolved ? <span className="ct-ask-done">{entry.resolved === 'reject' ? 'denied' : entry.resolved === 'always' ? 'allowed and remembered' : 'allowed once'}</span> : <div className="ct-ask-actions">
+            {(['once', 'always', 'reject'] as Reply[]).map(reply => <button key={reply} disabled={pending.includes(entry.request.id) || !ready} className={reply === 'reject' ? 'deny' : ''} title={reply === 'always' ? 'Remember this permission for matching future requests' : undefined} onClick={() => void respond(entry.request.id, c => c.replyPermission(entry.request.id, reply), item => item.kind === 'permission' && item.request.id === entry.request.id ? { ...item, resolved: reply } : item)}>{reply === 'once' ? 'allow once' : reply === 'always' ? 'allow & remember' : 'deny'}</button>)}
+          </div>}
+        </div>;
+      })}
+
+      {busy && <div className="ct-working" role="status"><Loader2 className="spin" />{waiting ? 'waiting for your response above' : 'working…'}</div>}
+    </div>
+
+    <form className="ct-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
+      <div className="ct-input-row">
+        <span className="ct-mark" aria-hidden="true">›</span>
+        <textarea aria-label="Task for coding agent" value={task} rows={2} disabled={busy || starting}
+          placeholder={!isDesktop ? 'open Aira desktop to work with local code…' : connected ? 'ask about your project, or describe what to build…' : 'connect a project to begin…'}
+          onChange={e => setTask(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
+      </div>
+      <div className="ct-foot">
+        <ShieldCheck style={{ width: 12, height: 12 }} /><span>approvals on</span>
+        <span className="ct-sep">·</span><span>⌘⏎ to send</span>
+        {sessionID && <><span className="ct-sep">·</span><span title={sessionID}>{sessionID.slice(0, 12)}</span></>}
+        <div className="ct-foot-actions">
+          {busy
+            ? <button key="stop" className="ct-send stop" type="button" disabled={starting} onClick={event => { event.preventDefault(); void interrupt(); }}><Square />stop</button>
+            : <button key="send" className="ct-send" type="submit" disabled={!ready || !task.trim() || waiting}><Send />send</button>}
+        </div>
+      </div>
+    </form>
   </section>;
 }
 
@@ -424,24 +470,33 @@ function QuestionCard({ request, answers, skipped, pending, onAnswer, onSkip }: 
     setPicked(previous => previous.map((selected, i) => i !== index ? selected : !multiple ? [label] : selected.includes(label) ? selected.filter(item => item !== label) : [...selected, label]));
     if (!multiple) setTyped(previous => previous.map((value, i) => i === index ? '' : value));
   }
-  return <div className={`agent-question ${done ? 'resolved' : ''}`}>
-    <div className="agent-question-head"><MessageCircleQuestion /><strong>A question before continuing</strong></div>
-    {request.questions.map((question, index) => <div className="agent-question-item" key={index}>
-      <span className="agent-question-header">{question.header}</span><p>{question.question}</p>
-      {done ? <span className="agent-question-answer">{skipped ? 'Skipped' : answers?.[index]?.join(', ') || '—'}</span> : <>
-        {question.multiple && <p className="workbench-hint">Choose one or more answers.</p>}
-        <div className="agent-question-options">{question.options.map(option => <button key={option.label} type="button" disabled={pending} className={picked[index].includes(option.label) && (question.multiple || !typed[index]) ? 'on' : ''} aria-pressed={picked[index].includes(option.label) && (Boolean(question.multiple) || !typed[index])} onClick={() => toggle(index, option.label, Boolean(question.multiple))}><span className="agent-question-label">{option.label}</span>{option.description && <span className="agent-question-hint">{option.description}</span>}</button>)}</div>
-        {question.custom !== false && <input className="agent-question-custom" value={typed[index]} disabled={pending} placeholder="Or type your own answer…" aria-label={`Custom answer: ${question.header || question.question}`} onChange={e => setTyped(previous => previous.map((value, i) => i === index ? e.target.value : value))} />}
+  return <div className={`ct-ask ${done ? 'resolved' : ''}`}>
+    <div className="ct-ask-head"><MessageCircleQuestion /><strong>a question before continuing</strong></div>
+    {request.questions.map((question, index) => <div className="ct-q-item" key={index}>
+      <span className="ct-q-head">{question.header}</span><p>{question.question}</p>
+      {done ? <span className="ct-q-answer">{skipped ? 'Skipped' : answers?.[index]?.join(', ') || '—'}</span> : <>
+        {question.multiple && <p className="ct-q-answer">Choose one or more answers.</p>}
+        <div className="ct-q-options">{question.options.map(option => <button key={option.label} type="button" disabled={pending} className={picked[index].includes(option.label) && (question.multiple || !typed[index]) ? 'on' : ''} aria-pressed={picked[index].includes(option.label) && (Boolean(question.multiple) || !typed[index])} onClick={() => toggle(index, option.label, Boolean(question.multiple))}>{option.label}{option.description && <small>{option.description}</small>}</button>)}</div>
+        {question.custom !== false && <input className="ct-q-custom" value={typed[index]} disabled={pending} placeholder="Or type your own answer…" aria-label={`Custom answer: ${question.header || question.question}`} onChange={e => setTyped(previous => previous.map((value, i) => i === index ? e.target.value : value))} />}
       </>}
     </div>)}
-    {!done && <div className="agent-question-actions"><button disabled={pending || !final.every(answer => answer.length > 0)} onClick={() => onAnswer(final)}>{pending ? 'Please wait…' : 'Send answer'}</button><button className="skip" disabled={pending} onClick={onSkip}>Skip question</button></div>}
+    {!done && <div className="ct-ask-actions"><button disabled={pending || !final.every(answer => answer.length > 0)} onClick={() => onAnswer(final)}>{pending ? 'sending…' : 'send answer'}</button><button className="deny" disabled={pending} onClick={onSkip}>skip</button></div>}
   </div>;
 }
 
-const TOOL_VERBS: Record<string, string> = { write: 'Write', edit: 'Edit', read: 'Read', patch: 'Patch', bash: 'Run command', grep: 'Search', glob: 'Find', list: 'List', webfetch: 'Fetch', websearch: 'Web search', task: 'Delegate', todowrite: 'Plan' };
+/* Lowercase, because these read as a command log rather than as prose. */
+const TOOL_VERBS: Record<string, string> = { write: 'Write', edit: 'Edit', read: 'Read', patch: 'Patch', bash: 'Bash', grep: 'Grep', glob: 'Glob', list: 'List', webfetch: 'Fetch', websearch: 'Search', task: 'Task', todowrite: 'Plan' };
 function ToolLine({ activity }: { activity: ToolActivity }) {
   const done = activity.status === 'completed';
   const failed = activity.status === 'error';
-  const Icon = activity.tool === 'bash' ? SquareTerminal : ['grep', 'glob', 'websearch'].includes(activity.tool) ? Search : FileText;
-  return <div className={`agent-tool ${done ? 'done' : failed ? 'failed' : 'active'}`}><span className="agent-tool-icon">{done ? <Check /> : failed ? <ShieldAlert /> : <Loader2 className="spin" />}</span><span className="agent-tool-body"><Icon /><span className="agent-tool-verb">{TOOL_VERBS[activity.tool] ?? activity.tool}</span>{activity.target && <code title={activity.target}>{activity.target}</code>}</span></div>;
+  // One glyph per state, in the marker column every other row already uses, so
+  // the log scans as a single column instead of a stack of little icons.
+  const mark = done ? '⏺' : failed ? '✗' : '◍';
+  return <div className={`ct-row ct-tool ${done ? 'done' : failed ? 'failed' : 'active'}`}>
+    <span className="ct-mark">{mark}</span>
+    <span className="ct-tool-line">
+      <span className="ct-verb">{TOOL_VERBS[activity.tool] ?? activity.tool}</span>
+      {activity.target && <span className="ct-target" title={activity.target}>{activity.target}</span>}
+    </span>
+  </div>;
 }
