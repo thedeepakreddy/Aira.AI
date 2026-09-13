@@ -55,6 +55,7 @@
   color: var(--canvas-ink);
   font-size: 13px;
   backdrop-filter: blur(20px);
+  box-shadow: 0 8px 26px #0000005c, 0 0 24px -8px var(--canvas-glow);
   transition: background .2s, border-color .2s;
 }
 .canvas-top-button:hover:not(:disabled) { background: #ffffff14; }
@@ -79,6 +80,7 @@
   border: 1px solid var(--canvas-line);
   background: #ffffff0a;
   color: var(--canvas-dim);
+  box-shadow: 0 8px 26px #0000005c, 0 0 24px -8px var(--canvas-glow);
 }
 .canvas-share:hover { color: var(--canvas-ink); background: #ffffff14; }
 .canvas-share svg { width: 15px; height: 15px; }
@@ -279,30 +281,76 @@
 
 /* ── agent cards ─────────────────────────────────────────────────────────── */
 
+/*
+ * Each card carries its own hue through --node-light / --node-deep / --node-glow,
+ * set per member in agent-canvas.tsx. The stylesheet only says how a colour is
+ * used; which colour a member gets is decided next to the member list, where
+ * adding a seventh agent is one edit rather than two.
+ */
 .agent-node-card {
+  --node-light: #ffb277;
+  --node-deep: #c0500a;
+  --node-glow: #ff6a0055;
   position: relative;
   z-index: 1;
   border-radius: 22px;
   padding: 15px 17px 16px;
-  border: 1px solid #ffffff0f;
-  background: #ffffff07;
+  border: 1px solid #ffffff14;
+  /* A wash of the member's own colour over the glass, so the card is
+     identifiable while idle and not only while it is running. */
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--node-light) 13%, transparent), transparent 70%),
+    #ffffff07;
   backdrop-filter: blur(24px);
   color: var(--canvas-ink);
   text-align: left;
   width: 100%;
+  /* The light behind the panel, matching the centre task card's treatment:
+     a hairline, a drop shadow for lift, and a wide coloured bloom. */
+  box-shadow:
+    0 0 0 1px #ffffff08,
+    0 18px 48px #00000073,
+    0 0 64px -2px var(--node-glow);
   transition: transform .25s, box-shadow .3s, background .3s, opacity .3s;
 }
-.agent-node-card:hover { transform: translateY(-2px); }
-/* Idle members recede rather than disappear, as in the reference. */
-.agent-node-card.idle { opacity: .5; }
+.agent-node-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px #ffffff0f,
+    0 22px 56px #00000080,
+    0 0 84px 0 var(--node-glow);
+}
+/*
+ * Idle members recede rather than disappear. This used to be opacity .5, which
+ * also halved the bloom — opacity applies to an element's shadows, not just its
+ * contents — so a resting board had no light behind it at all. The recession now
+ * comes from the per-part dimming further down, and the card keeps its glow.
+ */
+.agent-node-card.idle { opacity: .84; }
 .agent-node-card.working {
   opacity: 1;
-  border-color: #ffae6b66;
-  background: linear-gradient(158deg, var(--canvas-accent), var(--canvas-accent-deep) 92%);
-  box-shadow: 0 0 46px #ff6a0059, 0 22px 60px #00000080, inset 0 1px 0 #ffffff2e;
+  border-color: color-mix(in srgb, var(--node-light) 46%, transparent);
+  background: linear-gradient(158deg, var(--node-light), var(--node-deep) 92%);
+  box-shadow:
+    0 0 0 1px #ffffff12,
+    0 22px 60px #00000080,
+    0 0 92px 0 var(--node-glow),
+    inset 0 1px 0 #ffffff2e;
 }
-.agent-node-card.done { border-color: #7fc98a3d; }
+.agent-node-card.done { border-color: color-mix(in srgb, var(--node-light) 34%, transparent); }
 .agent-node-card.error { border-color: #ff8a6b4d; }
+.agent-node-card.selected {
+  opacity: 1;
+  outline: 2px solid color-mix(in srgb, var(--node-light) 78%, transparent);
+  outline-offset: 3px;
+}
+/* Selected but resting: lift the wash so the card reads as armed, not running. */
+.agent-node-card.selected.idle {
+  border-color: color-mix(in srgb, var(--node-light) 34%, transparent);
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--node-light) 24%, transparent), transparent 72%),
+    #ffffff0b;
+}
 
 .agent-node-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .agent-node-glyph {
@@ -311,8 +359,14 @@
   width: 34px;
   height: 34px;
   border-radius: 11px;
-  border: 1px solid #ffffff1f;
-  background: #ffffff12;
+  border: 1px solid color-mix(in srgb, var(--node-light) 40%, transparent);
+  background: color-mix(in srgb, var(--node-light) 22%, #ffffff10);
+  color: color-mix(in srgb, var(--node-light) 82%, #ffffff);
+}
+/* While running the card is already that colour, so the chip inverts to stay legible. */
+.agent-node-card.working .agent-node-glyph {
+  border-color: #ffffff3d;
+  background: #ffffff1f;
   color: #fff;
 }
 .agent-node-glyph svg { width: 16px; height: 16px; }
@@ -431,6 +485,7 @@
   background: #0d0705cc;
   color: var(--canvas-dim);
   backdrop-filter: blur(20px);
+  box-shadow: 0 10px 30px #00000073, 0 0 28px -6px var(--canvas-glow);
 }
 .canvas-dock button:hover:not(:disabled) { color: var(--canvas-ink); background: #ffffff14; }
 .canvas-dock button:disabled { opacity: .4; cursor: not-allowed; }
@@ -447,6 +502,7 @@
   color: var(--canvas-ink);
   font-size: 12.5px;
   backdrop-filter: blur(20px);
+  box-shadow: 0 10px 30px #00000073, 0 0 28px -6px var(--canvas-glow);
 }
 .canvas-zoom-level button {
   width: 26px;

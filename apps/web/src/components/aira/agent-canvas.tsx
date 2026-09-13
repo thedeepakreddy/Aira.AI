@@ -46,6 +46,26 @@ const PHASE_LABEL: Record<Phase, string> = {
   idle: 'Ready', working: 'Analyzing', done: 'Complete', error: 'Failed', stopped: 'Stopped',
 };
 
+/**
+ * A colour per member.
+ *
+ * Rich and low-chroma rather than bright: these sit on a near-black canvas
+ * where a saturated fill reads as a warning, and six competing neons would
+ * make the board harder to scan, not easier. Each pair is a light edge and a
+ * deep body, so a lit card has somewhere to fall off to.
+ *
+ * The Lead keeps Aira's own amber. It is the one card whose answer the board
+ * exists to produce, so it belongs to the product rather than to the palette.
+ */
+const COLOURS: Record<string, { light: string; deep: string; glow: string }> = {
+  Lead:     { light: '#ffc861', deep: '#c06a04', glow: '#ff9a2e55' },
+  Research: { light: '#5fd0c8', deep: '#0b6f6a', glow: '#22b8ad5e' },
+  Plan:     { light: '#a996f5', deep: '#4f2fb0', glow: '#7d5cf066' },
+  Write:    { light: '#f2a0c0', deep: '#a33668', glow: '#e06d9c5e' },
+  Review:   { light: '#74d495', deep: '#176f45', glow: '#3bbd7355' },
+  Analyse:  { light: '#7fb6f0', deep: '#1f56a8', glow: '#4a8ee866' },
+};
+
 /** A glyph per member, so cards are distinguishable at a glance. */
 const GLYPHS: Record<string, typeof Bot> = {
   Lead: Crown, Research: BarChart3, Plan: Layers, Write: FileText, Review: Scale, Analyse: Gauge,
@@ -363,9 +383,15 @@ function AgentNode({ agent, peers, selected, open, model, onRun, onStop, onHandO
     : agent.phase === 'working' ? Math.min(97, Math.round((tokens / OUTPUT_BUDGET_TOKENS) * 100))
     : 100;
 
+  const colour = COLOURS[agent.name] ?? { light: '#ffb277', deep: '#c0500a', glow: '#ff6a0055' };
   return <article
     ref={register}
     className={`agent-node-card ${agent.phase}${selected ? ' selected' : ''}`}
+    style={{
+      ['--node-light' as string]: colour.light,
+      ['--node-deep' as string]: colour.deep,
+      ['--node-glow' as string]: colour.glow,
+    }}
     aria-label={`${agent.name} — ${PHASE_LABEL[agent.phase]}`}
   >
     <div className="agent-node-top">
