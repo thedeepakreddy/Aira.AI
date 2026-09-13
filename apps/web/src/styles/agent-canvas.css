@@ -613,3 +613,31 @@
 .canvas-help:hover { color: var(--canvas-ink); background: #ffffff14; }
 .canvas-zoom > button:hover:not(:disabled) { color: var(--canvas-ink); background: #ffffff14; }
 .canvas-zoom > button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* The lead's answer, in the centre card where the goal was typed. */
+.task-node-goal {
+  margin: 0 0 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ffffff14;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--canvas-dim);
+}
+.task-node-answer {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--canvas-ink);
+  max-height: 340px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff1f transparent;
+}
+.task-node-answer > :first-child { margin-top: 0; }
+.task-node-answer > :last-child { margin-bottom: 0; }
+.task-node-answer h1, .task-node-answer h2, .task-node-answer h3 {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 16px 0 6px;
+}
+.task-node-answer ul, .task-node-answer ol { padding-left: 20px; margin: 8px 0; }
+.task-node-answer code { font-size: 12.5px; }

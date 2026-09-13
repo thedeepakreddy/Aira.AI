@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isDesktop, supervisor, OpenClawClient, type Agent, type OpenClawStatus } from '@/lib/openclaw';
-import { getAccessToken } from '@/lib/supabase';
+import { getAccessToken, getSession } from '@/lib/supabase';
+import { BOARD_KEY, loadBoard, saveBoard } from '@/lib/agent-board';
 import { listCatalogue, type ModelSpec } from '@/lib/gateway';
 import { createStreamBuffer } from '@/lib/stream-buffer';
 import AgentCanvas from './agent-canvas';
@@ -15,9 +16,21 @@ interface AgentState {
   error: string;
 }
 const blank = (agent: Agent): AgentState => ({ agent, phase: 'idle', text: '', startedAt: null, endedAt: null, error: '' });
+/**
+ * Who gets a task when nothing has been chosen.
+ *
+ * Never the lead: it directs the others and writes up what they found, so a
+ * board where only the lead is ticked has nobody to report to it.
+ */
+function defaultSelection(available: Agent[]): string[] {
+  const specialist = available.find(a => !a.id.endsWith('/lead'));
+  return specialist ? [specialist.id] : available.slice(0, 1).map(a => a.id);
+}
+
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 /** One line on what each member is for, so the checkboxes mean something. */
 const ROLES: Record<string, string> = {
+  Lead: 'Directs the team and writes the answer',
   Research: 'Finds and verifies information',
   Plan: 'Turns a goal into ordered steps',
   Write: 'Drafts and edits prose',
@@ -47,6 +60,7 @@ export default function TaskPanel() {
   const activeToken = useRef<string | null>(null);
   /** In-flight connect, shared so concurrent tasks await it rather than race. */
   const connecting = useRef<Promise<Agent[]> | null>(null);
+  const [account, setAccount] = useState<string | null>(null);
   const connected = Boolean(status?.running && client.current && agents.length);
   const active = agents.filter(a => a.phase === 'working').length;
   const busy = active > 0;
@@ -57,6 +71,36 @@ export default function TaskPanel() {
     const interval = setInterval(() => tick(n => n + 1), 1_000);
     return () => clearInterval(interval);
   }, [busy]);
+
+  // Restore the last board for this account, so closing Aira does not throw
+  // away the work. Agents reattach separately; this is only their output.
+  useEffect(() => {
+    let cancelled = false;
+    void getSession().then(session => {
+      const id = session?.user.id ?? null;
+      if (cancelled) return;
+      setAccount(id);
+      const saved = loadBoard(id);
+      if (!saved) return;
+      setSent(saved.sent);
+      setAgents(previous => previous.length ? previous : saved.results.map(r => ({
+        agent: { id: r.id, name: r.name }, phase: (r.error ? 'error' : 'done') as Phase,
+        text: r.text, startedAt: null, endedAt: saved.at, error: r.error,
+      })));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  // Persist whenever a run settles, not on every token.
+  useEffect(() => {
+    if (!account || !sent || busy) return;
+    saveBoard(account, {
+      sent, at: Date.now(),
+      results: agents.filter(a => a.text || a.error).map(a => ({
+        id: a.agent.id, name: a.agent.name, text: a.text, error: a.error,
+      })),
+    });
+  }, [account, sent, busy, agents]);
 
   useEffect(() => {
     alive.current = true;
@@ -79,7 +123,7 @@ export default function TaskPanel() {
           if (!found.length) throw new Error('The runtime is running but has no available agents. Reconnect to try again.');
           client.current = c;
           setAgents(found.map(blank));
-          setSelected(found.slice(0, 1).map(a => a.id));
+          setSelected(defaultSelection(found));
           activeToken.current = null; // Verify credentials on the next task.
         }
       } catch (e) {
@@ -130,7 +174,7 @@ export default function TaskPanel() {
     setAgents(previous => found.map(agent => previous.find(a => a.agent.id === agent.id) ?? blank(agent)));
     setSelected(previous => {
       const valid = previous.filter(id => found.some(a => a.id === id));
-      return valid.length ? valid : [found[0].id];
+      return valid.length ? valid : defaultSelection(found);
     });
     return found;
   }
@@ -247,7 +291,7 @@ export default function TaskPanel() {
         // Nothing was selected because nothing existed to select. Default to
         // the first agent rather than the whole team: five agents on a first
         // task is five bills for one question.
-        if (!ids.length) ids = available.slice(0, 1).map(agent => agent.id);
+        if (!ids.length) ids = defaultSelection(available);
         setSelected(ids);
         setNotice('');
         if (alive.current) setStarting(false);
@@ -303,13 +347,59 @@ export default function TaskPanel() {
     }
   }
 
-  /** The board composer: the task goes to everyone selected. */
-  function send() {
-    const text = task;
+  /**
+   * The board composer.
+   *
+   * Two phases when a lead is available: the selected specialists answer the
+   * goal in parallel, then the lead reads what they produced and writes the
+   * answer. Before this, a board task fanned out to N agents who each replied
+   * independently and nothing joined them up — a panel of opinions rather than
+   * a team, and the user was left to reconcile them by reading every card.
+   *
+   * The specialists' raw output stays on their own cards. The lead's answer is
+   * the one the board is actually for.
+   */
+  async function send() {
+    const text = task.trim();
+    if (!text) return;
     setTask('');
-    // Put it back if it could not be sent, rather than losing what they wrote.
-    void dispatch(text, selected, { headline: true, reset: true })
-      .catch(() => { if (alive.current) setTask(current => current || text); });
+    try {
+      const lead = agents.find(a => a.agent.id.endsWith('/lead'))?.agent.id;
+      const specialists = selected.filter(id => id !== lead);
+
+      // No lead configured, or nothing else picked: this is a plain run.
+      if (!lead || !specialists.length) {
+        await dispatch(text, selected.length ? selected : [lead ?? ''].filter(Boolean),
+          { headline: true, reset: true });
+        return;
+      }
+
+      await dispatch(text, specialists, { headline: true, reset: true });
+      if (!alive.current) return;
+
+      // Read the results off the latest state rather than the closure, which
+      // was captured before any of them had written a word.
+      const reports = await new Promise<{ name: string; text: string }[]>(resolve => {
+        setAgents(list => {
+          resolve(list
+            .filter(a => specialists.includes(a.agent.id) && a.text.trim())
+            .map(a => ({ name: a.agent.name, text: a.text.trim() })));
+          return list;
+        });
+      });
+      if (!reports.length || !alive.current) return;
+
+      await dispatch(
+        `Goal: ${text}\n\n`
+        + reports.map(r => `## ${r.name} reported\n\n${r.text}`).join('\n\n')
+        + `\n\nWrite the answer to the goal from these reports.`,
+        [lead],
+        { reset: true },
+      );
+    } catch {
+      // dispatch surfaces its own error; put the text back so it is not lost.
+      if (alive.current) setTask(current => current || text);
+    }
   }
 
   /** Hands one agent's result to another, with an instruction. */
@@ -367,6 +457,8 @@ export default function TaskPanel() {
       // reset only the cards, so the text you had typed survived into the
       // "new" project and agents kept working on the old one.
       stopTask();
+      // Also clear what was stored, or the "new" board returns on next launch.
+      if (account) { try { localStorage.removeItem(`${BOARD_KEY}.${account}`); } catch { /* ignore */ } }
       setSent(''); setTask(''); setNotice(''); setError('');
       setExpanded([]);
       setAgents(list => list.map(a => blank(a.agent)));

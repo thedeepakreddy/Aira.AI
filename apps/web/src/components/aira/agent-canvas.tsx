@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Activity, BarChart3, Bot, ChevronRight, CircleHelp, Cloud, Download, Eye,
   FileText, Gauge, Layers, Loader2, Minus, Plus, Scale, Send, Share2, Square,
-  Sparkles, Trash2, WifiOff, ArrowRight,
+  Sparkles, Trash2, WifiOff, ArrowRight, Crown,
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -48,7 +48,7 @@ const PHASE_LABEL: Record<Phase, string> = {
 
 /** A glyph per member, so cards are distinguishable at a glance. */
 const GLYPHS: Record<string, typeof Bot> = {
-  Research: BarChart3, Plan: Layers, Write: FileText, Review: Scale, Analyse: Gauge,
+  Lead: Crown, Research: BarChart3, Plan: Layers, Write: FileText, Review: Scale, Analyse: Gauge,
 };
 
 export interface AgentCanvasProps {
@@ -220,8 +220,14 @@ export default function AgentCanvas(props: AgentCanvasProps) {
 
 function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.RefObject<HTMLDivElement | null> }) {
   const { active, busy, sent, connected, starting } = props;
+  const lead = props.agents.find(a => a.name === 'Lead');
+  const leadWorking = lead?.phase === 'working';
   const status = starting ? 'Starting your agents…'
-    : busy ? `${props.agents.find(a => a.phase === 'working')?.name ?? 'Aira'} is thinking…`
+    // Naming the phase, because "Lead is thinking" while four specialists are
+    // still running says something quite different from the same words after
+    // they have all reported.
+    : leadWorking ? 'Lead is drafting the answer from the reports…'
+    : busy ? `${props.agents.filter(a => a.phase === 'working').map(a => a.name).join(', ')} working…`
     : sent ? 'Finished.' : 'Ready when you are.';
 
   return <div className="task-node" ref={props.nodeRef}>
@@ -229,7 +235,12 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
       {active ? `${active} active agent${active === 1 ? '' : 's'}` : `${props.selected.length} selected`}
     </span>
     <div className="task-node-body">
-      {sent ? <p>{sent}</p> : <textarea
+      {/* The lead's answer is what the board is for, so it belongs here rather
+        * than folded into a card beside the specialists that fed it. */}
+      {lead?.text ? <>
+        <p className="task-node-goal">{sent}</p>
+        <div className="task-node-answer"><Markdown>{lead.text}</Markdown></div>
+      </> : sent ? <p>{sent}</p> : <textarea
         aria-label="Task for the selected agents"
         value={props.task}
         placeholder="Describe the outcome you want, with any context and constraints…"
