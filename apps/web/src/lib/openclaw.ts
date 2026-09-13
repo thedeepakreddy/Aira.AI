@@ -139,10 +139,11 @@ export async function streamTask(
     signal?.throwIfAborted();
     const cancelled = new Promise<never>((_, reject) => {
       abort = () => {
-        // The owned runtime is terminated: OpenClaw does not expose a verified
-        // per-task cancellation API. The panel refreshes status after stopping.
+        // Cancels this run only. OpenClaw exposes no per-task cancellation API,
+        // so the shell drops its end of the stream instead — which stops the
+        // deltas at once and leaves the runtime up for the next task.
         void bridge.invoke<void>('openclaw_cancel', { run }).then(
-          () => reject(new DOMException('The task runtime was stopped.', 'AbortError')),
+          () => reject(new DOMException('The task was stopped.', 'AbortError')),
           error => reject(new Error(`Could not confirm task cancellation: ${String(error)}`)),
         );
       };

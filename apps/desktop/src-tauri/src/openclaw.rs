@@ -447,8 +447,17 @@ pub async fn openclaw_stream(
 
     let mut stream = response.bytes_stream();
     let mut buffer: Vec<u8> = Vec::new();
+    // Cloned rather than borrowed from `state`, which cannot be held across an
+    // await. Cancellation is observed by the run id leaving the set.
+    let cancelled = Arc::clone(&state.runs);
+    let still_running = || cancelled.lock().unwrap().contains(&run);
 
     while let Some(chunk) = stream.next().await {
+        if !still_running() {
+            // Returning drops the response body, which closes the connection.
+            let _ = app.emit(&format!("openclaw://done/{run}"), ());
+            return Ok(());
+        }
         let bytes = chunk.map_err(|e| format!("the stream broke: {e}"))?;
         buffer.extend_from_slice(&bytes);
         if buffer.len() > 2_000_000 {
@@ -532,10 +541,20 @@ pub async fn openclaw_run(
 /// OpenClaw's HTTP API has no per-run abort. Stopping the supervised runtime
 /// terminates its outstanding runs and subprocesses instead of hiding output.
 #[tauri::command]
+/// Stops one task.
+///
+/// It used to stop the *runtime* — `shutdown()` killed the child process — on
+/// the grounds that OpenClaw exposes no per-task cancellation API. True, but
+/// the cost landed on the user: Stop meant a fifteen-to-thirty second
+/// reconnect before they could type again, so the cheapest possible action in
+/// a chat interface became the most expensive one in this one.
+///
+/// Dropping our end of the response is cancellation enough. The stream loop
+/// watches this set, and leaving it closes the HTTP body, which stops delta
+/// events immediately and hands control straight back. The runtime stays up
+/// and the next task starts instantly.
 pub fn openclaw_cancel(state: State<'_, OpenClawState>, run: String) -> Result<(), String> {
-    if state.runs.lock().unwrap().contains(&run) {
-        state.shutdown();
-    }
+    state.runs.lock().unwrap().remove(&run);
     Ok(())
 }
 

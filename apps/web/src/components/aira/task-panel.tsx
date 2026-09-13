@@ -140,6 +140,14 @@ export default function TaskPanel() {
     }
   }
 
+  /** Stops the running task and leaves the runtime up, so the next one is instant. */
+  function stopTask() {
+    runs.current?.abort();
+    runs.current = null;
+    setBusy(false);
+    setAgents(list => list.map(a => a.phase === 'working' ? { ...a, phase: 'stopped', endedAt: Date.now() } : a));
+  }
+
   async function stop() {
     if (changing.current) return;
     changing.current = true; setStarting(true); setError('');
@@ -151,7 +159,7 @@ export default function TaskPanel() {
       setStatus(await supervisor.status());
       setAgents(list => list.map(a => a.phase === 'working' ? { ...a, phase: 'stopped', endedAt: Date.now() } : a));
       setBusy(false);
-      setNotice('Task runtime stopped. Your output is preserved. Connect to continue.');
+      setNotice('Agents disconnected. Your output is preserved.');
     } catch (e) { setError(`Could not stop the task runtime: ${messageOf(e)}`); }
     finally { changing.current = false; if (alive.current) setStarting(false); }
   }
@@ -173,17 +181,23 @@ export default function TaskPanel() {
 
   async function send() {
     const text = task.trim();
-    if (!text || !connected || busy || changing.current || !selected.length) return;
+    if (!text || busy || changing.current) return;
     changing.current = true; setStarting(true); setError(''); setNotice('');
     try {
       const token = await getAccessToken();
       if (!token) throw new Error('Sign in again to continue.');
       // A refreshed login token must reach the child process before another run.
+      // Connect on demand. Making this a separate button the user had to find
+      // and press first put a fifteen-second wall in front of the one thing
+      // they came to do; the task they typed is a clear enough instruction to
+      // start the runtime for.
       let targets = selected;
-      if (activeToken.current !== token) {
+      if (!connected || activeToken.current !== token) {
+        setNotice(connected ? '' : 'Starting your agents…');
         const available = await connect(token);
         targets = selected.filter(id => available.some(agent => agent.id === id));
         if (!targets.length) targets = available.slice(0, 1).map(agent => agent.id);
+        setNotice('');
       }
       const c = client.current;
       if (!c) throw new Error('Connect the task runtime first.');
@@ -248,7 +262,7 @@ export default function TaskPanel() {
         <button className={`workbench-primary ${connected ? 'secondary' : ''}`} disabled={!isDesktop || checking || starting || (!connected && missing)} onClick={() => void (connected ? stop() : start())}>
           {starting ? <Loader2 className="spin" /> : <Power />}{connected ? busy ? 'Stop all agents' : 'Disconnect' : 'Connect agents'}
         </button>
-        <div className="workbench-runtime-note"><ShieldCheck /><span>{!isDesktop ? 'Local tools run in the Aira desktop app. Your chat is available on the web.' : missing ? 'OpenClaw is not installed. Install the supported runtime, then reconnect.' : 'Agents run on this device. Stopping a task shuts down the task runtime.'}</span></div>
+        <div className="workbench-runtime-note"><ShieldCheck /><span>{!isDesktop ? 'Local tools run in the Aira desktop app. Your chat is available on the web.' : missing ? 'OpenClaw is not installed. Install the supported runtime, then reconnect.' : 'Agents run on this device. Stopping a task leaves them connected and ready.'}</span></div>
         {missing && <code className="workbench-install">npm install -g openclaw</code>}
         <a className="workbench-doc-link" href="https://docs.openclaw.ai/" target="_blank" rel="noreferrer noopener">Runtime setup guide <ArrowUpRight /></a>
       </aside>
@@ -270,9 +284,9 @@ export default function TaskPanel() {
           </>}
         </div>
         <form className="workbench-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
-          <textarea aria-label="Task for selected agents" placeholder={!isDesktop ? 'Open Aira desktop to run local agents…' : connected ? 'Describe the outcome, context, and any constraints…' : 'Write a task, then connect your agents…'} value={task} onChange={e => setTask(e.target.value)} rows={3} disabled={busy || starting} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
-          <div className="workbench-composer-footer"><span>{selected.length ? `${selected.length} agent${selected.length === 1 ? '' : 's'} selected` : 'Select an agent'}<span className="workbench-key-hint"> · ⌘ / Ctrl + Enter</span></span>
-            {busy ? <button key="stop" className="workbench-primary compact" type="button" disabled={starting} onClick={event => { event.preventDefault(); void stop(); }}><Square />Stop task</button> : <button key="send" className="workbench-primary compact" disabled={!connected || !task.trim() || !selected.length || starting} type="submit"><Send />Run task</button>}
+          <textarea aria-label="Task for selected agents" placeholder={!isDesktop ? 'Open Aira desktop to run local agents…' : connected ? 'Describe the outcome, context, and any constraints…' : 'Write a task, then connect your agents…'} value={task} onChange={e => setTask(e.target.value)} rows={3} disabled={busy || starting} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
+          <div className="workbench-composer-footer"><span>{selected.length ? `${selected.length} agent${selected.length === 1 ? '' : 's'} selected` : 'Select an agent'}<span className="workbench-key-hint"> · Enter to run, Shift + Enter for a new line</span></span>
+            {busy ? <button key="stop" className="workbench-primary compact" type="button" onClick={event => { event.preventDefault(); stopTask(); }}><Square />Stop task</button> : <button key="send" className="workbench-primary compact" disabled={!connected || !task.trim() || !selected.length || starting} type="submit"><Send />Run task</button>}
           </div>
         </form>
       </div>
