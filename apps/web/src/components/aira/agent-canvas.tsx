@@ -77,11 +77,18 @@ export interface AgentCanvasProps {
 
 export default function AgentCanvas(props: AgentCanvasProps) {
   const { agents, busy, sent, connected } = props;
-  // Null until the board has been measured, then a fit percentage. The design
-  // arranges four agents; Aira has five and the count is configurable, so the
-  // board scales to hold whatever it is given rather than assuming a number.
-  const [zoom, setZoom] = useState<number | null>(null);
-  const touched = useRef(false);
+  // Zoom is the user's control, never the component's.
+  //
+  // This auto-fitted at first, and it froze the panel twice: the callback set
+  // a zoom that changed the board's layout size, which refired the observer
+  // watching it; moving the measurement out then toggled the stage's scrollbar,
+  // which refired it again. Even working, fitting five cards into one screen
+  // shrank the board to 45% and made it unreadable.
+  //
+  // A canvas scrolls. That is what the reference does with its cards running
+  // off the edges, it needs no measurement at all, and there is no loop to get
+  // wrong.
+  const [zoom, setZoom] = useState(100);
   const [open, setOpen] = useState<string[]>([]);
   const active = agents.filter(a => a.phase === 'working').length;
 
@@ -117,35 +124,9 @@ export default function AgentCanvas(props: AgentCanvasProps) {
   const taskRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const stageRef = useRef<HTMLDivElement>(null);
-  const shown = zoom ?? 100;
+  const shown = zoom;
   const wires = useWires(worldRef, taskRef, cardRefs, agents.length, shown);
-
-  const setZoomManually = (next: number) => { touched.current = true; setZoom(next); };
-
-  // Fit on mount and on resize, until the user takes over.
-  useLayoutEffect(() => {
-    const stage = stageRef.current;
-    const world = worldRef.current;
-    if (!stage || !world) return;
-    const fit = () => {
-      if (touched.current) return;
-      // clientHeight counts the stage's own padding, which is reserved for the
-      // dock — measuring against it left the lowest card underneath the dock.
-      const style = getComputedStyle(stage);
-      const room = stage.clientHeight
-        - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-      const natural = Math.max(world.offsetHeight, world.scrollHeight);
-      if (room <= 0 || !natural) return;
-      setZoom(Math.round(Math.max(45, Math.min(100, (room / natural) * 100))));
-    };
-    fit();
-    const settled = setTimeout(fit, 250);
-    const observer = new ResizeObserver(fit);
-    observer.observe(stage);
-    observer.observe(world);
-    return () => { clearTimeout(settled); observer.disconnect(); };
-  }, [agents.length, connected]);
-
+  const setZoomManually = setZoom;
   return <section className="agent-canvas-page screen-content" aria-label="Agent canvas">
     <div className="canvas-top">
       <button className="canvas-top-button" onClick={props.onNewProject} disabled={props.busy}>

@@ -91,8 +91,13 @@
   min-height: 0;
   overflow: auto;
   display: grid;
-  place-items: center;
+  /* Centred across, top-aligned down: centring a board taller than the stage
+     would put its first row above the scroll origin, out of reach. */
+  justify-items: center;
+  align-content: start;
   padding: 12px 24px 88px;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff1f transparent;
 }
 .canvas-world {
   position: relative;
