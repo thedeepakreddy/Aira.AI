@@ -141,7 +141,14 @@ export default function AgentCanvas(props: AgentCanvasProps) {
     </div>
 
     <div className="canvas-stage" ref={stageRef}>
-      {!connected && !props.starting ? <div className="canvas-empty">
+      {/* The composer is always on the board.
+        *
+        * It used to be swapped out for an empty state until agents connected —
+        * but connecting happens by running a task, so the one control that
+        * could get anywhere was the one being hidden. The page offered three
+        * example chips that filled an invisible field and looked dead. The
+        * intro now sits above the task rather than in place of it. */}
+      {!connected && !props.starting && <div className="canvas-empty">
         <div className="canvas-empty-glyph"><Bot /></div>
         <h2>What can we move forward?</h2>
         <p>{props.footnote}</p>
@@ -150,7 +157,8 @@ export default function AgentCanvas(props: AgentCanvasProps) {
             <button key={example} onClick={() => props.onTaskChange(example)}>{example}</button>
           ))}
         </div>
-      </div> : <div className="canvas-world" ref={worldRef} style={{ ['--canvas-zoom' as string]: String(shown / 100) }}>
+      </div>}
+      <div className="canvas-world" ref={worldRef} style={{ ['--canvas-zoom' as string]: String(shown / 100) }}>
         <svg className="canvas-wires" aria-hidden="true">
           {wires.map((wire, index) => <g key={index}>
             <path d={wire.d} />
@@ -162,7 +170,7 @@ export default function AgentCanvas(props: AgentCanvasProps) {
         <div className="canvas-column">{columns[0].map(agent => renderNode(agent))}</div>
         <TaskNode {...props} active={active} nodeRef={taskRef} />
         <div className="canvas-column">{columns[1].map(agent => renderNode(agent))}</div>
-      </div>}
+      </div>
 
       {props.error && <div className="canvas-alert" role="alert"><WifiOff /><span>{props.error}</span></div>}
     </div>

@@ -102,6 +102,9 @@
 .canvas-world {
   position: relative;
   display: grid;
+  /* Empty side columns collapse, so a board with no agents yet still centres
+     its task card instead of sitting a third of the way across. */
+  grid-auto-flow: column;
   /* Agents left and right of the task, which stays in the middle column. */
   grid-template-columns: 268px minmax(300px, 440px) 268px;
   align-items: center;
@@ -453,7 +456,9 @@
 
 /* ── states with nothing on the board ────────────────────────────────────── */
 
+/* Sits above the task card rather than replacing it. */
 .canvas-empty {
+  margin-bottom: 22px;
   display: flex;
   flex-direction: column;
   align-items: center;
