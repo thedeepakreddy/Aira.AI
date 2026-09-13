@@ -18,6 +18,14 @@ interface AgentState {
 }
 const blank = (agent: Agent): AgentState => ({ agent, phase: 'idle', text: '', startedAt: null, endedAt: null, error: '' });
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
+/** One line on what each member is for, so the checkboxes mean something. */
+const ROLES: Record<string, string> = {
+  Research: 'Finds and verifies information',
+  Plan: 'Turns a goal into ordered steps',
+  Write: 'Drafts and edits prose',
+  Review: 'Finds what is wrong or missing',
+  Analyse: 'Reasons over data and trade-offs',
+};
 const examples = ['Compare three approaches to my next project', 'Turn this idea into an actionable plan', 'Review these notes and identify what is missing'];
 
 export default function TaskPanel() {
@@ -272,7 +280,7 @@ export default function TaskPanel() {
         {agents.length > 0 && <div className="workbench-agent-list">
           {agents.map(({ agent }) => <label className="workbench-agent-choice" key={agent.id}>
             <input type="checkbox" checked={selected.includes(agent.id)} disabled={busy || starting} onChange={() => setSelected(ids => ids.includes(agent.id) ? ids.filter(id => id !== agent.id) : [...ids, agent.id])} />
-            <span><strong>{agent.name}</strong><small>Task agent</small></span><Bot />
+            <span><strong>{agent.name}</strong><small>{ROLES[agent.name] ?? 'Task agent'}</small></span><Bot />
           </label>)}
         </div>}
         <button className={`workbench-primary ${connected ? 'secondary' : ''}`} disabled={!isDesktop || checking || starting || (!connected && missing)} onClick={() => void (connected ? stop() : start())}>
