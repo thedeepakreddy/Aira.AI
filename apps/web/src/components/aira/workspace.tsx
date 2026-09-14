@@ -3,6 +3,7 @@ import { Bot, Globe, Loader2, LogIn, LogOut, MessageCircle, Mic, Paperclip, Plus
 import { Sheet, SheetTrigger, SheetContent, SheetTitle, SheetDescription, SheetHeader } from '@/components/ui/sheet';
 import ModelPicker from './model-picker';
 import { listModels, fetchSecondOpinion, type ModelSpec, type SecondOpinion } from '@/lib/gateway';
+import { onHandoff } from '@/lib/handoff';
 import { getSession, onAuthChange, signOut as authSignOut } from '@/lib/supabase';
 import { playOrb } from '@/lib/orb';
 import { parseRoute, screenPath, type Screen, type View } from '@/lib/routes';
@@ -65,6 +66,8 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
   const [screen, setScreen] = useState<Screen>(() => parseRoute(window.location.pathname).screen || initialScreen);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [visited, setVisited] = useState<Set<Screen>>(() => new Set([screen]));
+  /** Set below; the handoff effect runs before showScreen exists. */
+  const showScreenRef = useRef<((next: Screen) => void) | null>(null);
   const [draft, setDraft] = useState('');
   const [attachment, setAttachment] = useState<TextAttachment>();
   const [filePending, setFilePending] = useState(false);
@@ -91,6 +94,19 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
   const chat = useChat(userId);
   const signedIn = Boolean(userId);
 
+  /*
+   * A handoff moves the user to the surface it was sent to.
+   *
+   * Navigation lives here rather than in the handoff module: a library that
+   * moves the user around is one that cannot be called from anywhere else, and
+   * the workspace is the only thing that owns which screen is showing.
+   */
+  useEffect(() => {
+    const stop = (['chat', 'cli', 'tasks'] as const).map(target =>
+      onHandoff(target, () => showScreenRef.current?.(target as Screen)));
+    return () => { for (const off of stop) off(); };
+  }, []);
+
   const showScreen = useCallback((next: Screen) => {
     setScreen(next);
     setVisited(previous => new Set([...previous, next]));
@@ -99,6 +115,7 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
     const path = screenPath(view, next);
     if (window.location.pathname !== path) window.history.pushState({}, '', path);
   }, [view]);
+  showScreenRef.current = showScreen;
 
   function newChat() { chat.reset(); setDraft(''); removeAttachment(); showScreen('home'); }
   async function signOut() {

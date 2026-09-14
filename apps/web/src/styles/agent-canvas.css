@@ -949,3 +949,14 @@
 .canvas-schedule button svg { width: 11px; height: 11px; }
 /* The alert shares this corner; it wins when both are present. */
 .canvas-schedules:has(~ .canvas-alert) { display: none; }
+
+/* Send an agent's answer on to the coding surface. Sits under the output it
+   would carry, because that is the thing being sent. */
+.agent-node-chip.send-to-code {
+  margin-top: 8px;
+  border-color: color-mix(in srgb, var(--node-light) 34%, transparent);
+  color: var(--node-light);
+}
+.agent-node-chip.send-to-code:hover {
+  background: color-mix(in srgb, var(--node-light) 14%, transparent);
+}

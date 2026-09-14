@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FolderOpen, History, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
+import { ArrowRightLeft, FolderOpen, History, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
 import { isDesktop, supervisor, pickDirectory, OpenCodeClient, toolTarget, type AgentEvent, type OpenCodeStatus, type PermissionRequest, type QuestionRequest, type ToolActivity } from '@/lib/opencode';
 import { getAccessToken } from '@/lib/supabase';
 import { listCatalogue, fetchUsage, type ModelSpec, type UsageSummary } from '@/lib/gateway';
 import { log as appLog } from '@/lib/applog';
 import SessionHistory, { type HistoryEntry } from './session-history';
+import { onHandoff } from '@/lib/handoff';
 import Markdown from './markdown';
 import '@/styles/agent-workbench.css';
 import '@/styles/code-terminal.css';
@@ -81,6 +82,8 @@ export default function AgentPanel() {
   /* Past coding sessions. These live in OpenCode, not in Aira — it had fifty-two
    * stored for this machine and no way to reach any of them from here. */
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** Who sent the text now sitting in the composer, so it is never anonymous. */
+  const [handedFrom, setHandedFrom] = useState('');
   const [sessions, setSessions] = useState<HistoryEntry[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const [models, setModels] = useState<ModelSpec[]>([]);
@@ -216,6 +219,20 @@ export default function AgentPanel() {
       })();
     });
   }, [applyEvent, refreshSession]);
+
+  /*
+   * Work handed over from another surface fills the composer and stops there.
+   *
+   * Never sent. Some of what arrives here was quoted off a web page, and a
+   * coding agent that starts work on arriving text would be the neatest
+   * injection path in the app. The user reads it and presses send.
+   */
+  useEffect(() => onHandoff('cli', handoff => {
+    setTask(previous => previous.trim()
+      ? `${previous.trim()}\n\n${handoff.text}`
+      : handoff.text);
+    setHandedFrom(handoff.from);
+  }), []);
 
   useEffect(() => {
     if (busy) return;
@@ -407,6 +424,7 @@ export default function AgentPanel() {
       revision.current++;
       setTask(''); setBusy(true);
       setEntries(previous => capped([...previous, { kind: 'you', text }]));
+      setHandedFrom('');
       await client.current.sendMessage(session.current, text);
     } catch (e) { setError(messageOf(e)); setBusy(false); setTask(text); sending.current = false; }
     finally { changing.current = false; setStarting(false); }
@@ -576,7 +594,9 @@ export default function AgentPanel() {
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
       </div>
       <div className="ct-foot">
-        <ShieldCheck style={{ width: 12, height: 12 }} /><span>approvals on</span>
+        {handedFrom
+          ? <><ArrowRightLeft style={{ width: 12, height: 12 }} /><span className="ct-handed">from {handedFrom} — review, then send</span></>
+          : <><ShieldCheck style={{ width: 12, height: 12 }} /><span>approvals on</span></>}
         <span className="ct-sep">·</span><span>⌘⏎ to send</span>
         {sessionID && <><span className="ct-sep">·</span><span title={sessionID}>{sessionID.slice(0, 12)}</span></>}
         <div className="ct-foot-actions">

@@ -536,3 +536,7 @@
   .ct-bar { gap: 7px; padding: 0 9px; }
   .ct-path { display: none; }
 }
+
+/* Text that arrived from another surface. Marked because pasted work with no
+   provenance is indistinguishable from something the user typed. */
+.ct-handed { color: var(--ct-accent-soft); }

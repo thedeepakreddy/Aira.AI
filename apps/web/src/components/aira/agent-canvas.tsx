@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { handOff } from '@/lib/handoff';
 import {
-  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Coins, Crown, Eye, FileText, Gauge, History, Layers, Loader2, Minus, Moon, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, UserPlus, WifiOff, X
+  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Code2, Coins, Crown, Eye, FileText, Gauge, History, Layers, Loader2, Minus, Moon, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, UserPlus, WifiOff, X
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -539,6 +540,17 @@ function AgentNode({ agent, peers, selected, open, model, onRun, onStop, onHandO
 
     {/* Hand this agent's work to another — how a set of tasks gets finished by
       * more than one of them without the user copying text between cards. */}
+    {/* An answer is often the input to a build. Sending it to Code fills the
+      * composer there; it never starts a task on its own. */}
+    {agent.text && <button className="agent-node-chip send-to-code"
+      onClick={() => handOff('cli', {
+        text: `${agent.name} produced this. Use it as the brief:\n\n${agent.text.trim()}`,
+        from: `${agent.name} on the board`,
+      })}
+      title="Open this in the coding agent">
+      <Code2 />Build this
+    </button>}
+
     {agent.text && peers.length > 0 && <div className="agent-node-handoff">
       {handing ? <>
         <span>Continue with</span>

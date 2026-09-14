@@ -1,7 +1,8 @@
 import {useCallback,useEffect,useRef,useState,type KeyboardEvent} from 'react';
-import {ArrowLeft,ArrowRight,ArrowUpRight,Check,Clock3,EyeOff,Globe,Loader2,PanelRightClose,PanelRightOpen,Plus,Power,RotateCw,Search,Send,ShieldAlert,Sparkles,Square,X} from 'lucide-react';
+import {ArrowLeft,ArrowRight,ArrowRightLeft,ArrowUpRight,Check,Clock3,EyeOff,Globe,Loader2,PanelRightClose,PanelRightOpen,Plus,Power,RotateCw,Search,Send,ShieldAlert,Sparkles,Square,X} from 'lucide-react';
 import {isDesktop,supervisor,BrowserClient,type BrowseEvent,type BrowserStatus,type TabState} from '@/lib/browser';
 import {getAccessToken} from '@/lib/supabase';
+import {handOff,quote} from '@/lib/handoff';
 import {listCatalogue,gatewayRequest,keepPage,searchPages,type PageHit} from '@/lib/gateway';
 import Markdown from './markdown';
 import './browser-workbench.css';
@@ -143,6 +144,28 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
   },2500) as unknown as number};
  }
 
+ /**
+  * Sends the current page to another surface.
+  *
+  * The text is quoted and attributed rather than pasted raw. A page body
+  * reaching a coding agent with nothing marking it as someone else's words is
+  * the neatest injection path in the app — and it only ever fills a composer,
+  * so the user reads it before anything runs.
+  */
+ async function sendPageTo(target:'cli'|'tasks'){
+  const c=client.current;
+  if(!c)return;
+  try{
+   const page=await c.snapshot();
+   if(!page?.url)return;
+   handOff(target,{
+    text:quote(page.text||'',page.url),
+    from:page.title?`the page "${page.title}"`:'the browser',
+    source:page.url,
+   });
+  }catch(e){showError(e)}
+ }
+
  async function runRecall(){
   const q=recallQuery.trim();
   if(!q){setRecallHits(null);return}
@@ -267,7 +290,7 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
       <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('back'))} aria-label="Back"><ArrowLeft/></button>
       <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('forward'))} aria-label="Forward"><ArrowRight/></button>
       <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('reload'))} aria-label="Reload"><RotateCw className={working?'spin':''}/></button>
-     </div><form className="browse-bar" onSubmit={e=>{e.preventDefault();void navigate()}}><Search/><input aria-label="Search or enter a web address" value={address} placeholder="Search or enter a web address" disabled={locked} autoComplete="off" spellCheck={false} onFocus={()=>{editingAddress.current=true}} onBlur={()=>{editingAddress.current=false}} onChange={e=>setAddress(e.target.value)}/><button className="browse-bar-go" disabled={locked||!address.trim()} aria-label="Navigate"><ArrowRight/></button></form><button type="button" className={"browse-recall-toggle"+(recallOpen?" on":"")} onClick={()=>{setRecallOpen(o=>!o);setRecallHits(null)}} title="Search pages you have read in Aira" aria-label="Search pages you have read" aria-pressed={recallOpen}><Clock3/></button>
+     </div><form className="browse-bar" onSubmit={e=>{e.preventDefault();void navigate()}}><Search/><input aria-label="Search or enter a web address" value={address} placeholder="Search or enter a web address" disabled={locked} autoComplete="off" spellCheck={false} onFocus={()=>{editingAddress.current=true}} onBlur={()=>{editingAddress.current=false}} onChange={e=>setAddress(e.target.value)}/><button className="browse-bar-go" disabled={locked||!address.trim()} aria-label="Navigate"><ArrowRight/></button></form><button type="button" className={"browse-recall-toggle"+(recallOpen?" on":"")} onClick={()=>{setRecallOpen(o=>!o);setRecallHits(null)}} title="Search pages you have read in Aira" aria-label="Search pages you have read" aria-pressed={recallOpen}><Clock3/></button><button type="button" className="browse-recall-toggle" disabled={!connected} onClick={()=>void sendPageTo('cli')} title="Send this page to the coding agent" aria-label="Send this page to the coding agent"><ArrowRightLeft/></button>
      {recallOpen&&<div className="browse-recall">
       <form onSubmit={e=>{e.preventDefault();void runRecall()}}>
        <Search/>
