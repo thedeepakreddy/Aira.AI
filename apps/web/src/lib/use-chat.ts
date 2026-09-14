@@ -57,6 +57,12 @@ export function useChat(userId: string | null) {
   const [error, setError] = useState('');
   const [storageNotice, setStorageNotice] = useState('');
   const [answeredBy, setAnsweredBy] = useState('');
+  /**
+   * The model that was asked first, when it could not answer and another one
+   * took over. Empty on an ordinary turn — this is only worth saying when
+   * what replied is not what was chosen.
+   */
+  const [stoodInFor, setStoodInFor] = useState('');
   const request = useRef<AbortController | null>(null);
   const messagesRef = useRef(messages);
   const historyRef = useRef(conversations);
@@ -90,7 +96,7 @@ export function useChat(userId: string | null) {
   async function run(history: Message[], id: string, model: string) {
     const controller = new AbortController();
     request.current = controller;
-    setBusy(true); setError(''); setAnsweredBy('');
+    setBusy(true); setError(''); setAnsweredBy(''); setStoodInFor('');
     try {
       // Deltas are batched to a frame. Appending per token rebuilt the whole
       // message list sixty times a second, and the cost grew with the length
@@ -130,6 +136,7 @@ export function useChat(userId: string | null) {
         })) {
           if (controller.signal.aborted || request.current !== controller) return;
           if (event.type === 'start') setAnsweredBy(event.model);
+          if (event.type === 'fallback') setStoodInFor(event.from);
           if (event.type === 'text') {
             buffer.push('reply', event.text);
           } else if (event.type === 'tool_call') {
@@ -195,8 +202,8 @@ export function useChat(userId: string | null) {
     void run(next, currentId, model);
   }
 
-  function open(conversation: Conversation) { stop(); setCurrentId(conversation.id); setMessages(conversation.messages); setError(''); setAnsweredBy(''); }
-  function reset() { stop(); setCurrentId(null); setMessages([]); messagesRef.current = []; setError(''); setAnsweredBy(''); }
+  function open(conversation: Conversation) { stop(); setCurrentId(conversation.id); setMessages(conversation.messages); setError(''); setAnsweredBy(''); setStoodInFor(''); }
+  function reset() { stop(); setCurrentId(null); setMessages([]); messagesRef.current = []; setError(''); setAnsweredBy(''); setStoodInFor(''); }
   function remove(id: string) { if (id === currentId) reset(); setConversations(previous => previous.filter(conversation => conversation.id !== id)); }
-  return { conversations, messages, currentId, busy, searching, error, storageNotice, answeredBy, send, stop, retry, open, reset, remove };
+  return { conversations, messages, currentId, busy, searching, error, storageNotice, answeredBy, stoodInFor, send, stop, retry, open, reset, remove };
 }

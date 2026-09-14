@@ -9,6 +9,21 @@ import { playOrb } from '@/lib/orb';
 import { parseRoute, screenPath, type Screen, type View } from '@/lib/routes';
 import { readTextAttachment, TEXT_FILE_ACCEPT, type TextAttachment } from '@/lib/attachments';
 import { useChat } from '@/lib/use-chat';
+
+/**
+ * What the composer says beneath the picker.
+ *
+ * Names the model that replied, and when the gateway had to hand the turn to
+ * someone else, says whose turn it was. The label alone would change silently —
+ * a user who chose one model and quietly got another notices eventually, and it
+ * reads as a bug rather than as the rescue it was.
+ */
+function answeredLabel(models: ModelSpec[], answeredBy: string, stoodInFor: string): string {
+  if (!answeredBy) return 'Choose a model or let Aira route';
+  const name = (id: string) => models.find(item => item.id === id)?.label ?? id;
+  return stoodInFor ? `${name(answeredBy)} · stood in for ${name(stoodInFor)}` : name(answeredBy);
+}
+
 const AgentPanel = lazy(() => import('./agent-panel'));
 const TaskPanel = lazy(() => import('./task-panel'));
 const BrowserPanel = lazy(() => import('./browser-panel'));
@@ -342,7 +357,7 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
           <div className="chat-input-row"><button className="chat-icon" type="button" aria-label="Attach text or code file" disabled={filePending} onClick={() => fileInput.current?.click()}>{filePending ? <Loader2 className="spin" /> : <Paperclip />}</button><input aria-label="Ask AI a question" placeholder="Ask AI a question" value={draft} onChange={event => setDraft(event.target.value)} />
             {chat.busy ? <button key="stop" className="chat-icon" type="button" onClick={event => { event.preventDefault(); chat.stop(); }} aria-label="Stop response"><Square /></button> : <button key="send" className="chat-icon" type="submit" disabled={filePending} aria-label={draft.trim() || attachment ? 'Send message' : 'Start voice conversation'}>{draft.trim() || attachment ? <Send /> : <Mic />}</button>}
           </div>
-          <div className="chat-composer-meta"><ModelPicker models={models} value={model} onChange={setModel} disabled={chat.busy} /><span>{chat.answeredBy ? models.find(item => item.id === chat.answeredBy)?.label ?? chat.answeredBy : 'Choose a model or let Aira route'}{chat.busy ? ' · Responding' : ''}</span></div>
+          <div className="chat-composer-meta"><ModelPicker models={models} value={model} onChange={setModel} disabled={chat.busy} /><span>{answeredLabel(models, chat.answeredBy, chat.stoodInFor)}{chat.busy ? ' · Responding' : ''}</span></div>
         </form>
       </section>}
     </div></div></main>

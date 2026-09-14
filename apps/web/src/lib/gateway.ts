@@ -29,6 +29,8 @@ export interface ChatMessage {
 
 export type StreamEvent =
   | { type: 'start'; model: string; provider: string }
+  /** The routed model could not answer and another one is taking the turn. */
+  | { type: 'fallback'; from: string; to: string; fault?: Fault }
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'done'; usage: unknown; stopReason: string | null }

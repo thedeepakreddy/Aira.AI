@@ -15,6 +15,7 @@ import {
 } from '../providers/types.ts';
 import { contextFor, record as remember, withContext } from '../memory/context.ts';
 import { routeModel } from '../routing/router.ts';
+import { exhaustedMessage, nextModel, worthFallingBack } from '../routing/fallback.ts';
 import { emit, type ModelRequestPayload } from '../usage/events.ts';
 import { invalid, messageContent, numberOption, object, parseToolCalls, parseToolChoice, parseTools, responseFormat, stopSequences, tokenLimit, validateConversation } from './validation.ts';
 
@@ -165,6 +166,20 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
 
     const userId = c.get('userId');
     const startedAt = Date.now();
+    /**
+     * The vendor currently answering, which is not necessarily the one routed
+     * to: a provider that cannot be reached hands the turn to the next one.
+     *
+     * This matters more here than on the chat screen. A person whose chat
+     * errors asks again; a coding agent twenty tool calls into a task loses the
+     * task, and the surface most likely to be pointed at a free endpoint is
+     * exactly the one most likely to be told "temporarily overloaded".
+     */
+    const reachable = listModels().filter((candidate) => providers.some((p) => p.supports(candidate.id)));
+    const tried: string[] = [decision.model];
+    let active = provider;
+    let activeModel = decision.model;
+    let attemptStartedAt = startedAt;
     const id = `chatcmpl-${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
 
@@ -190,12 +205,15 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
 
     async function record(usage: TokenUsage, stopReason: string | null, ok: boolean, failure: string | null) {
       const payload: ModelRequestPayload = {
-        provider: provider!.id,
-        model: decision.model,
-        routedBy: decision.reason,
+        // Whoever served this attempt, not whoever the router first chose. A
+        // turn rescued by a second vendor cost two requests, and usage that
+        // reports one understates the bill.
+        provider: active.id,
+        model: activeModel,
+        routedBy: activeModel === decision.model ? decision.reason : `fallback from ${decision.model}`,
         ...usage,
-        costUsd: estimateCostUsd(decision.model, usage),
-        durationMs: Date.now() - startedAt,
+        costUsd: estimateCostUsd(activeModel, usage),
+        durationMs: Date.now() - attemptStartedAt,
         stopReason,
         ok,
         error: failure,
@@ -213,28 +231,60 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
 
     const empty: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
+    /**
+     * Hands the turn to a vendor that has not been asked yet, if this failure
+     * is one another vendor could answer and one is left. Records the attempt
+     * that failed on the way out, while `active` still names it.
+     */
+    async function fallBack(error: unknown, emitted: boolean, aborted: boolean): Promise<boolean> {
+      if (aborted || !(error instanceof ProviderError)) return false;
+      if (!worthFallingBack(error.fault, emitted, tried.length)) return false;
+      const candidate = nextModel(reachable, spec!.tier, tried);
+      const backup = candidate ? providers.find((p) => p.supports(candidate.id)) : undefined;
+      if (!candidate || !backup) return false;
+      await record(empty, null, false, error.raw ?? error.message);
+      console.warn(`[gateway] ${active.id} unavailable — trying ${backup.id}/${candidate.id}`);
+      active = backup;
+      activeModel = candidate.id;
+      attemptStartedAt = Date.now();
+      tried.push(candidate.id);
+      return true;
+    }
+
     // ── non-streaming ────────────────────────────────────────────────────────
     if (body.stream !== true) {
+      const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(300_000)]);
       let text = '';
-      const calls: ToolCall[] = [];
+      let calls: ToolCall[] = [];
       let usage = empty;
       let stopReason: string | null = null;
-      let completed = false;
-      try {
-        for await (const event of provider.streamChat({ ...request, signal: AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(300_000)]) })) {
-          if (event.type === 'text') text += event.text;
-          else if (event.type === 'tool_call') calls.push(event.call);
-          else if (event.type === 'done') {
-            usage = event.usage;
-            stopReason = event.stopReason;
-            completed = true;
-          } else if (event.type === 'error') throw new ProviderError(event.message, event.retryable, undefined, undefined, event.fault);
+      while (true) {
+        text = '';
+        calls = [];
+        usage = empty;
+        stopReason = null;
+        let completed = false;
+        try {
+          for await (const event of active.streamChat({ ...request, model: activeModel, signal })) {
+            if (event.type === 'text') text += event.text;
+            else if (event.type === 'tool_call') calls.push(event.call);
+            else if (event.type === 'done') {
+              usage = event.usage;
+              stopReason = event.stopReason;
+              completed = true;
+            } else if (event.type === 'error') throw new ProviderError(event.message, event.retryable, undefined, undefined, event.fault);
+          }
+          if (!completed) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
+          break;
+        } catch (error) {
+          const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false, undefined, undefined, 'provider');
+          // Nothing has reached the client on this path — the body is sent in
+          // one piece at the end — so a discarded attempt leaves no trace to
+          // duplicate.
+          if (await fallBack(pe, false, signal.aborted)) continue;
+          await record(empty, null, false, pe.raw ?? pe.message);
+          return c.json({ error: { message: exhaustedMessage(tried, pe.message), type: 'api_error', fault: pe.fault, advice: faultAdvice(pe.fault) } }, (pe.status ?? 500) as 500);
         }
-        if (!completed) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
-      } catch (error) {
-        const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false, undefined, undefined, 'provider');
-        await record(empty, null, false, pe.raw ?? pe.message);
-        return c.json({ error: { message: pe.message, type: 'api_error', fault: pe.fault, advice: faultAdvice(pe.fault) } }, (pe.status ?? 500) as 500);
       }
       await record(usage, stopReason, true, null);
       if (useMemory) {
@@ -245,7 +295,7 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
         id,
         object: 'chat.completion',
         created,
-        model: decision.model,
+        model: activeModel,
         choices: [
           {
             index: 0,
@@ -273,7 +323,9 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
         id,
         object: 'chat.completion.chunk',
         created,
-        model: decision.model,
+        // Read at call time, so a turn handed to a second vendor says so from
+        // the chunk it was handed over on.
+        model: activeModel,
         choices: [{ index: 0, delta, finish_reason: finish }],
         ...(includeUsage ? { usage: null } : {}),
       });
@@ -288,48 +340,63 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
       try {
         await sse.writeSSE({ data: JSON.stringify(chunk({ role: 'assistant' }, null)) });
         /*
-         * Retry a failure that happened before any output.
+         * Two nested recoveries, because there are two kinds of failure.
          *
-         * `retryable` has been set on these errors since the providers were
-         * written, and propagated to the client, and never acted on — so a
-         * free endpoint answering "Service temporarily overloaded" ended the
-         * turn, when trying again a second later usually works. Seven of those
-         * in one session is what "why does it fail sometimes" turned out to be.
+         * The inner loop retries the same vendor. `retryable` has been set on
+         * these errors since the providers were written, and propagated to the
+         * client, and never acted on — so a free endpoint answering "Service
+         * temporarily overloaded" ended the turn, when trying again a second
+         * later usually works. Seven of those in one session is what "why does
+         * it fail sometimes" turned out to be.
          *
-         * The bar for retrying is that nothing has reached the client yet.
-         * Once a token or a tool call is out, the answer is partly delivered
-         * and starting over would duplicate it — so a stream that dies halfway
-         * still fails, and says so, rather than stuttering.
+         * The outer loop asks a different vendor, once retrying has given up.
+         * An overloaded endpoint clears in a second; an account with no credit
+         * never does, and that is the failure only somebody else can answer.
+         *
+         * Both stop at the same line: nothing may have reached the client yet.
+         * Once a token or a tool call is out the answer is partly delivered,
+         * and starting over — here or elsewhere — would duplicate it. So a
+         * stream that dies halfway still fails, and says so, rather than
+         * stuttering.
          */
-        for (let attempt = 1; ; attempt++) {
+        while (true) {
           try {
-            for await (const event of provider.streamChat({ ...request, signal })) {
-              if (event.type === 'text') {
-                streamed += event.text;
-                await sse.writeSSE({ data: JSON.stringify(chunk({ content: event.text }, null)) });
-              } else if (event.type === 'tool_call') {
-                // Emitted whole rather than as fragments; clients accept either.
-                await sse.writeSSE({
-                  data: JSON.stringify(
-                    chunk({ tool_calls: [{ index: toolCalls, ...toOpenAIToolCall(event.call) }] }, null),
-                  ),
-                });
-                toolCalls += 1;
-              } else if (event.type === 'done') {
-                usage = event.usage;
-                stopReason = event.stopReason;
-                ok = true;
-              } else if (event.type === 'error') {
-                throw new ProviderError(event.message, event.retryable);
+            for (let attempt = 1; ; attempt++) {
+              try {
+                for await (const event of active.streamChat({ ...request, model: activeModel, signal })) {
+                  if (event.type === 'text') {
+                    streamed += event.text;
+                    await sse.writeSSE({ data: JSON.stringify(chunk({ content: event.text }, null)) });
+                  } else if (event.type === 'tool_call') {
+                    // Emitted whole rather than as fragments; clients accept either.
+                    await sse.writeSSE({
+                      data: JSON.stringify(
+                        chunk({ tool_calls: [{ index: toolCalls, ...toOpenAIToolCall(event.call) }] }, null),
+                      ),
+                    });
+                    toolCalls += 1;
+                  } else if (event.type === 'done') {
+                    usage = event.usage;
+                    stopReason = event.stopReason;
+                    ok = true;
+                  } else if (event.type === 'error') {
+                    throw new ProviderError(event.message, event.retryable, undefined, undefined, event.fault);
+                  }
+                }
+                if (!ok) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
+                break;
+              } catch (error) {
+                if (!shouldRetry(error, { attempt, emitted: streamed !== '' || toolCalls > 0, aborted: signal.aborted })) throw error;
+                // Short and linear: these clear in a second or two when they
+                // clear at all, and a long backoff just makes the surface feel
+                // hung.
+                await new Promise((resolve) => setTimeout(resolve, attempt * RETRY_DELAY_MS));
               }
             }
-            if (!ok) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
             break;
           } catch (error) {
-            if (!shouldRetry(error, { attempt, emitted: streamed !== '' || toolCalls > 0, aborted: signal.aborted })) throw error;
-            // Short and linear: these clear in a second or two when they clear
-            // at all, and a long backoff just makes the surface feel hung.
-            await new Promise((resolve) => setTimeout(resolve, attempt * RETRY_DELAY_MS));
+            if (await fallBack(error, streamed !== '' || toolCalls > 0, signal.aborted)) continue;
+            throw error;
           }
         }
         await sse.writeSSE({
@@ -340,7 +407,7 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
         const pe = error instanceof ProviderError ? error : new ProviderError('Upstream failed.', false);
         failure = pe.raw ?? pe.message;
         ok = false;
-        if (!signal.aborted) await sse.writeSSE({ data: JSON.stringify({ error: { message: pe.message, type: 'api_error', fault: pe.fault, advice: faultAdvice(pe.fault) } }) });
+        if (!signal.aborted) await sse.writeSSE({ data: JSON.stringify({ error: { message: exhaustedMessage(tried, pe.message), type: 'api_error', fault: pe.fault, advice: faultAdvice(pe.fault) } }) });
       } finally {
         // OpenAI clients wait for this sentinel; without it they hang.
         if (!signal.aborted) await sse.writeSSE({ data: '[DONE]' }).catch(() => {});
