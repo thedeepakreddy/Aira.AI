@@ -1,0 +1,178 @@
+/*
+ * The fleet editor.
+ *
+ * A form, not a canvas: this is the one screen in Aira where the user is
+ * filling in fields rather than watching something work, so it reads like a
+ * settings sheet and borrows the board's colours rather than its shapes.
+ */
+
+.ae-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: #00000080;
+  backdrop-filter: blur(4px);
+}
+
+.ae-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  max-height: 100%;
+  border: 1px solid #ffb87a2e;
+  border-radius: 20px;
+  background: linear-gradient(168deg, #1a100b, #100807);
+  box-shadow: 0 30px 90px #000000b3;
+  color: #f4ece6;
+  overflow: hidden;
+}
+
+.ae-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid #ffffff12;
+  flex: none;
+}
+.ae-eyebrow {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: #d99e75;
+  margin-bottom: 4px;
+}
+.ae-head h2 { margin: 0; font-size: 20px; font-weight: 400; letter-spacing: -.4px; }
+.ae-close {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; flex: none;
+  border: 1px solid #ffffff14; border-radius: 9px;
+  background: #ffffff08; color: #bfa48f; cursor: pointer;
+}
+.ae-close:hover { background: #ffffff14; color: #f4ece6; }
+.ae-close svg { width: 15px; height: 15px; }
+
+.ae-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 24px; }
+
+.ae-error {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid #ff7a5c4d;
+  border-radius: 11px;
+  background: #ff7a5c14;
+  color: #ffb4a0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ae-group { display: flex; flex-direction: column; gap: 11px; }
+.ae-group h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #9c8578;
+}
+.ae-empty, .ae-note { margin: 0; font-size: 12.5px; line-height: 1.55; color: #8a7568; }
+
+.ae-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ae-list li {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #ffffff12;
+  border-radius: 14px;
+  background: #ffffff07;
+}
+.ae-list.built-in li { opacity: .78; }
+.ae-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.ae-item strong { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 500; }
+.ae-item strong svg { width: 14px; height: 14px; color: #d99e75; }
+.ae-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #7d6f66; }
+.ae-desc { font-size: 12.5px; line-height: 1.45; color: #b8a292; }
+.ae-tools { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #6b574c; }
+
+.ae-drop {
+  display: grid; place-items: center;
+  width: 34px; flex: none;
+  border: 0; border-radius: 10px;
+  background: none; color: #6b574c; cursor: pointer;
+}
+.ae-drop:hover:not(:disabled) { background: #ff7a5c1f; color: #ffab98; }
+.ae-drop svg { width: 15px; height: 15px; }
+
+.ae-add {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  align-self: flex-start;
+  height: 38px; padding: 0 18px;
+  border: 1px solid #ffb96870; border-radius: 999px;
+  background: linear-gradient(115deg, #f99729, #cf570d);
+  color: #200b02; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.ae-add:disabled { opacity: .45; cursor: not-allowed; background: none; border-color: #ffffff1a; color: #8a7568; }
+.ae-add svg { width: 15px; height: 15px; }
+
+/* ── the form ─────────────────────────────────────────────────────────────── */
+
+.ae-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.ae-form .ae-wide, .ae-form fieldset.ae-wide { grid-column: 1 / -1; }
+.ae-form label, .ae-form fieldset { display: flex; flex-direction: column; gap: 6px; min-width: 0; border: 0; margin: 0; padding: 0; }
+.ae-form label > span, .ae-form legend {
+  font-size: 11px; letter-spacing: .8px; text-transform: uppercase; color: #9c8578; padding: 0;
+}
+.ae-form small { font-size: 11.5px; line-height: 1.5; color: #7d6f66; }
+.ae-form input[type="text"], .ae-form input:not([type]), .ae-form textarea, .ae-form select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #ffffff14;
+  border-radius: 11px;
+  background: #ffffff08;
+  color: #f4ece6;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.ae-form textarea { resize: vertical; line-height: 1.55; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.ae-form input:focus, .ae-form textarea:focus, .ae-form select:focus { border-color: #ffa85c8c; }
+.ae-form input::placeholder, .ae-form textarea::placeholder { color: #6b574c; }
+
+.ae-tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 7px; }
+.ae-tool {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  padding: 8px 11px;
+  border: 1px solid #ffffff12;
+  border-radius: 10px;
+  background: #ffffff05;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #c4b0a0;
+  cursor: pointer;
+}
+.ae-tool:hover { background: #ffffff0d; }
+.ae-tool input { accent-color: #ff9a3d; width: 14px; height: 14px; flex: none; }
+
+.ae-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 9px; margin-top: 4px; }
+.ae-cancel, .ae-save {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 18px;
+  border-radius: 999px; font-size: 13px; cursor: pointer;
+}
+.ae-cancel { border: 1px solid #ffffff14; background: #ffffff08; color: #c4b0a0; }
+.ae-cancel:hover { background: #ffffff14; color: #f4ece6; }
+.ae-save { border: 1px solid #ffb96870; background: linear-gradient(115deg, #f99729, #cf570d); color: #200b02; font-weight: 600; }
+.ae-save:disabled { opacity: .6; cursor: not-allowed; }
+.ae-save svg, .ae-cancel svg { width: 15px; height: 15px; }
+
+@media (max-width: 620px) {
+  .ae-form { grid-template-columns: 1fr; }
+  .ae-scrim { padding: 12px; }
+}

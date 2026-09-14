@@ -212,3 +212,56 @@ export async function collectFleet(
   }
   return found;
 }
+
+/** A fleet member as the shell reports it — Aira's own, or one the user added. */
+export interface FleetMember {
+  id: string;
+  name: string;
+  description: string;
+  brief: string;
+  tier: string;
+  tools: string[];
+  /** False for the six that ship with Aira; those cannot be edited or removed. */
+  custom: boolean;
+}
+
+export interface FleetOptions {
+  members: FleetMember[];
+  /**
+   * Tools a custom agent may be given.
+   *
+   * Comes from the shell rather than being listed here, because it is a
+   * security boundary and there must be exactly one copy of it. A UI that kept
+   * its own list would drift and start offering something the shell refuses.
+   */
+  grantable: string[];
+  tiers: string[];
+  maxCustom: number;
+  used: number;
+}
+
+export interface NewAgent {
+  id: string;
+  name: string;
+  description: string;
+  brief: string;
+  tier: string;
+  tools: string[];
+}
+
+/** Shell field names are snake_case; the panel speaks camelCase. */
+function toOptions(raw: Record<string, unknown>): FleetOptions {
+  return {
+    members: (raw.members as FleetMember[]) ?? [],
+    grantable: (raw.grantable as string[]) ?? [],
+    tiers: (raw.tiers as string[]) ?? [],
+    maxCustom: Number(raw.max_custom ?? raw.maxCustom ?? 0),
+    used: Number(raw.used ?? 0),
+  };
+}
+
+export const roster = {
+  list: async (): Promise<FleetOptions> => toOptions(await invoke('fleet_list')),
+  add: async (agent: NewAgent): Promise<FleetOptions> => toOptions(await invoke('fleet_add', { agent })),
+  remove: async (id: string): Promise<FleetOptions> => toOptions(await invoke('fleet_remove', { id })),
+};

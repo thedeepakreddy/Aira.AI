@@ -180,7 +180,7 @@ pub fn openclaw_status(state: State<'_, OpenClawState>) -> Status {
             token: Some(running.token.clone()),
             binary: find_binary(),
             model: Some(running.model.clone()),
-            fleet: FLEET.len(),
+            fleet: fleet().len(),
         },
         None => Status {
             running: false,
@@ -188,7 +188,7 @@ pub fn openclaw_status(state: State<'_, OpenClawState>) -> Status {
             token: None,
             binary: find_binary(),
             model: None,
-            fleet: FLEET.len(),
+            fleet: fleet().len(),
         },
     }
 }
@@ -223,7 +223,7 @@ pub fn openclaw_status(state: State<'_, OpenClawState>) -> Status {
 ///
 /// Each entry's brief becomes AGENTS.md in its own workspace, which is where
 /// OpenClaw reads scoped policy from.
-struct Member {
+struct Spec {
     id: &'static str,
     name: &'static str,
     description: &'static str,
@@ -246,6 +246,63 @@ struct Member {
     tools: &'static [&'static str],
 }
 
+/// A member of the fleet as it is actually run.
+///
+/// Owned rather than borrowed, because half the fleet can now come from a file
+/// the user edits. The built-in six stay as `Spec` literals above and are
+/// converted on the way in — they are the part of the fleet that ships, and
+/// keeping them as data in the binary means a broken agents file can never take
+/// them away.
+#[derive(Clone, serde::Serialize)]
+pub struct Member {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub brief: String,
+    pub tier: String,
+    pub tools: Vec<String>,
+    /// False for the six Aira ships. The panel will not offer to delete those.
+    pub custom: bool,
+}
+
+impl From<&Spec> for Member {
+    fn from(spec: &Spec) -> Self {
+        Member {
+            id: spec.id.to_string(),
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            brief: spec.brief.to_string(),
+            tier: spec.tier.to_string(),
+            tools: spec.tools.iter().map(|t| t.to_string()).collect(),
+            custom: false,
+        }
+    }
+}
+
+/// The fleet as configured: the six Aira ships, then the user's own.
+///
+/// Built-ins first and always present. They are data in the binary, so an
+/// agents file that is malformed, hand-edited into nonsense, or asking for a
+/// tool that has since moved onto the denylist costs the user their custom
+/// agents and never the fleet itself.
+///
+/// Recomputed per call rather than cached: the file changes while the app runs,
+/// and a fleet read once at startup would need an invalidation path that is
+/// more code than the read it saves.
+pub fn fleet() -> Vec<Member> {
+    let mut members: Vec<Member> = BUILT_IN.iter().map(Member::from).collect();
+    members.extend(crate::fleet::load().into_iter().map(|a| Member {
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        brief: a.brief,
+        tier: a.tier,
+        tools: a.tools,
+        custom: true,
+    }));
+    members
+}
+
 /// Tools no task agent may hold, whatever its role.
 ///
 /// Asked to list what it could reach, a default agent named 49 tools including
@@ -255,7 +312,7 @@ struct Member {
 /// this one cannot, because it drives the HTTP endpoint rather than the
 /// protocol those approvals live on. Denying them is the control that is
 /// actually available here.
-const DENIED_TOOLS: &[&str] = &[
+pub const DENIED_TOOLS: &[&str] = &[
     // Arbitrary execution.
     "exec", "terminal", "process",
     // Credentials and gateway control.
@@ -271,8 +328,8 @@ const DENIED_TOOLS: &[&str] = &[
     "sessions_spawn", "subagents", "swarm",
 ];
 
-const FLEET: &[Member] = &[
-    Member {
+const BUILT_IN: &[Spec] = &[
+    Spec {
         id: "lead",
         name: "Lead",
         description: "Directs the specialists and writes the final answer.",
@@ -288,7 +345,7 @@ const FLEET: &[Member] = &[
             "agents_list", "sessions_list", "sessions_send", "sessions_history",
         ],
     },
-    Member {
+    Spec {
         id: "research",
         name: "Research",
         description: "Gathers and verifies information before answering.",
@@ -296,7 +353,7 @@ const FLEET: &[Member] = &[
         tier: "frontier",
         tools: &["read", "ls", "dir_list", "web_search", "web_fetch", "browser", "memory_search", "memory_get"],
     },
-    Member {
+    Spec {
         id: "plan",
         name: "Plan",
         description: "Turns a goal into an ordered, checkable plan.",
@@ -304,7 +361,7 @@ const FLEET: &[Member] = &[
         tier: "balanced",
         tools: &["read", "ls", "memory_search", "memory_get"],
     },
-    Member {
+    Spec {
         id: "write",
         name: "Write",
         description: "Drafts and edits prose for a named reader.",
@@ -312,7 +369,7 @@ const FLEET: &[Member] = &[
         tier: "balanced",
         tools: &["read", "memory_search", "memory_get"],
     },
-    Member {
+    Spec {
         id: "review",
         name: "Review",
         description: "Finds what is wrong, missing, or risky.",
@@ -320,7 +377,7 @@ const FLEET: &[Member] = &[
         tier: "frontier",
         tools: &["read", "ls", "dir_list", "memory_search", "memory_get"],
     },
-    Member {
+    Spec {
         id: "analyse",
         name: "Analyse",
         description: "Reasons over data, numbers and trade-offs.",
@@ -337,12 +394,12 @@ fn fleet_entries(
     root: &std::path::Path,
 ) -> serde_json::Value {
     let mut entries = serde_json::Map::new();
-    for member in FLEET {
+    for member in fleet() {
         // The routed model is the floor: a tier with nothing in it falls back
         // rather than naming a model the gateway does not serve.
         let chosen = catalogue
             .iter()
-            .find(|(_, tier)| tier == member.tier)
+            .find(|(_, tier)| *tier == member.tier)
             .map(|(id, _)| id.as_str())
             .unwrap_or(model);
         let qualified = format!("aira/{chosen}");
@@ -367,7 +424,7 @@ fn fleet_entries(
 /// Rewritten on every start: the brief lives in this binary, so a stale copy on
 /// disk would silently outrank the one being shipped.
 fn write_fleet_briefs(root: &std::path::Path) -> Result<(), String> {
-    for member in FLEET {
+    for member in fleet() {
         let dir = root.join(member.id);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         std::fs::write(
@@ -421,7 +478,7 @@ fn build_config(
             // accident.
             "agentToAgent": {
                 "enabled": true,
-                "allow": FLEET.iter().map(|m| m.id).collect::<Vec<_>>(),
+                "allow": fleet().iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
             },
             // The lead reads its specialists' sessions; nothing needs to see
             // another user's or another agent's tree.
@@ -439,7 +496,7 @@ fn build_config(
                 // obvious owner and fails closed: "Agent-less cron job has no
                 // resolvable owner". Naming one keeps those working without
                 // letting them land on whichever agent happened to be asked.
-                "systemAgent": { "agentId": FLEET[0].id },
+                "systemAgent": { "agentId": BUILT_IN[0].id },
             },
             "entries": fleet_entries(model, catalogue, std::path::Path::new(workspace)),
         },
@@ -559,7 +616,7 @@ pub fn openclaw_start(
         token: Some(gateway_token),
         binary: Some(binary),
         model: Some(model),
-        fleet: FLEET.len(),
+        fleet: fleet().len(),
     })
 }
 
@@ -638,7 +695,7 @@ pub async fn openclaw_agents(
                     AgentEntry {
                         id: id.to_string(),
                         // Title-cased so the panel reads "Research", not "research".
-                        name: FLEET
+                        name: fleet()
                             .iter()
                             .find(|m| m.id == slug)
                             .map(|m| m.name.to_string())
@@ -911,7 +968,7 @@ pub fn openclaw_schedule_add(
         return Err("Repeat must look like 30m, 2h or 1d.".into());
     }
     let agent_id = agent.rsplit('/').next().unwrap_or(&agent).to_string();
-    if !FLEET.iter().any(|m| m.id == agent_id) {
+    if !fleet().iter().any(|m| m.id == agent_id) {
         return Err("That agent is not part of this workspace.".into());
     }
     automations(&state, &["add", "--name", name.trim(), "--every", &every,
@@ -996,7 +1053,7 @@ mod tests {
 
     #[test]
     fn every_member_has_a_brief_worth_reading() {
-        for member in FLEET {
+        for member in fleet() {
             assert!(member.brief.len() > 80, "{} has a token brief", member.id);
             assert!(member.brief.contains('\n'), "{} is a one-liner", member.id);
         }
@@ -1013,9 +1070,9 @@ mod tests {
             assert!(denied.iter().any(|d| d == tool), "{tool} is not denied");
         }
         // And no member may quietly re-grant one through its own allowlist.
-        for member in FLEET {
-            for tool in member.tools {
-                assert!(!DENIED_TOOLS.contains(tool),
+        for member in fleet() {
+            for tool in &member.tools {
+                assert!(!DENIED_TOOLS.contains(&tool.as_str()),
                     "{} asks for denied tool {tool}", member.id);
             }
         }
@@ -1033,11 +1090,12 @@ mod tests {
     /// Research is the only role with a reason to reach the open web.
     #[test]
     fn only_the_roles_that_need_the_web_can_reach_it() {
-        let writer = FLEET.iter().find(|m| m.id == "write").expect("write exists");
-        assert!(!writer.tools.contains(&"browser"), "the drafting agent does not need a browser");
-        assert!(!writer.tools.contains(&"web_search"));
-        let research = FLEET.iter().find(|m| m.id == "research").expect("research exists");
-        assert!(research.tools.contains(&"web_search"), "research must be able to search");
+        let members = fleet();
+        let writer = members.iter().find(|m| m.id == "write").expect("write exists");
+        assert!(!writer.tools.iter().any(|t| t == "browser"), "the drafting agent does not need a browser");
+        assert!(!writer.tools.iter().any(|t| t == "web_search"));
+        let research = members.iter().find(|m| m.id == "research").expect("research exists");
+        assert!(research.tools.iter().any(|t| t == "web_search"), "research must be able to search");
     }
 
     /// Prompt caches are model-scoped, but each agent holds its own
@@ -1070,8 +1128,8 @@ mod tests {
     /// represent them.
     #[test]
     fn delegation_belongs_to_the_lead_alone() {
-        for member in FLEET {
-            let can_delegate = member.tools.contains(&"sessions_send");
+        for member in fleet() {
+            let can_delegate = member.tools.iter().any(|t| t == "sessions_send");
             assert_eq!(can_delegate, member.id == "lead",
                 "{} has the wrong delegation rights", member.id);
         }
@@ -1089,7 +1147,7 @@ mod tests {
         }
         // And cross-agent calls are scoped to this fleet, not left open.
         let allowed = config["tools"]["agentToAgent"]["allow"].as_array().unwrap();
-        assert_eq!(allowed.len(), FLEET.len());
+        assert_eq!(allowed.len(), fleet().len());
     }
 
     #[test]

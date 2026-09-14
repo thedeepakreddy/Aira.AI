@@ -7,6 +7,7 @@ import { createStreamBuffer } from '@/lib/stream-buffer';
 import AgentCanvas from './agent-canvas';
 import { log } from '@/lib/applog';
 import SessionHistory, { type HistoryEntry } from './session-history';
+import AgentEditor from './agent-editor';
 import * as nightShift from '@/lib/night-shift';
 
 type Phase = 'idle' | 'working' | 'done' | 'error' | 'stopped';
@@ -74,6 +75,7 @@ export default function TaskPanel() {
   const restored = useRef<ReturnType<typeof loadBoard>>(null);
   /* Past boards. The live board is one; this is every one before it. */
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [boards, setBoards] = useState<SavedBoard[]>([]);
   /* Unattended work, and whether the last of it has been read. */
   const [shift, setShift] = useState<nightShift.NightShift | null>(null);
@@ -529,7 +531,17 @@ export default function TaskPanel() {
   const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : busy ? `${active} working` : connected ? 'Ready' : isDesktop ? 'Offline' : 'Desktop required';
   const missing = Boolean(status && !status.binary);
 
-  return <><SessionHistory
+  return <><AgentEditor
+    open={editorOpen}
+    onClose={() => setEditorOpen(false)}
+    /* The roster is read when the runtime starts, so a change only reaches the
+     * board on the next connect. Saying so beats a board that quietly does not
+     * match the list the user was just editing. */
+    onChanged={() => setNotice(connected
+      ? 'Agent saved. Reconnect the fleet to bring it onto the board.'
+      : 'Agent saved. It will be on the board when you connect.')}
+  />
+  <SessionHistory
     open={historyOpen}
     onClose={() => setHistoryOpen(false)}
     noun="boards"
@@ -599,6 +611,7 @@ export default function TaskPanel() {
     }} 
     onPower={() => void (connected ? stop() : start())}
     onHistory={() => setHistoryOpen(true)}
+    onEditFleet={() => setEditorOpen(true)}
     nightShift={shift ? { prompt: shift.prompt, everyMinutes: shift.everyMinutes } : null}
     /* The rule lives in one place; this is only asking it about the model
      * currently selected. */
