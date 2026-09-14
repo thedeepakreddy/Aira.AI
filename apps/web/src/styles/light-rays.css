@@ -1,0 +1,144 @@
+/*
+ * Light rays, and the edges they catch.
+ *
+ * The workspace already has a light source: every screen paints its ground
+ * with a warm pool at roughly 4% -12% — just off the top-left corner. Nothing
+ * else in the app acknowledged it, so panels sat under a light that never
+ * reached them.
+ *
+ * Two parts, both keyed to that same source:
+ *
+ *   .light-rays   a layer of angled beams fanning from the top left, sitting
+ *                 behind the page content
+ *   .lit          a hairline that is bright where it faces the light and fades
+ *                 as it turns away, so an edge reads as lit rather than drawn
+ *
+ * Kept deliberately faint. Rays at a strength you notice as an effect become
+ * the subject of the screen; at this weight they do what real ones do, which
+ * is make the space feel occupied without being looked at directly. Everything
+ * here is decoration and takes no pointer events.
+ */
+
+.light-rays {
+  position: absolute;
+  /* Overhangs the frame so the beams enter from outside it rather than
+     starting at a visible edge. */
+  inset: -30% -25% auto -25%;
+  height: 135%;
+  /*
+   * Behind the page, not in front of it.
+   *
+   * Raising this above the page grounds did make the beams unmissable, and made
+   * every screen unreadable with them: this layer is blurred, so over content it
+   * is not a light, it is a smear. No opacity rescues that — the problem is the
+   * order, not the strength.
+   *
+   * So it stays behind, and the screens were made translucent to let it through
+   * instead. A screen with a denser ground gets less of it, which is the right
+   * answer anyway: a wall of monospace should take less light than a board of
+   * cards.
+   */
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.light-rays::before,
+.light-rays::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* Beams of uneven width and spacing. Evenly spaced rays read as a pattern —
+     a grille rather than light — so no two gaps here are the same. */
+  background: repeating-linear-gradient(
+    98deg,
+    transparent 0 2.4%,
+    #ffb87a52 2.4% 3.1%,
+    transparent 3.1% 6.8%,
+    #ffa85c3d 6.8% 7.3%,
+    transparent 7.3% 13.5%,
+    #ffcfa32e 13.5% 14.4%,
+    transparent 14.4% 19%
+  );
+  transform: rotate(-7deg) scale(1.25);
+  transform-origin: 12% 0%;
+  /* Faded to nothing away from the source, so the beams have somewhere to come
+     from and somewhere to die out. */
+  -webkit-mask-image: radial-gradient(ellipse 78% 66% at 8% -4%, #000 4%, #0000009e 38%, transparent 74%);
+  mask-image: radial-gradient(ellipse 78% 66% at 8% -4%, #000 4%, #0000009e 38%, transparent 74%);
+  filter: blur(7px);
+  opacity: .9;
+}
+
+/* A second pass at a slightly different angle and a heavier blur: one set of
+   beams reads as stripes, two overlapping read as light through air. */
+.light-rays::after {
+  transform: rotate(-13deg) scale(1.4);
+  filter: blur(26px);
+  opacity: .55;
+}
+
+/* The home screen keeps its own composition — the orb is the light there, and
+   a second source fights it. */
+.surface.home .light-rays { display: none; }
+
+
+@media (prefers-reduced-motion: reduce) {
+  .light-rays { opacity: .65; }
+}
+
+/* ── lit edges ─────────────────────────────────────────────────────────────
+ *
+ * A gradient hairline drawn in the padding box and masked to the border only,
+ * which is the one way to get a gradient border that follows border-radius.
+ * The gradient runs from the light source, so the top-left of a panel is lit
+ * and the bottom-right falls away — the same direction on every element, which
+ * is what makes them feel lit by one thing rather than each glowing on its own.
+ */
+.lit { position: relative; }
+.lit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    146deg,
+    #ffd9b37a 0%,
+    #ffb87a3d 18%,
+    #ffffff0f 44%,
+    #ffffff05 70%,
+    transparent 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* The key element on a screen: the same edge, turned up, plus a bloom off it.
+   Reserved for the one thing the screen is for — the composer you type into,
+   the card carrying the answer — so that brightness still means something. */
+.lit-key::after {
+  background: linear-gradient(
+    146deg,
+    #ffc98fb8 0%,
+    #ff9a3d66 20%,
+    #ffffff1a 48%,
+    #ffffff08 72%,
+    transparent 100%
+  );
+}
+.lit-key {
+  box-shadow: 0 0 34px -14px #ff9a3d59;
+}
+
+/*
+ * No positioning is forced onto children. An earlier version set
+ * `position: relative` on every direct child to lift them over the hairline;
+ * the hairline is masked to the border and covers nothing, so it bought
+ * nothing — and it silently broke any child that was absolutely positioned,
+ * starting with the task card's counter tab, which sits half outside the card.
+ */

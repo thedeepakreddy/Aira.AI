@@ -295,7 +295,7 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
     : busy ? `${props.agents.filter(a => a.phase === 'working').map(a => a.name).join(', ')} working…`
     : sent ? 'Finished.' : 'Ready when you are.';
 
-  return <div className="task-node" ref={props.nodeRef}>
+  return <div className="task-node lit lit-key" ref={props.nodeRef}>
     <span className="task-node-tab">
       {active ? `${active} active agent${active === 1 ? '' : 's'}` : `${props.selected.length} selected`}
     </span>
@@ -403,7 +403,7 @@ function AgentNode({ agent, peers, selected, open, model, onRun, onStop, onHandO
   const colour = COLOURS[agent.name] ?? { light: '#ffb277', deep: '#c0500a', glow: '#ff6a0055' };
   return <article
     ref={register}
-    className={`agent-node-card ${agent.phase}${selected ? ' selected' : ''}`}
+    className={`agent-node-card lit ${agent.phase}${selected ? ' selected' : ''}`}
     style={{
       ['--node-light' as string]: colour.light,
       ['--node-deep' as string]: colour.deep,

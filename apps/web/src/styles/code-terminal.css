@@ -32,12 +32,21 @@
   gap: 0;
   /* Not a flat fill: a cool floor with warmth pooling at the top edge, so the
      panel has a light source rather than being a rectangle of one colour. */
-  /* Translucent so the workspace's amber ground reads behind the panel, as it
-     does on the browser screen. Held firmer than the agent board's: a dense
-     monospace log needs more contrast behind it than a row of cards. */
+  /*
+   * Opaque body, warm edges.
+   *
+   * This was made translucent so the workspace's amber ground would read
+   * through it, the way it does on the browser screen. It does — and it takes
+   * a wall of monospace down with it: at eighty-odd percent over a lit ground,
+   * body text loses the contrast it needs and the whole panel reads as fogged.
+   *
+   * A screen that is mostly small text cannot borrow its warmth by being
+   * see-through. It gets it at the edges instead: a warm pool along the top
+   * inside the panel, and the lit hairline that runs around it.
+   */
   background:
-    radial-gradient(120% 60% at 50% 0%, #2a150a66, transparent 70%),
-    linear-gradient(165deg, #0d0805d6 0%, #0a0604f0 42%, #0a0604fa 100%);
+    radial-gradient(130% 58% at 50% 0%, #3d1f0b, transparent 72%),
+    linear-gradient(180deg, #100a06, var(--ct-bg) 34%);
   border: 1px solid #ffb87a24;
   border-radius: 16px;
   overflow: hidden;

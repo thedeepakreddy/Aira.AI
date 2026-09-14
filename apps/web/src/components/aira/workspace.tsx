@@ -152,6 +152,10 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
 
   return <div className={'viewport-frame view-' + view + (isDesktop ? ' native-desktop' : '')}>
     <main className="stage"><div className="device"><div className={'surface ' + screen}>
+      {/* Beams from the same top-left source the ground is already lit by.
+        * Mounted once here rather than per screen, so every surface is lit by
+        * one light instead of each inventing its own. */}
+      <div className="light-rays" aria-hidden="true" />
       <input ref={fileInput} className="sr-only" type="file" accept={TEXT_FILE_ACCEPT} tabIndex={-1} onChange={event => { void attach(event.target.files?.[0]); event.target.value = ''; }} />
       <header className={'home-header app-header ' + (screen !== 'home' ? 'in-session' : '')}>
         <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>

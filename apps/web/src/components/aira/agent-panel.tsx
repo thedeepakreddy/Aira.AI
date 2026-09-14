@@ -452,7 +452,7 @@ export default function AgentPanel() {
   const modelLabel = models.find(item => item.id === model)?.label ?? model ?? 'no model';
   const dot = !isDesktop || missing ? 'bad' : busy ? 'busy' : ready ? 'live' : '';
 
-  return <section className="cli-page agent-page code-term screen-content" aria-label="Coding workspace">
+  return <section className="cli-page agent-page code-term screen-content lit" aria-label="Coding workspace">
     <SessionHistory
       open={historyOpen}
       onClose={() => setHistoryOpen(false)}
@@ -567,7 +567,7 @@ export default function AgentPanel() {
       {busy && <div className="ct-working" role="status"><Loader2 className="spin" />{waiting ? 'waiting for your response above' : 'working…'}</div>}
     </div>
 
-    <form className="ct-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
+    <form className="ct-composer lit lit-key" onSubmit={e => { e.preventDefault(); void send(); }}>
       <div className="ct-input-row">
         <span className="ct-mark" aria-hidden="true">›</span>
         <textarea aria-label="Task for coding agent" value={task} rows={2} disabled={busy || starting}
