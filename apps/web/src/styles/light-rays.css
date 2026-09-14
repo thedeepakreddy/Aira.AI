@@ -95,7 +95,15 @@
  * and the bottom-right falls away — the same direction on every element, which
  * is what makes them feel lit by one thing rather than each glowing on its own.
  */
-.lit { position: relative; }
+/*
+ * Zero-specificity, for the same reason as .wave.
+ *
+ * As a plain class this tied with `.screen-content { position: absolute }` and
+ * won on source order, which took the coding panel out of its absolute fill and
+ * collapsed it to the height of its own content. `:where()` adds no specificity,
+ * so it only supplies a position to elements that have none.
+ */
+:where(.lit) { position: relative; }
 .lit::after {
   content: '';
   position: absolute;

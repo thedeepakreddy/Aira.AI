@@ -19,7 +19,18 @@
  *     cost is area × blur radius
  */
 
-.wave, .neon-edge { position: relative; }
+/*
+ * Zero-specificity, deliberately.
+ *
+ * These need a positioned ancestor for their pseudo-elements, but written as a
+ * plain class selector this beat `.screen-content { position: absolute }` — so
+ * the coding panel stopped filling its surface and collapsed to the height of
+ * its own content, leaving a third of the window empty below it.
+ *
+ * `:where()` contributes nothing to specificity, so any position the element
+ * already has wins and this only supplies one where there was none.
+ */
+:where(.wave, .neon-edge) { position: relative; }
 
 /* ── travelling wash ──────────────────────────────────────────────────────── */
 
