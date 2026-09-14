@@ -61,6 +61,48 @@
 .canvas-top-button:hover:not(:disabled) { background: #ffffff14; }
 .canvas-top-button:disabled { opacity: .45; cursor: not-allowed; }
 .canvas-top-button svg { width: 15px; height: 15px; }
+/*
+ * The power control.
+ *
+ * Off it reads as an invitation and is the brightest thing in the bar, because
+ * with the runtime down it is the only control that does anything. On it steps
+ * back to a quiet lit state — the board is the subject then, not its switch —
+ * and only turns red under the cursor, where the destructive reading belongs.
+ */
+.canvas-power {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 20px;
+  border-radius: 999px;
+  border: 1px solid #ffb96870;
+  background: linear-gradient(115deg, #f99729, #cf570d);
+  color: #200b02;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 #ffe7bc40, 0 0 30px -6px var(--canvas-glow);
+  transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+}
+.canvas-power svg { width: 15px; height: 15px; flex-shrink: 0; stroke-width: 1.9; }
+.canvas-power:disabled { opacity: .55; cursor: not-allowed; }
+.canvas-power.on {
+  background: #5fd67f14;
+  border-color: #5fd67f4d;
+  color: #a8e6bb;
+  font-weight: 400;
+  box-shadow: 0 0 26px -8px #5fd67f66;
+}
+.canvas-power.on svg { color: #6fd08c; }
+/* The stop is only advertised on hover, so a connected board does not sit
+   under a red button it did not ask for. */
+.canvas-power.on:hover:not(:disabled) {
+  background: #ff7a5c1f;
+  border-color: #ff7a5c5c;
+  color: #ffb4a0;
+}
+.canvas-power.on:hover:not(:disabled) svg { color: #ff9b85; }
+
 /* The primary action is the one solid shape on the board. */
 .canvas-top-button.solid {
   background: #f7f3ef;

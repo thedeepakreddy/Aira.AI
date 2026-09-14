@@ -1,8 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Activity, BarChart3, Bot, ChevronRight, CircleHelp, Cloud, Download, Eye,
-  FileText, Gauge, Layers, Loader2, Minus, Plus, Scale, Send, Share2, Square,
-  Sparkles, Trash2, WifiOff, ArrowRight, Crown, Coins, Clock3, X,
+  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Coins, Crown, Eye, FileText, Gauge, Layers, Loader2, Minus, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, WifiOff, X
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -113,8 +111,10 @@ export interface AgentCanvasProps {
   schedules: { id: string; name: string; when: string; agent: string }[];
   onSchedule: (every: string, agent: string) => void;
   onUnschedule: (id: string) => void;
-  onNewProject: () => void;
-  onSave: () => void;
+  /** Starts the runtime when down, stops it when up. */
+  onPower: () => void;
+  /** Stops every run and empties the board. */
+  onClearBoard: () => void;
   canSave: boolean;
   footnote: string;
 }
@@ -176,15 +176,24 @@ export default function AgentCanvas(props: AgentCanvasProps) {
   const setZoomManually = setZoom;
   return <section className="agent-canvas-page screen-content" aria-label="Agent canvas">
     <div className="canvas-top">
-      {/* Never disabled. It stops every run before clearing, so it is safe
-        * mid-task — and it is the way out of a board that will not settle,
-        * which is exactly when `disabled={busy}` took it away. */}
-      <button className="canvas-top-button" onClick={props.onNewProject}>
-        <Plus />New Project
-      </button>
-      <button className="canvas-top-button solid" onClick={props.onSave} disabled={!props.canSave}
-        title={props.canSave ? 'Save this board as Markdown' : 'Nothing to save yet — run a task first'}>
-        <Download />Save
+      {/*
+        * One control, and it is the runtime's.
+        *
+        * Connecting used to be a side effect of running a task, which left no
+        * way to see whether the fleet was up or to take it down without one.
+        * Starting and stopping local processes is the thing this page does
+        * that no other page does, so it gets the button.
+        */}
+      <button
+        className={`canvas-power ${props.connected ? 'on' : ''}`}
+        onClick={props.onPower}
+        disabled={props.starting}
+        aria-pressed={props.connected}
+        title={props.connected
+          ? 'Stop the agent runtime and disconnect'
+          : 'Start the agent runtime'}>
+        {props.starting ? <Loader2 className="spin" /> : <Power />}
+        {props.starting ? 'Working…' : props.connected ? 'Connected' : 'Connect agents'}
       </button>
       <button className="canvas-share" onClick={props.onCopy} disabled={!props.canSave}
         title={props.canSave ? 'Copy the whole board' : 'Nothing to copy yet — run a task first'}
@@ -242,7 +251,7 @@ export default function AgentCanvas(props: AgentCanvasProps) {
       <button onClick={() => setZoomManually(Math.max(50, shown - 10))} aria-label="Zoom out"><Minus /></button>
       <button onClick={() => setOpen(open.length ? [] : agents.filter(a => a.text).map(a => a.id))}
         aria-label={open.length ? 'Collapse all output' : 'Expand all output'}><Eye /></button>
-      <button onClick={props.onNewProject} disabled={busy || !sent} aria-label="Clear the canvas"><Trash2 /></button>
+      <button onClick={props.onClearBoard} disabled={busy || !sent} aria-label="Clear the canvas"><Trash2 /></button>
     </div>
 
     <div className="canvas-zoom">
@@ -306,10 +315,10 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
     </div>
     <div className={`task-node-status ${busy || starting ? 'live' : ''}`}>
       <span>{status}</span>
-      {sent && <button onClick={props.onNewProject} disabled={busy}>New task<ChevronRight /></button>}
+      {sent && <button onClick={props.onClearBoard} disabled={busy}>New task<ChevronRight /></button>}
     </div>
     <div className="task-node-tools">
-      <button className="canvas-round" onClick={props.onNewProject} aria-label="New task"
+      <button className="canvas-round" onClick={props.onClearBoard} aria-label="New task"
         title="Clear the board and start again"><Plus /></button>
       <button className="canvas-round quiet" onClick={props.onSelectAll}
         title="Send this task to every agent" aria-label="Select every agent"><Sparkles /></button>

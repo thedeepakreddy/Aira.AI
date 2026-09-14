@@ -481,7 +481,8 @@ export default function TaskPanel() {
       try { await supervisor.removeSchedule(id); refreshSchedules(); }
       catch (e) { setError(messageOf(e)); }
     }} 
-    onNewProject={() => {
+    onPower={() => void (connected ? stop() : start())}
+    onClearBoard={() => {
       // A new project is a clean board: stop what is running, clear the cards,
       // the headline task, the composer and any leftover message. It used to
       // reset only the cards, so the text you had typed survived into the
@@ -492,16 +493,6 @@ export default function TaskPanel() {
       setSent(''); setTask(''); setNotice(''); setError('');
       setExpanded([]);
       setAgents(list => list.map(a => blank(a.agent)));
-    }}
-    onSave={() => {
-      // The board's own content, saved as one document.
-      const body = agents.filter(a => a.text).map(a => `## ${a.agent.name}\n\n${a.text}`).join('\n\n');
-      const file = new Blob([`# ${sent}\n\n${body}\n`], { type: 'text/markdown' });
-      const url = URL.createObjectURL(file);
-      const link = document.createElement('a');
-      link.href = url; link.download = 'aira-project.md';
-      link.click();
-      URL.revokeObjectURL(url);
     }}
     canSave={Boolean(sent && agents.some(a => a.text))}
     footnote={!isDesktop
