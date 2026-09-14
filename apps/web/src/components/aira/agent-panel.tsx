@@ -318,6 +318,13 @@ export default function AgentPanel() {
   }, [connectStream, refreshSession]);
 
   async function launch(token: string, resume?: string) {
+    /*
+     * Same reason as the board: the coding runtime is a local process reached
+     * over Tauri's bridge. It is also the one surface that could not work on
+     * the web even with a hosted runtime — it reads and writes the files on
+     * this machine, and a web page has none of them.
+     */
+    if (!isDesktop) throw new Error('The coding agent works on your own files, so it needs the Aira desktop app.');
     if (!workdir.trim()) throw new Error('Choose the project folder your coding agent should work in.');
     const catalogue = await listCatalogue();
     const chosen = model || catalogue.routing.code || catalogue.models[0]?.id;

@@ -173,6 +173,9 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
  }
 
  async function start(){
+  // A real Chrome on this machine, driven over Tauri's bridge. Neither exists
+  // in a browser tab — which already has tabs of its own.
+  if(!isDesktop){setError('The Aira browser drives a real Chrome on your machine, so it needs the desktop app.');return}
   setError('');setStarting(true);
   const controller=new AbortController();startingController.current=controller;
   try{
