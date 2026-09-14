@@ -8,7 +8,10 @@
     "start": "node --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:integration": "node --experimental-strip-types scripts/integration.mjs"
+    "test:integration": "node --experimental-strip-types scripts/integration.mjs",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "migrate:check": "node --env-file-if-exists=.env scripts/migrate.mjs --check",
+    "migrations:build": "node scripts/build-migrations.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",

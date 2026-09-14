@@ -33,6 +33,15 @@ export interface MemoryEntry {
 
 export interface MemoryStore {
   readonly kind: 'supabase' | 'ephemeral' | 'disabled';
+  /**
+   * Checks what this store can actually do, rather than what it was handed.
+   *
+   * Called once at boot so `kind` is answered from evidence before anything
+   * asks. A store configured with a Supabase URL and no schema behind it looks
+   * identical to a working one until someone tries to use it, which is how a
+   * gateway spent months reporting durable memory it did not have.
+   */
+  verify(): Promise<MemoryStore['kind']>;
   remember(userId: string, entry: MemoryEntry): Promise<MemoryEntry>;
   recall(userId: string, limit: number, query?: string): Promise<MemoryEntry[]>;
   forget(userId: string, id?: string): Promise<boolean>;
@@ -54,6 +63,8 @@ export function trim(text: string): string {
 
 class EphemeralStore implements MemoryStore {
   readonly kind = 'ephemeral' as const;
+  /** Nothing to check: it is already what it says it is. */
+  async verify(): Promise<'ephemeral'> { return 'ephemeral'; }
   private readonly byUser = new Map<string, { entries: MemoryEntry[]; enabled: boolean }>();
 
   private user(userId: string) {
@@ -101,6 +112,7 @@ class EphemeralStore implements MemoryStore {
 
 class DisabledStore implements MemoryStore {
   readonly kind = 'disabled' as const;
+  async verify(): Promise<'disabled'> { return 'disabled'; }
   async enabled(): Promise<boolean> { return false; }
   async setEnabled(): Promise<void> { throw new Error('Shared memory is disabled by the gateway.'); }
   async remember(): Promise<MemoryEntry> { throw new Error('Shared memory is disabled by the gateway.'); }
@@ -122,7 +134,29 @@ function isMissingSchema(error: { code?: string; message?: string } | null): boo
 }
 
 class SupabaseStore implements MemoryStore {
+  /**
+   * How long to stay on the local store before trying Supabase again.
+   *
+   * Degrading used to be permanent for the life of the process, which made
+   * applying the migrations to a running gateway do nothing visible — the fix
+   * was in place and the symptom stayed until someone thought to restart. Five
+   * minutes is short enough that the repair is noticed while the person who
+   * made it is still watching, and long enough that a genuinely missing schema
+   * is not re-probed on every request.
+   */
+  private static readonly RECHECK_MS = 5 * 60_000;
+
   private degraded = false;
+  /*
+   * When Supabase was last actually asked. Kept separate from the flag above
+   * rather than encoded as "degraded since T", because a timestamp doubling as
+   * a boolean makes T=0 mean "healthy" — which is not reachable in production
+   * and is exactly what a test with a mocked clock produces.
+   */
+  private lastAttempt = 0;
+  /** Announced once per outage, not once per recheck. */
+  private announced = false;
+
   /** Reports what it is actually doing, not what it was configured to do. */
   get kind(): 'supabase' | 'ephemeral' { return this.degraded ? 'ephemeral' : 'supabase'; }
   /** Takes over when the schema is missing, so memory keeps working. */
@@ -148,37 +182,81 @@ class SupabaseStore implements MemoryStore {
    */
   private degrade(error: { code?: string; message?: string } | null): boolean {
     if (!isMissingSchema(error)) return false;
-    if (!this.degraded) {
-      this.degraded = true;
+    // Stamped on every confirmation, so the next recheck is five minutes from
+    // the last time we actually looked rather than from the first failure.
+    this.degraded = true;
+    this.lastAttempt = Date.now();
+    if (!this.announced) {
+      this.announced = true;
       console.error(
         '[memory] Supabase schema is missing — falling back to local, ephemeral memory. '
-          + 'Apply services/gateway/migrations to store memory durably.',
+          + 'Run `npm run migrate` in services/gateway to store memory durably.',
       );
     }
     return true;
   }
 
+  /**
+   * Whether this call should go to the local store.
+   *
+   * Once the recheck window has passed it returns false — letting one call
+   * through to Supabase to find out. If the schema is still missing that call
+   * degrades again and falls back, costing one round trip per five minutes.
+   */
+  private useFallback(): boolean {
+    if (!this.degraded) return false;
+    return Date.now() - this.lastAttempt < SupabaseStore.RECHECK_MS;
+  }
+
+  /** Called on any successful query, which is proof the schema is back. */
+  private recovered(): void {
+    if (!this.degraded) return;
+    this.degraded = false;
+    this.announced = false;
+    console.warn(
+      '[memory] Supabase is answering again — memory is durable from here. '
+        + 'What was written while it was not stayed local and is not copied up.',
+    );
+  }
+
+  /**
+   * One cheap query, to find out what this store really is.
+   *
+   * Only a missing schema degrades. A timeout or a network blip at boot is not
+   * a reason to spend the whole process in fallback — those are what the
+   * per-operation handling is for, and a gateway that starts during a five
+   * second Supabase hiccup should not give up on the database entirely.
+   */
+  async verify(): Promise<'supabase' | 'ephemeral'> {
+    const { error } = await this.client.from('aira_memory').select('id').limit(1);
+    if (error) this.degrade(error);
+    else this.recovered();
+    return this.kind;
+  }
+
   async enabled(userId: string): Promise<boolean> {
-    if (this.degraded) return this.fallback.enabled(userId);
+    if (this.useFallback()) return this.fallback.enabled(userId);
     const { data, error } = await this.client.from('aira_memory_preferences').select('enabled').eq('user_id', userId).maybeSingle();
     if (error) {
       if (this.degrade(error)) return this.fallback.enabled(userId);
       throw new Error(error.message);
     }
+    this.recovered();
     return data?.enabled ?? true;
   }
 
   async setEnabled(userId: string, enabled: boolean): Promise<void> {
-    if (this.degraded) return this.fallback.setEnabled(userId, enabled);
+    if (this.useFallback()) return this.fallback.setEnabled(userId, enabled);
     const { error } = await this.client.from('aira_memory_preferences').upsert({ user_id: userId, enabled, updated_at: new Date().toISOString() });
     if (error) {
       if (this.degrade(error)) return this.fallback.setEnabled(userId, enabled);
       throw new Error(error.message);
     }
+    this.recovered();
   }
 
   async remember(userId: string, entry: MemoryEntry): Promise<MemoryEntry> {
-    if (this.degraded) return this.fallback.remember(userId, entry);
+    if (this.useFallback()) return this.fallback.remember(userId, entry);
     if (!await this.enabled(userId)) throw new Error('Shared memory is paused for this user.');
     const { data, error } = await this.client.from('aira_memory').insert({
       user_id: userId,
@@ -191,11 +269,12 @@ class SupabaseStore implements MemoryStore {
       if (this.degrade(error)) return this.fallback.remember(userId, entry);
       throw new Error(error.message);
     }
+    this.recovered();
     return { ...data, id: String(data.id) } as MemoryEntry;
   }
 
   async recall(userId: string, limit: number, query?: string): Promise<MemoryEntry[]> {
-    if (this.degraded) return this.fallback.recall(userId, limit, query);
+    if (this.useFallback()) return this.fallback.recall(userId, limit, query);
     let request = this.client
       .from('aira_memory')
       .select('id, at, surface, role, text')
@@ -208,12 +287,13 @@ class SupabaseStore implements MemoryStore {
       if (this.degrade(error)) return this.fallback.recall(userId, limit, query);
       throw new Error(error.message);
     }
+    this.recovered();
     // Newest-first from the query, oldest-first for reading.
     return (data ?? []).reverse().map((entry) => ({ ...entry, id: String(entry.id) })) as MemoryEntry[];
   }
 
   async forget(userId: string, id?: string): Promise<boolean> {
-    if (this.degraded) return this.fallback.forget(userId, id);
+    if (this.useFallback()) return this.fallback.forget(userId, id);
     if (id && !/^\d+$/.test(id)) return false;
     let request = this.client.from('aira_memory').delete().eq('user_id', userId);
     if (id) request = request.eq('id', id);
@@ -222,6 +302,7 @@ class SupabaseStore implements MemoryStore {
       if (this.degrade(error)) return this.fallback.forget(userId, id);
       throw new Error(error.message);
     }
+    this.recovered();
     return !id || !!data?.length;
   }
 }

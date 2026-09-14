@@ -1,7 +1,7 @@
 -- Cross-surface memory for Aira.
 --
--- Run this, 002_memory_preferences.sql and 003_memory_facts.sql in the Supabase
--- SQL editor.
+-- Apply with `npm run migrate` from services/gateway, which runs this,
+-- 002_memory_preferences.sql and 003_memory_facts.sql together via ALL.sql.
 --
 -- Without them the gateway falls back to local, per-process memory and says so
 -- once in its log: `kind` then reports 'ephemeral' rather than claiming a

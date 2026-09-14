@@ -23,8 +23,11 @@ npm run dev
 Without Supabase configured, set `AIRA_REQUIRE_AUTH=false` to test the model
 path on its own. This mode binds only to loopback and has one identity,
 `dev-user`; caller-supplied identity headers cannot select another user.
-Production requires Supabase bearer sessions, HTTPS, and both SQL migrations in
-`migrations/`. Do not put the service-role key in a client environment file.
+Production requires Supabase bearer sessions, HTTPS, and the SQL migrations in
+`migrations/`. Apply them with `npm run migrate` and confirm with
+`npm run migrate:check` — without them memory works but does not survive a
+restart, and `/health` says so. Do not put the service-role key in a client
+environment file.
 
 ## Endpoints
 

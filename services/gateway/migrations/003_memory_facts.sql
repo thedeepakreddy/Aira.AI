@@ -1,6 +1,6 @@
 -- Semantic memory, and faster recall for it.
 --
--- Run after 001 and 002 in the Supabase SQL editor.
+-- Applied after 001 and 002 by `npm run migrate`.
 --
 -- Facts live in the same table as episodes, under the reserved surface
 -- '__facts', so they inherit the row-level isolation and the service_role-only

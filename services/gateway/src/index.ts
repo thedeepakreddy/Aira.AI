@@ -21,6 +21,20 @@ const memoryStore = initMemory({
   enabled: env.memoryEnabled,
 });
 
+/*
+ * Asked, not assumed.
+ *
+ * A Supabase URL and key with no schema behind them produced a gateway that
+ * reported `storage: supabase` on /health and only admitted otherwise after
+ * something tried to use it and failed. Anyone checking a fresh deploy saw
+ * durable memory that was not there. One query at boot costs a round trip and
+ * makes the health endpoint mean something.
+ */
+const storage = await memoryStore.verify();
+if (storage === 'ephemeral' && env.supabaseUrl) {
+  console.error('[memory] Memory will not survive a restart. Run `npm run migrate` in services/gateway.');
+}
+
 const providers: ChatProvider[] = [];
 if (env.anthropicApiKey) {
   providers.push(new AnthropicProvider(env.anthropicApiKey));
