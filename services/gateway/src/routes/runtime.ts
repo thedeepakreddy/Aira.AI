@@ -6,6 +6,7 @@ import type { AuthedVars } from '../auth.ts';
 import { RuntimeSupervisor, type RuntimeKind } from '../runtimes/supervisor.ts';
 import { buildConfig, writeBriefs, FLEET, type Choice } from '../runtimes/agents.ts';
 import { buildConfig as buildCodeConfig, seedWorkspace } from '../runtimes/code.ts';
+import { planFor, serveStatic, withBase, PREVIEW_BASE } from '../runtimes/preview.ts';
 
 /**
  * The desktop's command vocabulary, served over HTTP.
@@ -197,6 +198,41 @@ export function createRuntimeRoutes(supervisor: RuntimeSupervisor, gatewayUrl: s
     opencode_stop: async (userId) => { supervisor.stop(userId, 'code'); return null; },
     opencode_log: async (userId) => supervisor.get(userId, 'code')?.log ?? [],
 
+    /*
+     * Running the project, so the loop closes.
+     *
+     * A dev server is started only when the project has one; plain files are
+     * served by this process, because spawning npm to hand back two files would
+     * be absurd. Either way it answers under the same path.
+     */
+    preview_start: async (userId) => {
+      const project = join(supervisor.pathFor(userId, 'code'), 'project');
+      if (!existsSync(project)) throw new Error('Connect the coding agent first — there is no project to preview.');
+      const plan = planFor(project, 0);
+      if (plan.kind === 'static') {
+        // Nothing to supervise. The route reads from disk on each request, so
+        // a file the agent just wrote is live immediately.
+        return { running: true, kind: 'static', url: `${PREVIEW_BASE}/` };
+      }
+      const running = await supervisor.start(userId, 'preview', ({ port }) => {
+        const planned = planFor(project, port);
+        return { command: planned.command, args: planned.args, env: planned.env, cwd: project };
+      });
+      return { running: true, kind: 'dev-server', port: running.port, url: `${PREVIEW_BASE}/` };
+    },
+    preview_stop: async (userId) => { supervisor.stop(userId, 'preview'); return null; },
+    preview_status: async (userId) => {
+      const project = join(supervisor.pathFor(userId, 'code'), 'project');
+      const running = supervisor.get(userId, 'preview');
+      return {
+        available: existsSync(project),
+        running: Boolean(running) || existsSync(project),
+        kind: running ? 'dev-server' : 'static',
+        url: `${PREVIEW_BASE}/`,
+      };
+    },
+    preview_log: async (userId) => supervisor.get(userId, 'preview')?.log ?? [],
+
     // ── browser ─────────────────────────────────────────────────────────────
     /*
      * One browser per user, shared between them and the agent.
@@ -345,6 +381,43 @@ export function createRuntimeRoutes(supervisor: RuntimeSupervisor, gatewayUrl: s
         await sse.writeSSE({ data: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) });
       }
     });
+  });
+
+  /**
+   * The preview.
+   *
+   * Served under a path rather than a domain, which is the compromise that
+   * makes this work without DNS per user — and the reason HTML gets a <base>
+   * on the way through.
+   */
+  routes.all('/preview/*', async (c) => {
+    const userId = c.get('userId');
+    if (!userId) return c.text('Sign in to see your preview.', 401);
+    const project = join(supervisor.pathFor(userId, 'code'), 'project');
+    const path = c.req.path.slice(`${PREVIEW_BASE}`.length) || '/';
+
+    const dev = supervisor.get(userId, 'preview');
+    if (dev) {
+      // Forward to the project's own dev server, headers and all.
+      const upstream = await fetch(`http://127.0.0.1:${dev.port}${path}${new URL(c.req.url).search}`, {
+        method: c.req.method,
+        headers: c.req.raw.headers,
+        body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : c.req.raw.body,
+        duplex: 'half',
+      }).catch(() => null);
+      if (!upstream) return c.text('The preview server is not answering yet. Give it a moment.', 503);
+      const type = upstream.headers.get('content-type') ?? '';
+      if (type.includes('text/html')) {
+        return c.html(withBase(await upstream.text(), PREVIEW_BASE), upstream.status as 200);
+      }
+      return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
+    }
+
+    if (!existsSync(project)) return c.text('No project yet. Connect the coding agent first.', 404);
+    const hit = serveStatic(project, path);
+    if (!hit) return c.text('Not found in this project.', 404);
+    if (hit.type.startsWith('text/html')) return c.html(withBase(hit.body.toString('utf8'), PREVIEW_BASE));
+    return new Response(new Uint8Array(hit.body), { headers: { 'content-type': hit.type } });
   });
 
   /** What is running, for the workspace screen. */

@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 
-export type RuntimeKind = 'agents' | 'code' | 'browser';
+export type RuntimeKind = 'agents' | 'code' | 'browser' | 'preview';
 
 export interface Running {
   kind: RuntimeKind;
