@@ -3,6 +3,7 @@ import { FolderOpen, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Sen
 import { isDesktop, supervisor, pickDirectory, OpenCodeClient, toolTarget, type AgentEvent, type OpenCodeStatus, type PermissionRequest, type QuestionRequest, type ToolActivity } from '@/lib/opencode';
 import { getAccessToken } from '@/lib/supabase';
 import { listCatalogue, fetchUsage, type ModelSpec, type UsageSummary } from '@/lib/gateway';
+import { log as appLog } from '@/lib/applog';
 import Markdown from './markdown';
 import '@/styles/agent-workbench.css';
 import '@/styles/code-terminal.css';
@@ -15,6 +16,30 @@ type Entry =
   | { kind: 'permission'; request: PermissionRequest; resolved?: Reply }
   | { kind: 'question'; request: QuestionRequest; answers?: string[][]; skipped?: boolean };
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/**
+ * How much transcript to keep.
+ *
+ * Every entry is a live DOM node, and the hot path below rebuilds the array on
+ * each streamed delta — so the cost of one token is proportional to the length
+ * of the whole session. Unbounded, a long run on a large-context model spends
+ * minutes getting slower and then stops responding, which is what "it crashed
+ * after ten minutes" turned out to be.
+ *
+ * The window is generous enough that no ordinary session reaches it; the whole
+ * conversation is still on disk in the runtime, and reconnecting replays it.
+ */
+const TRANSCRIPT_LIMIT = 400;
+
+/** Trims the head, leaving a marker so the gap is visible rather than silent. */
+function capped(entries: Entry[]): Entry[] {
+  if (entries.length <= TRANSCRIPT_LIMIT) return entries;
+  const dropped = entries.length - TRANSCRIPT_LIMIT;
+  return [
+    { kind: 'notice', text: `${dropped} earlier ${dropped === 1 ? 'line' : 'lines'} hidden to keep this view responsive` },
+    ...entries.slice(dropped + 1),
+  ];
+}
 const examples = ['Explain the architecture of this project', 'Find a bug and propose a focused fix', 'Add tests for the most important untested behavior'];
 
 async function replay(client: OpenCodeClient, sessionID: string): Promise<Entry[]> {
@@ -37,7 +62,13 @@ export default function AgentPanel() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [task, setTask] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setErrorState] = useState('');
+  /* Every error the panel shows also goes to the durable log, so a failure is
+   * still diagnosable after the banner is dismissed or the window reloads. */
+  const setError = useCallback((message: string) => {
+    setErrorState(message);
+    if (message) appLog('code', 'error', message);
+  }, []);
   const [workdir, setWorkdir] = useState('');
   const [starting, setStarting] = useState(false);
   const [checking, setChecking] = useState(isDesktop);
@@ -69,7 +100,7 @@ export default function AgentPanel() {
   }, [entries]);
 
   const note = useCallback((text: string) => {
-    if (alive.current) setEntries(previous => [...previous, { kind: 'notice', text }]);
+    if (alive.current) setEntries(previous => capped([...previous, { kind: 'notice', text }]));
   }, []);
 
   const applyEvent = useCallback((event: AgentEvent) => {
@@ -78,15 +109,26 @@ export default function AgentPanel() {
     switch (event.kind) {
       case 'text':
         setEntries(previous => {
+          // The part being streamed is the last entry in all but pathological
+          // cases, so try the tail before scanning the whole transcript.
+          const last = previous[previous.length - 1];
+          if (last?.kind === 'agent' && last.partID === event.partID) {
+            const next = previous.slice();
+            next[next.length - 1] = { ...last, text: last.text + event.delta };
+            return next;
+          }
           const at = previous.findIndex(entry => entry.kind === 'agent' && entry.partID === event.partID);
-          if (at < 0) return [...previous, { kind: 'agent', text: event.delta, partID: event.partID }];
-          return previous.map((entry, index) => index === at && entry.kind === 'agent' ? { ...entry, text: entry.text + event.delta } : entry);
+          if (at < 0) return capped([...previous, { kind: 'agent', text: event.delta, partID: event.partID }]);
+          const next = previous.slice();
+          const found = next[at];
+          if (found.kind === 'agent') next[at] = { ...found, text: found.text + event.delta };
+          return next;
         });
         break;
       case 'tool':
         setEntries(previous => previous.some(entry => entry.kind === 'tool' && entry.activity.partID === event.activity.partID)
           ? previous.map(entry => entry.kind === 'tool' && entry.activity.partID === event.activity.partID ? { kind: 'tool', activity: event.activity } : entry)
-          : [...previous, { kind: 'tool', activity: event.activity }]);
+          : capped([...previous, { kind: 'tool', activity: event.activity }]));
         break;
       case 'permission':
         setEntries(previous => previous.some(entry => entry.kind === 'permission' && entry.request.id === event.request.id) ? previous : [...previous, { kind: 'permission', request: event.request }]);
@@ -324,7 +366,7 @@ export default function AgentPanel() {
       sending.current = true;
       revision.current++;
       setTask(''); setBusy(true);
-      setEntries(previous => [...previous, { kind: 'you', text }]);
+      setEntries(previous => capped([...previous, { kind: 'you', text }]));
       await client.current.sendMessage(session.current, text);
     } catch (e) { setError(messageOf(e)); setBusy(false); setTask(text); sending.current = false; }
     finally { changing.current = false; setStarting(false); }

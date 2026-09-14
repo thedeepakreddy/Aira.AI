@@ -5,6 +5,7 @@ import { BOARD_KEY, loadBoard, saveBoard } from '@/lib/agent-board';
 import { fetchUsage, listCatalogue, type ModelSpec, type UsageSummary } from '@/lib/gateway';
 import { createStreamBuffer } from '@/lib/stream-buffer';
 import AgentCanvas from './agent-canvas';
+import { log } from '@/lib/applog';
 
 type Phase = 'idle' | 'working' | 'done' | 'error' | 'stopped';
 interface AgentState {
@@ -47,7 +48,13 @@ export default function TaskPanel() {
   const [sent, setSent] = useState('');
   const [starting, setStarting] = useState(false);
   const [checking, setChecking] = useState(isDesktop);
-  const [error, setError] = useState('');
+  const [error, setErrorState] = useState('');
+  /* Every error the panel shows also goes to the durable log, so a failure is
+   * still diagnosable after the banner is dismissed or the window reloads. */
+  const setError = useCallback((message: string) => {
+    setErrorState(message);
+    if (message) log('task', 'error', message);
+  }, []);
   const [notice, setNotice] = useState('');
   const [models, setModels] = useState<ModelSpec[]>([]);
   const [model, setModel] = useState('');

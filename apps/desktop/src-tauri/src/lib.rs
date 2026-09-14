@@ -1,3 +1,4 @@
+mod applog;
 mod browser;
 mod openclaw;
 mod opencode;
@@ -49,6 +50,10 @@ pub fn run() {
             browser::browser_log,
             browser::browser_run,
             browser::browser_api,
+            applog::app_log_write,
+            applog::app_log_read,
+            applog::app_log_path,
+            applog::app_log_clear,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")
