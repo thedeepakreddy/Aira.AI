@@ -116,7 +116,7 @@
   overflow: hidden;
 }
 .sh-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #a68a76; }
-.sh-dot { color: #6b574c; }
+.sh-dot { color: #8d7364; }
 
 .sh-delete {
   display: grid;
@@ -126,7 +126,7 @@
   border: 0;
   border-radius: 9px;
   background: none;
-  color: #6b574c;
+  color: #8d7364;
   cursor: pointer;
   opacity: 0;
   transition: opacity .15s, color .15s, background .15s;
@@ -148,7 +148,7 @@
   text-align: center;
   color: #8a7568;
 }
-.sh-empty svg { width: 22px; height: 22px; color: #6b574c; }
+.sh-empty svg { width: 22px; height: 22px; color: #8d7364; }
 .sh-empty p { margin: 0; font-size: 13px; line-height: 1.55; }
 
 .sh-foot {

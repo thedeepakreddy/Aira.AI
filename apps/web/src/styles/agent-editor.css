@@ -95,15 +95,15 @@
 .ae-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .ae-item strong { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 500; }
 .ae-item strong svg { width: 14px; height: 14px; color: #d99e75; }
-.ae-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #7d6f66; }
+.ae-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #84756c; }
 .ae-desc { font-size: 12.5px; line-height: 1.45; color: #b8a292; }
-.ae-tools { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #6b574c; }
+.ae-tools { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #8d7364; }
 
 .ae-drop {
   display: grid; place-items: center;
   width: 34px; flex: none;
   border: 0; border-radius: 10px;
-  background: none; color: #6b574c; cursor: pointer;
+  background: none; color: #8d7364; cursor: pointer;
 }
 .ae-drop:hover:not(:disabled) { background: #ff7a5c1f; color: #ffab98; }
 .ae-drop svg { width: 15px; height: 15px; }
@@ -127,7 +127,7 @@
 .ae-form label > span, .ae-form legend {
   font-size: 11px; letter-spacing: .8px; text-transform: uppercase; color: #9c8578; padding: 0;
 }
-.ae-form small { font-size: 11.5px; line-height: 1.5; color: #7d6f66; }
+.ae-form small { font-size: 11.5px; line-height: 1.5; color: #84756c; }
 .ae-form input[type="text"], .ae-form input:not([type]), .ae-form textarea, .ae-form select {
   width: 100%;
   padding: 10px 12px;
@@ -141,7 +141,7 @@
 }
 .ae-form textarea { resize: vertical; line-height: 1.55; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
 .ae-form input:focus, .ae-form textarea:focus, .ae-form select:focus { border-color: #ffa85c8c; }
-.ae-form input::placeholder, .ae-form textarea::placeholder { color: #6b574c; }
+.ae-form input::placeholder, .ae-form textarea::placeholder { color: #8d7364; }
 
 .ae-tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 7px; }
 .ae-tool {

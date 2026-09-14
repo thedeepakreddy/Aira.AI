@@ -28,6 +28,23 @@ const NAVIGATION = [
 ] as const;
 const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+/**
+ * Digit shortcuts, in the order the surfaces appear in the header.
+ *
+ * Defined outside the component so the keydown effect does not rebuild it on
+ * every render — and so this reads as what it is: a fixed map, not state.
+ */
+/** What this platform calls the modifier, so the tooltip is not a lie on Windows. */
+const MOD = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '\u2318' : 'Ctrl+';
+
+const SHORTCUTS: Record<string, Screen> = {
+  '1': 'chat',
+  '2': 'browse',
+  '3': 'cli',
+  '4': 'tasks',
+  '5': 'connections',
+};
+
 export default function Workspace({ view = 'auto', initialScreen = 'home' }: { view?: View; initialScreen?: Screen }) {
   const [identity, setIdentity] = useState<{ ready: boolean; id: string | null; error?: string }>({ ready: false, id: null });
   useEffect(() => {
@@ -153,6 +170,22 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !event.defaultPrevented && !historyOpen && (screen === 'voice' || screen === 'chat')) showScreen('home');
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') { event.preventDefault(); setHistoryOpen(open => !open); }
+      /*
+       * Surface switching, the way every desktop app with tabs does it.
+       *
+       * Four surfaces reached only by pointing at a bar is slow for a tool
+       * people keep open all day. Digits rather than letters because the order
+       * is the order on screen, so there is nothing to memorise beyond
+       * left-to-right.
+       *
+       * Guarded on the modifier alone, not on where focus is: cmd-1 while
+       * typing in a composer means "go to chat", not the digit 1 — a text field
+       * never receives a modified digit as input.
+       */
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && SHORTCUTS[event.key]) {
+        event.preventDefault();
+        showScreen(SHORTCUTS[event.key]);
+      }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -226,7 +259,18 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
         </Sheet>
         <button className="brand-home" onClick={() => showScreen('home')} aria-label="Aira home"><span className="brand-wordmark">Aira <span className="brand-byline">by AskDeepakAI</span></span><small>Your AI workspace</small></button>
         <nav className="app-header-actions" aria-label="Main navigation">
-          {NAVIGATION.filter(item => item.screen !== 'home').map(item => <button key={item.screen} className={'header-cli ' + (screen === item.screen ? 'active' : '')} aria-label={item.label} aria-current={screen === item.screen ? 'page' : undefined} onClick={() => showScreen(item.screen)}><item.icon /><span>{item.label}</span></button>)}
+          {NAVIGATION.filter(item => item.screen !== 'home').map(item => {
+            // The shortcut goes in the tooltip rather than on the button: a bar
+            // of labels each carrying a number reads as a numbered list, and
+            // the digit is only useful to someone who went looking for it.
+            const digit = Object.entries(SHORTCUTS).find(([, target]) => target === item.screen)?.[0];
+            return <button key={item.screen} className={'header-cli ' + (screen === item.screen ? 'active' : '')}
+              aria-label={item.label}
+              title={digit ? `${item.label} (${MOD}${digit})` : item.label}
+              aria-keyshortcuts={digit ? `Meta+${digit} Control+${digit}` : undefined}
+              aria-current={screen === item.screen ? 'page' : undefined}
+              onClick={() => showScreen(item.screen)}><item.icon /><span>{item.label}</span></button>;
+          })}
           <button className="account-button glass" onClick={signedIn ? () => void signOut() : () => showScreen('login')} aria-label={signedIn ? 'Sign out' : 'Log in'}>{signedIn ? <LogOut /> : <LogIn />}<span>{signedIn ? 'Sign out' : 'Log in'}</span></button>
         </nav>
       </header>

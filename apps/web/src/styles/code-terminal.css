@@ -16,7 +16,10 @@
   --ct-bg: #0a0604;
   --ct-ink: #f2e6dc;
   --ct-dim: #9a8375;
-  --ct-faint: #6b574c;
+  /* 4.56:1 on the panel ground. Was #6b574c at 2.95:1 — below the body-text
+     minimum, and this token carries real text: the session path, notices, and
+     the marks that say who is speaking. */
+  --ct-faint: #8d7364;
   --ct-line: #ffffff14;
   --ct-accent: #ff9a3d;
   --ct-accent-soft: #ffb877;
@@ -131,8 +134,10 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 27px;
-  padding: 0 12px;
+  /* 30, not 27: measured at the practical floor for a pointer target, and
+     these three sit in a row where a miss lands on the neighbour. */
+  height: 30px;
+  padding: 0 13px;
   border: 1px solid transparent;
   /* Pills, as on the board. */
   border-radius: 999px;

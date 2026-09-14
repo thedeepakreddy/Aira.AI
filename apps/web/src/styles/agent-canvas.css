@@ -240,7 +240,7 @@
   line-height: 1.5;
   letter-spacing: -.2px;
 }
-.task-node-body textarea::placeholder { color: #7d6558; }
+.task-node-body textarea::placeholder { color: #8d7264; }
 
 /* The status strip: lit while work is running, quiet when it is not. */
 .task-node-status {
