@@ -68,7 +68,7 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
   alive.current=true;
   let cancelled=false;
   queueMicrotask(()=>{
-   if(!isDesktop||cancelled)return;
+   if(cancelled)return;
    void browserCleanup.then(()=>supervisor.status()).then(next=>{
     if(cancelled)return;
     if(next.running&&next.port!=null&&next.token)client.current=new BrowserClient(next.port,next.token);
@@ -78,7 +78,7 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
   return()=>{
    cancelled=true;alive.current=false;run.current?.abort();startingController.current?.abort();client.current=null;
    queueMicrotask(()=>{
-    if(isDesktop&&!alive.current){
+    if(!alive.current){
      const launch=pendingStart.current;
      browserCleanup=browserCleanup.then(async()=>{await launch?.catch(()=>undefined);await supervisor.stop()}).catch(()=>undefined);
     }
@@ -173,9 +173,6 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
  }
 
  async function start(){
-  // A real Chrome on this machine, driven over Tauri's bridge. Neither exists
-  // in a browser tab — which already has tabs of its own.
-  if(!isDesktop){setError('The Aira browser drives a real Chrome on your machine, so it needs the desktop app.');return}
   setError('');setStarting(true);
   const controller=new AbortController();startingController.current=controller;
   try{
@@ -276,8 +273,8 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
   {!connected?<div className="browser-welcome">
    <div className="browser-welcome-orbit"><Globe/></div>
    <span className="eyebrow">A BROWSER WITH CONTEXT</span><h2>Follow your curiosity.</h2>
-   <p>{!isDesktop?'The shared Chrome session runs in Aira Desktop. On the web, open pages in your browser and bring findings back to chat.':status&&!status.python?'Install the browser runtime using the project’s Browser setup guide, then reopen this panel.':'Open real tabs, browse the web, and let research work in the same session. No model is needed to browse.'}</p>
-   <div className="browser-welcome-actions">{isDesktop?<button className="browser-primary" disabled={starting||!status?.python} onClick={()=>void start()}>{starting?<Loader2 className="spin"/>:<Power/>}{starting?'Connecting…':'Connect browser'}</button>:<a className="browser-primary" href="https://www.google.com/" target="_blank" rel="noopener noreferrer">Open web search <ArrowUpRight/></a>}</div>
+   <p>{!isDesktop?'Aira drives its own browser here, hosted for you — the agent and you share its tabs. It is not the browser you are reading this in: a web page cannot see your other tabs, and Aira Desktop is where it drives the Chrome on your own machine. Start findings back to chat.':status&&!status.python?'Install the browser runtime using the project’s Browser setup guide, then reopen this panel.':'Open real tabs, browse the web, and let research work in the same session. No model is needed to browse.'}</p>
+   <div className="browser-welcome-actions"><button className="browser-primary" disabled={starting||(isDesktop&&!status?.python)} onClick={()=>void start()}>{starting?<Loader2 className="spin"/>:<Power/>}{starting?'Connecting…':'Connect browser'}</button></div>
    <div className="browser-feature-row"><span>Real tabs & history</span><span>Shared with coding tools</span><span>Research in context</span></div>
   </div>:<div className={'browser-workbench-grid '+(!showResearch?'research-collapsed':'')}>
    <div className="browser-surface">

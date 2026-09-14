@@ -31,6 +31,13 @@ export { isDesktop };
 
 export interface StartOptions {
   directory?: string;
+  /**
+   * A public repository to seed a hosted workspace from.
+   *
+   * Only meaningful off the desktop: there the agent works in a folder the user
+   * picked, and there is nothing to clone.
+   */
+  repo?: string;
   /** Base URL of the Aira gateway the agent should bill through. */
   gatewayUrl: string;
   /** Current session token. Passed to the agent's environment, never to disk. */

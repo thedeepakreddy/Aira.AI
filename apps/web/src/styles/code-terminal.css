@@ -604,3 +604,19 @@
   cursor: pointer;
 }
 .ct-replay-count { font-variant-numeric: tabular-nums; flex: none; color: var(--ct-faint); }
+
+/* The repository field, in place of the folder picker a browser cannot offer. */
+.ct-repo {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 14px;
+  background: var(--canvas-glass);
+  backdrop-filter: blur(24px);
+  color: var(--ct-ink);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.ct-repo:focus { border-color: #ffa85c8c; }
+.ct-repo::placeholder { color: var(--ct-faint); }

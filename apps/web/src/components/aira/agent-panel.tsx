@@ -84,6 +84,8 @@ export default function AgentPanel() {
   const [historyOpen, setHistoryOpen] = useState(false);
   /** Who sent the text now sitting in the composer, so it is never anonymous. */
   const [handedFrom, setHandedFrom] = useState('');
+  /** Where a hosted workspace comes from. Empty means start from a starter. */
+  const [repo, setRepo] = useState('');
   /*
    * Replay position.
    *
@@ -292,7 +294,7 @@ export default function AgentPanel() {
       if (cancelled) return;
       setModels(available); setModel(current => current || routing.code || available[0]?.id || '');
     });
-    if (isDesktop) void (async () => {
+    void (async () => {
       try {
         const current = await supervisor.status();
         if (cancelled) return;
@@ -324,8 +326,10 @@ export default function AgentPanel() {
      * the web even with a hosted runtime — it reads and writes the files on
      * this machine, and a web page has none of them.
      */
-    if (!isDesktop) throw new Error('The coding agent works on your own files, so it needs the Aira desktop app.');
-    if (!workdir.trim()) throw new Error('Choose the project folder your coding agent should work in.');
+    // On the desktop the agent works in a folder you picked. Hosted, the
+    // workspace is on the server and is seeded from a repository or a starter,
+    // so there is nothing local to require.
+    if (isDesktop && !workdir.trim()) throw new Error('Choose the project folder your coding agent should work in.');
     const catalogue = await listCatalogue();
     const chosen = model || catalogue.routing.code || catalogue.models[0]?.id;
     if (!chosen || !catalogue.models.some(item => item.id === chosen)) throw new Error('Connect a model provider in Aira before starting the coding agent.');
@@ -335,7 +339,7 @@ export default function AgentPanel() {
     client.current = null; activeToken.current = null;
     const next = await supervisor.start({
       gatewayUrl: (import.meta.env?.VITE_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787',
-      token, model: chosen, directory: workdir,
+      token, model: chosen, repo: repo.trim() || undefined, directory: workdir,
       catalogue: catalogue.models.map(m => m.id),
     });
     if (!alive.current) { await supervisor.stop(); throw new Error('The workspace was closed.'); }
@@ -472,7 +476,7 @@ export default function AgentPanel() {
   }
 
   const missing = Boolean(status && !status.binary);
-  const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : !isDesktop ? 'Desktop required' : !connected ? 'Offline' : streamState !== 'live' ? 'Reconnecting…' : waiting ? 'Needs your input' : busy ? 'Working' : 'Ready';
+  const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : !connected ? 'Offline' : streamState !== 'live' ? 'Reconnecting…' : waiting ? 'Needs your input' : busy ? 'Working' : 'Ready';
 
   const folderName = workdir ? workdir.split('/').filter(Boolean).at(-1) : null;
   /* Tokens read better abbreviated at a glance; the exact figure is the title. */
@@ -486,7 +490,7 @@ export default function AgentPanel() {
     ? `${usage.complete ? '' : '≥'}$${usage.costUsd.toFixed(usage.costUsd < 1 ? 4 : 2)}`
     : null;
   const modelLabel = models.find(item => item.id === model)?.label ?? model ?? 'no model';
-  const dot = !isDesktop || missing ? 'bad' : busy ? 'busy' : ready ? 'live' : '';
+  const dot = (isDesktop && missing) ? 'bad' : busy ? 'busy' : ready ? 'live' : '';
 
   return <section className="cli-page agent-page code-term screen-content lit wave wave-inside" aria-label="Coding workspace">
     <SessionHistory
@@ -538,17 +542,24 @@ export default function AgentPanel() {
 
         <div className="ct-field">
           <span className="ct-field-label">project</span>
-          <button className="ct-folder" disabled={!isDesktop || busy || starting} onClick={() => void chooseFolder()}>
-            <FolderOpen /><span>{folderName ?? 'choose a folder'}<small>{workdir || 'no project selected'}</small></span>
-          </button>
+          {isDesktop
+            ? <button className="ct-folder" disabled={busy || starting} onClick={() => void chooseFolder()}>
+                <FolderOpen /><span>{folderName ?? 'choose a folder'}<small>{workdir || 'no project selected'}</small></span>
+              </button>
+            /* Hosted: there is no folder to pick, because the workspace is on
+             * the server. A repository is how a project gets there — and
+             * leaving it empty is a valid choice that gets a starter. */
+            : <input className="ct-repo" value={repo} disabled={busy || starting}
+                placeholder="https://github.com/you/project  ·  or leave empty to start fresh"
+                onChange={event => setRepo(event.target.value)} />}
         </div>
 
-        <button className="ct-connect neon-edge" disabled={!isDesktop || checking || starting || missing || !workdir} onClick={() => void start()}>
+        <button className="ct-connect neon-edge" disabled={checking || starting || (isDesktop && (missing || !workdir))} onClick={() => void start()}>
           {starting ? <Loader2 className="spin" /> : <Power />}{starting ? 'connecting…' : 'connect'}
         </button>
 
         <div className="ct-setup-note"><ShieldCheck /><span>{!isDesktop
-          ? 'File access and command execution are available in Aira desktop.'
+          ? 'This workspace runs on Aira\'s server, not your machine. Edits and commands still ask first — commit and push anything you want to keep.'
           : missing ? 'Install the supported OpenCode runtime to connect this project.'
           : 'File changes and commands request your approval. You control what is remembered.'}</span></div>
         {missing && <code>npm install -g opencode-ai</code>}
@@ -626,7 +637,7 @@ export default function AgentPanel() {
       <div className="ct-input-row">
         <span className="ct-mark" aria-hidden="true">›</span>
         <textarea aria-label="Task for coding agent" value={task} rows={2} disabled={busy || starting}
-          placeholder={!isDesktop ? 'open Aira desktop to work with local code…' : connected ? 'ask about your project, or describe what to build…' : 'connect a project to begin…'}
+          placeholder={connected ? 'ask about your project, or describe what to build…' : 'connect a project to begin…'}
           onChange={e => setTask(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
       </div>
