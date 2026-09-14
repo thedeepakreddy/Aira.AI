@@ -33,6 +33,32 @@ import { invalid, messageContent, numberOption, object, parseToolCalls, parseToo
  * on it.
  */
 
+/** Attempts in total, including the first. Three is two retries. */
+export const MAX_ATTEMPTS = 3;
+export const RETRY_DELAY_MS = 600;
+
+/**
+ * Whether a failed attempt may be tried again.
+ *
+ * Exported for tests: the conditions matter more than the loop around them,
+ * and "does this duplicate output" is not something to discover in production.
+ */
+export function shouldRetry(
+  error: unknown,
+  state: { attempt: number; emitted: boolean; aborted: boolean },
+): boolean {
+  if (state.aborted) return false;
+  // Anything already sent cannot be unsent, so a second attempt would append a
+  // second answer to the first.
+  if (state.emitted) return false;
+  if (state.attempt >= MAX_ATTEMPTS) return false;
+  // An account with no credit, a rejected key, a prompt that is too long: none
+  // of these change by asking again, and retrying bills the user for it.
+  if (!(error instanceof ProviderError)) return false;
+  if (error.fault === 'account') return false;
+  return error.retryable;
+}
+
 export function createOpenAIModelsRoute() {
   return (c: Context) =>
     c.json({
@@ -261,27 +287,51 @@ export function createOpenAIChatRoute(providers: ChatProvider[], surface: Surfac
 
       try {
         await sse.writeSSE({ data: JSON.stringify(chunk({ role: 'assistant' }, null)) });
-        for await (const event of provider.streamChat({ ...request, signal })) {
-          if (event.type === 'text') {
-            streamed += event.text;
-            await sse.writeSSE({ data: JSON.stringify(chunk({ content: event.text }, null)) });
-          } else if (event.type === 'tool_call') {
-            // Emitted whole rather than as fragments; clients accept either.
-            await sse.writeSSE({
-              data: JSON.stringify(
-                chunk({ tool_calls: [{ index: toolCalls, ...toOpenAIToolCall(event.call) }] }, null),
-              ),
-            });
-            toolCalls += 1;
-          } else if (event.type === 'done') {
-            usage = event.usage;
-            stopReason = event.stopReason;
-            ok = true;
-          } else if (event.type === 'error') {
-            throw new ProviderError(event.message, event.retryable);
+        /*
+         * Retry a failure that happened before any output.
+         *
+         * `retryable` has been set on these errors since the providers were
+         * written, and propagated to the client, and never acted on — so a
+         * free endpoint answering "Service temporarily overloaded" ended the
+         * turn, when trying again a second later usually works. Seven of those
+         * in one session is what "why does it fail sometimes" turned out to be.
+         *
+         * The bar for retrying is that nothing has reached the client yet.
+         * Once a token or a tool call is out, the answer is partly delivered
+         * and starting over would duplicate it — so a stream that dies halfway
+         * still fails, and says so, rather than stuttering.
+         */
+        for (let attempt = 1; ; attempt++) {
+          try {
+            for await (const event of provider.streamChat({ ...request, signal })) {
+              if (event.type === 'text') {
+                streamed += event.text;
+                await sse.writeSSE({ data: JSON.stringify(chunk({ content: event.text }, null)) });
+              } else if (event.type === 'tool_call') {
+                // Emitted whole rather than as fragments; clients accept either.
+                await sse.writeSSE({
+                  data: JSON.stringify(
+                    chunk({ tool_calls: [{ index: toolCalls, ...toOpenAIToolCall(event.call) }] }, null),
+                  ),
+                });
+                toolCalls += 1;
+              } else if (event.type === 'done') {
+                usage = event.usage;
+                stopReason = event.stopReason;
+                ok = true;
+              } else if (event.type === 'error') {
+                throw new ProviderError(event.message, event.retryable);
+              }
+            }
+            if (!ok) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
+            break;
+          } catch (error) {
+            if (!shouldRetry(error, { attempt, emitted: streamed !== '' || toolCalls > 0, aborted: signal.aborted })) throw error;
+            // Short and linear: these clear in a second or two when they clear
+            // at all, and a long backoff just makes the surface feel hung.
+            await new Promise((resolve) => setTimeout(resolve, attempt * RETRY_DELAY_MS));
           }
         }
-        if (!ok) throw new ProviderError('The model stream ended before completing. Please retry.', true, 502);
         await sse.writeSSE({
           data: JSON.stringify(chunk({}, toolCalls ? 'tool_calls' : mapStop(stopReason))),
         });

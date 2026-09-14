@@ -248,6 +248,18 @@
   font-size: 12px;
 }
 
+/* The reason a tool failed, after the target it failed on. */
+.ct-why {
+  color: var(--ct-bad);
+  opacity: .85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-size: 12px;
+}
+.ct-tool-line { flex-wrap: wrap; }
+
 .ct-note { margin-top: 2px; }
 .ct-note .ct-mark, .ct-note .ct-text { color: var(--ct-faint); }
 

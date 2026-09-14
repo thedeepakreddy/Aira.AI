@@ -227,7 +227,20 @@ fn build_config(
             "task": "ask",
             "webfetch": "deny",
             "websearch": "deny",
-            "external_directory": "deny",
+            // Ask rather than deny.
+            //
+            // `deny` is silent: the tool fails with no prompt and no reason, so
+            // a project opened one directory too deep produces a run of
+            // identical failures with nothing saying the path was the problem.
+            // Fourteen of those in one session is what "it cannot write to
+            // disk" turned out to be.
+            //
+            // It was not buying much either. `bash` is already `ask`, and an
+            // approved shell command reaches any path on the machine — so
+            // denying the well-behaved tools while the shell goes anywhere is
+            // not a boundary, it is an inconsistency. Asking puts the decision
+            // where the others already are: with the person watching.
+            "external_directory": "ask",
             "aira_browser*": "ask",
             "aira_memory*": "ask",
         },
@@ -390,7 +403,24 @@ mod tests {
             "Bearer browser-token"
         );
         assert_eq!(config["permission"]["aira_browser*"], "ask");
-        assert_eq!(config["permission"]["external_directory"], "deny");
+        // Reaching outside the project prompts rather than failing silently.
+        // What matters is that it is never "allow": the decision has to reach
+        // a person, and a silent deny did not do that either.
+        assert_eq!(config["permission"]["external_directory"], "ask");
+        // The tools that change the machine must never grant themselves.
+        for gated in ["*", "edit", "bash", "task", "external_directory"] {
+            assert_ne!(
+                config["permission"][gated], "allow",
+                "{gated} must not be allowed without asking"
+            );
+        }
+        // Reading is allowed outright; that is the whole point of the split.
+        for readonly in ["read", "list", "glob", "grep"] {
+            assert_eq!(config["permission"][readonly], "allow", "{readonly} should not prompt");
+        }
+        // The network tools stay off: the browser surface is the way out.
+        assert_eq!(config["permission"]["webfetch"], "deny");
+        assert_eq!(config["permission"]["websearch"], "deny");
         let disconnected: serde_json::Value = serde_json::from_str(&build_config("https://aira.example", "token", "model", &[], None,
         ))
         .unwrap();

@@ -578,6 +578,9 @@ function ToolLine({ activity }: { activity: ToolActivity }) {
     <span className="ct-tool-line">
       <span className="ct-verb">{TOOL_VERBS[activity.tool] ?? activity.tool}</span>
       {activity.target && <span className="ct-target" title={activity.target}>{activity.target}</span>}
+      {/* A cross with no reason is the same cross for a denied path and an
+        * overloaded model, which need opposite responses from the reader. */}
+      {failed && activity.error && <span className="ct-why" title={activity.error}>{activity.error}</span>}
     </span>
   </div>;
 }

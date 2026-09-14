@@ -126,6 +126,30 @@ export interface MessageRecord {
 }
 
 /** What the agent is doing right now, so long steps are legible. */
+/**
+ * Turns a failed tool's state into one line a person can act on.
+ *
+ * The case worth naming is a path outside the project. OpenCode refuses those
+ * outright, with no prompt, so every command touching one fails instantly and
+ * identically — and the remedy is not "try again" but "you opened a folder one
+ * level too deep", which nothing in the raw error says.
+ */
+export function describeToolError(state: unknown): string | undefined {
+  const raw = state && typeof state === 'object'
+    ? (state as { error?: unknown; output?: unknown }).error ?? (state as { output?: unknown }).output
+    : undefined;
+  if (raw === undefined || raw === null) return undefined;
+  const text = (typeof raw === 'string' ? raw : JSON.stringify(raw)).trim();
+  if (!text) return undefined;
+  if (/external_directory|outside (the |your )?(project|workspace)|not (in|within) the project/i.test(text)) {
+    return 'Outside your project folder — reconnect with the folder that contains it.';
+  }
+  // Long tool output is a wall of text on one line; the first sentence is the
+  // part that says what went wrong.
+  const first = text.split('\n')[0];
+  return first.length > 200 ? `${first.slice(0, 200)}…` : first;
+}
+
 export interface ToolActivity {
   /** Stable per tool call, so updates replace rather than stack up. */
   partID: string;
@@ -133,6 +157,14 @@ export interface ToolActivity {
   status: 'pending' | 'running' | 'completed' | 'error';
   /** The thing being acted on: a path, a command, a search term. */
   target: string;
+  /**
+   * Why it failed, when it did.
+   *
+   * The runtime has always sent this and the panel always dropped it, so a
+   * denied path and an overloaded model both rendered as a bare cross — two
+   * failures needing opposite responses, shown identically.
+   */
+  error?: string;
 }
 
 export type AgentEvent =
@@ -383,6 +415,7 @@ export class OpenCodeClient {
               tool: part.tool ?? 'tool',
               status: (part.state?.status as ToolActivity['status']) ?? 'running',
               target: toolTarget(part.state?.input),
+              error: describeToolError(part.state),
             },
           };
           break;
