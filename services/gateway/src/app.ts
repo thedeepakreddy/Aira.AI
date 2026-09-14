@@ -12,11 +12,13 @@ import { createOpenAIChatRoute, createOpenAIModelsRoute } from './routes/openai.
 import { createMemoryRoutes } from './routes/memory.ts';
 import { createUsageRoutes } from './routes/usage.ts';
 import { createSecondOpinionRoutes } from './routes/second-opinion.ts';
+import { createRuntimeRoutes } from './routes/runtime.ts';
+import { RuntimeSupervisor } from './runtimes/supervisor.ts';
 import { createMcpRoutes } from './routes/mcp.ts';
 import { requestLimits } from './limits.ts';
 
 /** Importable app factory keeps auth, routes, limits and CORS testable offline. */
-export function createApp(env: Env, providers: ChatProvider[]) {
+export function createApp(env: Env, providers: ChatProvider[], runtimes = new RuntimeSupervisor()) {
   const app = new Hono<{ Variables: AuthedVars }>();
   app.use('*', cors({
     origin: env.allowedOrigins,
@@ -57,6 +59,14 @@ export function createApp(env: Env, providers: ChatProvider[]) {
   secure.route('/v1/memory', createMemoryRoutes());
   secure.route('/v1/usage', createUsageRoutes());
   secure.route('/v1/second-opinion', createSecondOpinionRoutes(providers));
+  /*
+   * Hosted runtimes, for web users who have no desktop app to run them.
+   *
+   * Created here rather than per request so one supervisor owns every process:
+   * the cap and the idle reaping only mean anything if there is exactly one
+   * thing counting.
+   */
+  secure.route('/v1/runtime', createRuntimeRoutes(runtimes, `http://localhost:${env.port}`));
   secure.route('/mcp', createMcpRoutes(env.allowedOrigins));
   app.route('/', secure);
   return app;

@@ -1,4 +1,5 @@
 import { parseSSE } from './sse.ts';
+import { invoke, isDesktop } from './bridge.ts';
 
 /**
  * Client for the OpenCode agent server.
@@ -26,13 +27,7 @@ export interface OpenCodeStatus {
 }
 
 /** True inside the Tauri shell; false in a browser tab. */
-export const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
-async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  // Imported lazily so the web bundle never pulls the desktop bridge.
-  const { invoke: call } = await import('@tauri-apps/api/core');
-  return call<T>(command, args);
-}
+export { isDesktop };
 
 export interface StartOptions {
   directory?: string;

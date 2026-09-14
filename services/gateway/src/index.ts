@@ -8,6 +8,7 @@ import { loadCatalogue } from './providers/registry.ts';
 import { validateRoutes } from './routing/router.ts';
 import type { ChatProvider } from './providers/types.ts';
 import { createApp } from './app.ts';
+import { RuntimeSupervisor } from './runtimes/supervisor.ts';
 
 const env = loadEnv();
 
@@ -80,7 +81,22 @@ loadCatalogue({
   enabledProviders: providers.map((provider) => provider.id),
 });
 validateRoutes();
-const app = createApp(env, providers);
+/*
+ * One supervisor for every hosted runtime.
+ *
+ * Owned here rather than inside the app so shutdown can reach it: these are
+ * real child processes, and a gateway that exits without stopping them leaves
+ * them running with nothing to reap them.
+ */
+const runtimes = new RuntimeSupervisor({
+  maxTotal: Number(process.env.AIRA_MAX_RUNTIMES ?? 8),
+  idleMs: Number(process.env.AIRA_RUNTIME_IDLE_MS ?? 15 * 60_000),
+});
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => { runtimes.shutdown(); process.exit(0); });
+}
+
+const app = createApp(env, providers, runtimes);
 
 const server = serve({ fetch: app.fetch, port: env.port, hostname: env.host }, (info) => {
   console.error(

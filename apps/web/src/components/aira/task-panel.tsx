@@ -204,7 +204,7 @@ export default function TaskPanel() {
 
   // Schedules live in the runtime, so they are only readable while it is up.
   const refreshSchedules = useCallback(() => {
-    if (!isDesktop || !connected) { setSchedules([]); return; }
+    if (!connected) { setSchedules([]); return; }
     void supervisor.schedules()
       .then(next => { if (alive.current) setSchedules(next); })
       .catch(() => { if (alive.current) setSchedules([]); });
@@ -224,7 +224,7 @@ export default function TaskPanel() {
       setModels(available);
       setModel(current => current || routing.task || available[0]?.id || '');
     });
-    if (isDesktop) void (async () => {
+    void (async () => {
       try {
         const next = await supervisor.status();
         if (cancelled) return;
@@ -310,16 +310,6 @@ export default function TaskPanel() {
 
   async function start() {
     if (changing.current || busy) return;
-    /*
-     * The runtimes are local processes reached over Tauri's bridge, which does
-     * not exist in a browser tab. Saying so beats the message this used to give
-     * — "Sign in to start task agents" — which sent people to fix an account
-     * that was never the problem.
-     */
-    if (!isDesktop) {
-      setError('Agents run as local processes, so they need the Aira desktop app. Chat, voice and your workspace all work here.');
-      return;
-    }
     changing.current = true;
     setStarting(true); setError(''); setNotice('');
     try {

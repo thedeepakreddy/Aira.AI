@@ -13,6 +13,8 @@
  * apply.
  */
 
+import { invoke } from './bridge.ts';
+
 export interface OpenClawStatus {
   running: boolean;
   port: number | null;
@@ -25,12 +27,7 @@ export interface OpenClawStatus {
 }
 
 /** True inside the Tauri shell; false in a browser tab. */
-export const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
-async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke: call } = await import('@tauri-apps/api/core');
-  return call<T>(command, args);
-}
+export { isDesktop } from './bridge.ts';
 
 export interface StartOptions {
   /** Base URL of the Aira gateway the agent should bill through. */
