@@ -64,10 +64,31 @@ async function present(table) {
   throw new Error(`${table}: ${response.status} ${body.message ?? ''}`.trim());
 }
 
-async function report() {
+async function report(quiet = false) {
   const rows = await Promise.all(TABLES.map(async (table) => [table, await present(table)]));
-  for (const [table, ok] of rows) console.log(`  ${ok ? '✔' : '✖'} ${table}${ok ? '' : ' — missing'}`);
+  if (!quiet) for (const [table, ok] of rows) console.log(`  ${ok ? '✔' : '✖'} ${table}${ok ? '' : ' — missing'}`);
   return rows.every(([, ok]) => ok);
+}
+
+/**
+ * Waits for PostgREST to notice the tables that were just created.
+ *
+ * PostgREST answers from a cached picture of the schema and reloads it a moment
+ * after the DDL lands, so checking immediately reports PGRST205 — "not in the
+ * schema cache" — for tables that exist. The first run of this script did
+ * exactly that: the migration succeeded and it announced a failure, which is a
+ * worse outcome than the problem it was written to solve, because it invites
+ * someone to run the DDL again looking for an error that was never there.
+ */
+async function settle() {
+  const DEADLINE_MS = 45_000;
+  const started = Date.now();
+  for (let wait = 1000; ; wait = Math.min(wait * 1.5, 5000)) {
+    if (await report(true)) return true;
+    if (Date.now() - started > DEADLINE_MS) return false;
+    if (Date.now() - started < 1500) console.log('Waiting for PostgREST to reload its schema cache…');
+    await new Promise((resolve) => setTimeout(resolve, wait));
+  }
 }
 
 console.log(`Supabase project ${projectRef(url) ?? '(unknown)'}\n`);
@@ -129,9 +150,13 @@ if (!response.ok) {
   process.exit(1);
 }
 
-console.log('Applied.\n\nSchema:');
-const ok = await report();
+console.log('Applied.\n');
+const ok = await settle();
+console.log('Schema:');
+await report();
 console.log(ok
   ? '\nMemory is durable. A running gateway picks this up within five minutes, no restart needed.'
-  : '\nThe statements ran but a table is still missing. Check the SQL editor for what the database said.');
+  : `\nThe statements ran, but PostgREST still does not list every table after 45s.
+Run 'npm run migrate:check' again in a minute — the cache may simply be slow.
+If it is still missing, check the SQL editor for what the database said.`);
 process.exit(ok ? 0 : 1);
