@@ -118,6 +118,17 @@ export class RuntimeSupervisor {
     return found;
   }
 
+  /**
+   * Where a runtime's state will live, before it exists.
+   *
+   * Needed because some runtimes have to prepare their directory first — the
+   * coding workspace is cloned into place, which is asynchronous, and the build
+   * callback below is not.
+   */
+  pathFor(userId: string, kind: RuntimeKind): string {
+    return join(stateDirFor(this.root, userId), kind);
+  }
+
   /** How many are alive, for the cap and for reporting. */
   get size(): number {
     return this.running.size;

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { AuthedVars } from '../auth.ts';
 import { RuntimeSupervisor, type RuntimeKind } from '../runtimes/supervisor.ts';
 import { buildConfig, writeBriefs, FLEET, type Choice } from '../runtimes/agents.ts';
+import { buildConfig as buildCodeConfig, seedWorkspace } from '../runtimes/code.ts';
 
 /**
  * The desktop's command vocabulary, served over HTTP.
@@ -155,6 +156,46 @@ export function createRuntimeRoutes(supervisor: RuntimeSupervisor, gatewayUrl: s
       throw new Error('Scheduled runs need the desktop app.');
     },
     openclaw_cancel: async () => null,
+
+    // ── code ────────────────────────────────────────────────────────────────
+    /*
+     * The coding agent on a workspace the server owns.
+     *
+     * Seeded from a public repository, or a starter for someone with nothing to
+     * clone. Every edit and command still asks, exactly as on the desktop — a
+     * hosted agent is not more trusted for being further away.
+     */
+    opencode_start: async (userId, args) => {
+      // Seeded before the process starts, because a clone is asynchronous and
+      // because OpenCode's working directory has to exist when it launches.
+      const project = await seedWorkspace(
+        supervisor.pathFor(userId, 'code'),
+        typeof args.repo === 'string' && args.repo.trim() ? args.repo.trim() : undefined,
+      );
+      const running = await supervisor.start(userId, 'code', ({ port, token }) => ({
+        command: binary('opencode'),
+        args: ['serve', '--port', String(port), '--hostname', '127.0.0.1'],
+        env: {
+          OPENCODE_SERVER_PASSWORD: token,
+          OPENCODE_CONFIG_CONTENT: buildCodeConfig({
+            gatewayUrl,
+            token: String(args.token ?? ''),
+            model: String(args.model ?? ''),
+            catalogue: (args.catalogue as string[]) ?? [],
+          }),
+        },
+        cwd: project,
+      }));
+      return { running: true, port: running.port, password: running.token, directory: project, binary: 'opencode' };
+    },
+    opencode_status: async (userId) => {
+      const running = supervisor.get(userId, 'code');
+      return running
+        ? { running: true, port: running.port, password: running.token, directory: join(running.stateDir, 'project'), binary: 'opencode' }
+        : { running: false, port: null, password: null, directory: null, binary: 'opencode' };
+    },
+    opencode_stop: async (userId) => { supervisor.stop(userId, 'code'); return null; },
+    opencode_log: async (userId) => supervisor.get(userId, 'code')?.log ?? [],
 
     // ── browser ─────────────────────────────────────────────────────────────
     /*
