@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AuthedVars } from '../auth.ts';
 import { RuntimeSupervisor, type RuntimeKind } from '../runtimes/supervisor.ts';
@@ -26,6 +26,36 @@ export function createRuntimeRoutes(supervisor: RuntimeSupervisor, gatewayUrl: s
   /** Finds a binary the way a login shell would, since a service has a thin PATH. */
   function binary(name: string): string {
     return name;
+  }
+
+  /** The browser service ships with the repo rather than being installed. */
+  function browserScript(): string {
+    return process.env.AIRA_BROWSER_SCRIPT
+      ?? new URL('../../../browser/server.py', import.meta.url).pathname;
+  }
+
+  /**
+   * The interpreter that actually has the browser library.
+   *
+   * `python3` on PATH is almost never it: the dependency is heavy and lives in
+   * a virtualenv, which is how the desktop installs it too. Launching the wrong
+   * interpreter starts a service that answers health checks and fails every
+   * real call with "No module named 'browser_use'" — a failure that looks like
+   * the browser is broken rather than absent.
+   */
+  function browserPython(): string {
+    const home = process.env.HOME ?? '';
+    const candidates = [
+      process.env.AIRA_BROWSER_PYTHON,
+      home ? `${home}/.aira/browser/venv/bin/python` : undefined,
+      '/usr/bin/python3',
+      'python3',
+    ].filter((path): path is string => Boolean(path));
+    for (const candidate of candidates) {
+      if (candidate.includes('/') && !existsSync(candidate)) continue;
+      return candidate;
+    }
+    return 'python3';
   }
 
   async function proxy(port: number, token: string, path: string, init?: RequestInit): Promise<Response> {
@@ -125,6 +155,73 @@ export function createRuntimeRoutes(supervisor: RuntimeSupervisor, gatewayUrl: s
       throw new Error('Scheduled runs need the desktop app.');
     },
     openclaw_cancel: async () => null,
+
+    // ── browser ─────────────────────────────────────────────────────────────
+    /*
+     * One browser per user, shared between them and the agent.
+     *
+     * The service already holds a single session and hands that same session to
+     * the agent, so a tab the agent opens is a tab the user is looking at and
+     * the other way round. That is the whole reason this is worth hosting
+     * rather than giving the agent a second, invisible browser: an agent
+     * working in a window you cannot see is one you cannot stop.
+     *
+     * Headless here, because there is no screen on a server — the panel already
+     * drives it by screenshot and synthetic input, which is the same way it
+     * works on a laptop.
+     */
+    browser_start: async (userId, args) => {
+      const running = await supervisor.start(userId, 'browser', ({ port, token, stateDir }) => ({
+        command: browserPython(),
+        args: [browserScript()],
+        env: {
+          AIRA_BROWSER_PORT: String(port),
+          AIRA_BROWSER_TOKEN: token,
+          AIRA_BROWSER_HEADLESS: '1',
+          AIRA_GATEWAY_URL: gatewayUrl,
+          AIRA_BROWSER_MODEL: String(args.model ?? ''),
+          AIRA_BROWSER_STATE: stateDir,
+          AIRA_TOKEN: String(args.token ?? ''),
+        },
+      }));
+      return { running: true, port: running.port, token: running.token, python: browserPython() };
+    },
+    browser_status: async (userId) => {
+      const running = supervisor.get(userId, 'browser');
+      return running
+        ? { running: true, port: running.port, token: running.token, python: browserPython() }
+        : { running: false, port: null, token: null, python: browserPython() };
+    },
+    browser_stop: async (userId) => { supervisor.stop(userId, 'browser'); return null; },
+    browser_log: async (userId) => supervisor.get(userId, 'browser')?.log ?? [],
+
+    /** The panel's own calls — screenshots, tabs, navigation, input. */
+    browser_api: async (userId, args) => {
+      const running = supervisor.get(userId, 'browser');
+      if (!running) throw new Error('The browser is not running.');
+      const path = String(args.path ?? '');
+      // The path comes from the panel, but this proxies onto a loopback service
+      // that trusts whatever it is asked — so it may only ever be a path.
+      if (!path.startsWith('/') || path.includes('..')) throw new Error('Invalid browser path.');
+      const method = String(args.method ?? 'GET');
+      const response = await proxy(running.port, running.token, path, {
+        method,
+        ...(method === 'POST' && args.body !== undefined ? { body: JSON.stringify(args.body) } : {}),
+      });
+      if (!response.ok) throw new Error(`The browser refused the request: ${response.status}`);
+      return response.json().catch(() => null);
+    },
+
+    browser_run: async (userId, args) => {
+      const running = supervisor.get(userId, 'browser');
+      if (!running) throw new Error('The browser is not running.');
+      const response = await proxy(running.port, running.token, '/run', {
+        method: 'POST',
+        body: JSON.stringify({ task: String(args.task ?? ''), run: String(args.run ?? '') }),
+      });
+      if (!response.ok) throw new Error(`The browser refused the task: ${response.status}`);
+      return response.json().catch(() => null);
+    },
 
     // ── the fleet editor ────────────────────────────────────────────────────
     // Custom agents are a desktop feature for now: they are stored in a file
