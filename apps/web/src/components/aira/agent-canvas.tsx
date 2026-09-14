@@ -217,31 +217,6 @@ export default function AgentCanvas(props: AgentCanvasProps) {
         {props.starting ? <Loader2 className="spin" /> : <Power />}
         {props.starting ? 'Working…' : props.connected ? 'Connected' : 'Connect agents'}
       </button>
-      <div className="canvas-actions">
-        {/* Offered only when there is something local to run on. A switch that
-          * cannot change anything is worse than no switch. */}
-        {props.localModels > 0 && <button
-          className={`canvas-share local-toggle ${props.localOnly ? 'on' : ''}`}
-          onClick={props.onToggleLocal}
-          aria-pressed={props.localOnly}
-          title={props.localOnly
-            ? `Running on this machine (${props.localModels} local model${props.localModels === 1 ? '' : 's'}). Click for hosted models.`
-            : `Running on hosted models. Click to use this machine's ${props.localModels} local model${props.localModels === 1 ? '' : 's'}.`}
-          aria-label="Run agents on this machine">
-          <HardDrive />
-        </button>}
-        <button className="canvas-share" onClick={props.onEditFleet} title="Your agents" aria-label="Your agents">
-          <UserPlus />
-        </button>
-        <button className="canvas-share" onClick={props.onHistory} title="Past boards" aria-label="Past boards">
-          <History />
-        </button>
-      <button className="canvas-share" onClick={props.onCopy} disabled={!props.canSave}
-        title={props.canSave ? 'Copy the whole board' : 'Nothing to copy yet — run a task first'}
-        aria-label="Copy the whole board">
-        <Share2 />
-        </button>
-      </div>
     </div>
 
     {/*
@@ -310,11 +285,39 @@ export default function AgentCanvas(props: AgentCanvasProps) {
       {props.error && <div className="canvas-alert" role="alert"><WifiOff /><span>{props.error}</span></div>}
     </div>
 
+    {/*
+      * Everything that acts on the board, in one place.
+      *
+      * Four of these sat at the top right, directly under the app's own
+      * navigation and drawn exactly like it — two rows of identical glass
+      * circles where the top row changed screens and the bottom row changed the
+      * board, with nothing saying which was which. Board tools belong with the
+      * board's other tools; the header is left to the app.
+      */}
     <div className="canvas-dock">
       <button onClick={() => setZoomManually(Math.min(160, shown + 10))} aria-label="Zoom in"><Plus /></button>
       <button onClick={() => setZoomManually(Math.max(50, shown - 10))} aria-label="Zoom out"><Minus /></button>
       <button onClick={() => setOpen(open.length ? [] : agents.filter(a => a.text).map(a => a.id))}
         aria-label={open.length ? 'Collapse all output' : 'Expand all output'}><Eye /></button>
+
+      <span className="dock-divide" aria-hidden="true" />
+
+      {props.localModels > 0 && <button
+        className={props.localOnly ? 'dock-on' : ''}
+        onClick={props.onToggleLocal}
+        aria-pressed={props.localOnly}
+        title={props.localOnly
+          ? `Running on this machine (${props.localModels} local model${props.localModels === 1 ? '' : 's'}). Click for hosted models.`
+          : `Running on hosted models. Click to use this machine's ${props.localModels} local model${props.localModels === 1 ? '' : 's'}.`}
+        aria-label="Run agents on this machine"><HardDrive /></button>}
+      <button onClick={props.onEditFleet} title="Your agents" aria-label="Your agents"><UserPlus /></button>
+      <button onClick={props.onHistory} title="Past boards" aria-label="Past boards"><History /></button>
+      <button onClick={props.onCopy} disabled={!props.canSave}
+        title={props.canSave ? 'Copy the whole board' : 'Nothing to copy yet — run a task first'}
+        aria-label="Copy the whole board"><Share2 /></button>
+
+      <span className="dock-divide" aria-hidden="true" />
+
       <button onClick={props.onClearBoard} disabled={busy || !sent} aria-label="Clear the canvas"><Trash2 /></button>
     </div>
 

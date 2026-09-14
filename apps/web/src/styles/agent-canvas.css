@@ -142,14 +142,7 @@
  * the bottom-centred toolbar further down this file, and reusing it had both
  * rule sets applying to the same element and fighting over its position.
  */
-.canvas-actions {
-  position: absolute;
-  right: 20px;
-  top: 56px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+
 .canvas-share {
   display: grid;
   place-items: center;
@@ -176,7 +169,16 @@
      would put its first row above the scroll origin, out of reach. */
   justify-items: center;
   align-content: start;
-  padding: 12px 24px 88px;
+  /*
+   * The bottom figure reserves the dock's band.
+   *
+   * The dock floats over this stage rather than sitting in its flow, so without
+   * the reservation the task card's lower edge comes to rest underneath it —
+   * clickable, because the dock is above, but visually sitting on the composer.
+   * 120 clears the dock's 42px at bottom:20 with room to read as a gap rather
+   * than a near miss.
+   */
+  padding: 12px 24px 120px;
   scrollbar-width: thin;
   scrollbar-color: #ffffff1f transparent;
 }
@@ -689,16 +691,27 @@
 /* ── states with nothing on the board ────────────────────────────────────── */
 
 /* Sits above the task card rather than replacing it. */
+/*
+ * The empty state.
+ *
+ * 440px held the prose to a readable measure but also held the example pills,
+ * which are whole sentences — at that width the three of them wrapped onto
+ * three rows, spending 135px of height and pushing the composer down under the
+ * dock. The block is wider now and the prose keeps its own measure, so the
+ * examples read as one row of choices rather than a stacked list.
+ */
 .canvas-empty {
-  margin-bottom: 22px;
+  margin-bottom: 18px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  max-width: 440px;
+  gap: 13px;
+  max-width: min(780px, 100%);
   text-align: center;
   color: var(--canvas-dim);
 }
+/* The sentences stay at a comfortable measure even though the block is wider. */
+.canvas-empty > h2, .canvas-empty > p { max-width: 460px; }
 .canvas-empty-glyph {
   display: grid;
   place-items: center;
@@ -989,11 +1002,35 @@
   background: color-mix(in srgb, var(--node-light) 14%, transparent);
 }
 
-/* Running the fleet on this machine. Green when on, because the state it
-   reports is "costing nothing", not "attention needed". */
-.canvas-share.local-toggle.on {
+/*
+ * The dock's groups.
+ *
+ * Nine icons in a row is a strip nobody reads. The hairlines split it into what
+ * it actually is: how you look at the board, what you do to the fleet, and the
+ * one destructive action — kept at the far end, past a divider, so it is never
+ * the neighbour of something harmless.
+ */
+.dock-divide {
+  width: 1px;
+  height: 20px;
+  flex: none;
+  margin: 0 2px;
+  background: var(--canvas-line);
+}
+
+/* Running the fleet on this machine. Green because the state it reports is
+   "costing nothing", not "attention needed". */
+.canvas-dock button.dock-on {
   border-color: #5fd67f4d;
-  background: #5fd67f14;
+  background: #5fd67f1a;
   color: #a8e6bb;
 }
-.canvas-share.local-toggle.on:hover { background: #5fd67f24; color: #c4f0d2; }
+.canvas-dock button.dock-on:hover:not(:disabled) { background: #5fd67f2e; color: #c4f0d2; }
+
+/* The bin sits apart and only colours on hover, so a board full of work is not
+   presided over by a red button. */
+.canvas-dock button:last-child:hover:not(:disabled) {
+  border-color: #ff7a5c4d;
+  background: #ff7a5c1f;
+  color: #ffab98;
+}
