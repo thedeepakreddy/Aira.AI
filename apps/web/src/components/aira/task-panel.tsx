@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isDesktop, supervisor, OpenClawClient, collectFleet, type Agent, type OpenClawStatus, type Schedule } from '@/lib/openclaw';
 import { getAccessToken, getSession } from '@/lib/supabase';
-import { BOARD_KEY, loadBoard, saveBoard, loadBoardHistory, recordBoard, forgetBoard, type SavedBoard } from '@/lib/agent-board';
+import { BOARD_KEY, loadBoard, saveBoard, loadBoardHistory, recordBoard, forgetBoard, unreadBriefings, markBriefingRead, type SavedBoard } from '@/lib/agent-board';
 import { fetchUsage, listCatalogue, type ModelSpec, type UsageSummary } from '@/lib/gateway';
 import { createStreamBuffer } from '@/lib/stream-buffer';
 import AgentCanvas from './agent-canvas';
 import { log } from '@/lib/applog';
 import SessionHistory, { type HistoryEntry } from './session-history';
+import * as nightShift from '@/lib/night-shift';
 
 type Phase = 'idle' | 'working' | 'done' | 'error' | 'stopped';
 interface AgentState {
@@ -74,6 +75,16 @@ export default function TaskPanel() {
   /* Past boards. The live board is one; this is every one before it. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const [boards, setBoards] = useState<SavedBoard[]>([]);
+  /* Unattended work, and whether the last of it has been read. */
+  const [shift, setShift] = useState<nightShift.NightShift | null>(null);
+  const [briefing, setBriefing] = useState<SavedBoard | null>(null);
+  /* Set while a scheduled run is in flight, so the board it produces is filed
+   * as a briefing rather than as something the user pressed send on. */
+  const scheduled = useRef(false);
+  /* `dispatch` is re-created every render, so the timer holds it by ref rather
+   * than depending on it — otherwise the effect tears down and rebuilds on
+   * every keystroke. */
+  const dispatchRef = useRef<((text: string, targets: string[], options?: { headline?: boolean; reset?: boolean }) => Promise<void>) | null>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const connected = Boolean(status?.running && client.current && agents.length);
@@ -110,6 +121,9 @@ export default function TaskPanel() {
        */
       restored.current = saved;
       setBoards(loadBoardHistory(id));
+      setShift(nightShift.load(id));
+      // Newest first, so this is the most recent thing that ran while away.
+      setBriefing(unreadBriefings(id)[0] ?? null);
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
@@ -123,11 +137,44 @@ export default function TaskPanel() {
         id: a.agent.id, name: a.agent.name, text: a.text, error: a.error,
       })),
     };
+    if (scheduled.current) {
+      Object.assign(board, { scheduled: true, unread: true });
+      scheduled.current = false;
+      setBriefing(board);
+    }
     saveBoard(account, board);
     // Filed into the history under the same rule: a settled board with work on
     // it. Re-running the same goal replaces its entry rather than stacking.
     setBoards(recordBoard(account, board));
   }, [account, sent, busy, agents]);
+
+  /*
+   * The night shift.
+   *
+   * Polled once a minute rather than armed with a single long timeout: a laptop
+   * that sleeps through a six-hour timeout wakes with it unfired, where a
+   * comparison against the clock is simply true the moment it comes back.
+   *
+   * It refuses to start on top of a run in flight, and refuses if the runtime
+   * is not connected — an unattended task that silently fails to dispatch is
+   * worse than one that waits for the next slot.
+   */
+  useEffect(() => {
+    if (!shift || !account || !connected) return;
+    const tick = () => {
+      if (!alive.current || busy || changing.current) return;
+      if (!nightShift.isDue(shift)) return;
+      const next = { ...shift, lastRunAt: Date.now() };
+      nightShift.save(account, next);
+      setShift(next);
+      scheduled.current = true;
+      void dispatchRef.current?.(shift.prompt, shift.agents, { headline: true, reset: true })
+        .catch(() => { scheduled.current = false; });
+    };
+    tick();
+    const timer = setInterval(tick, 60_000);
+    return () => clearInterval(timer);
+  }, [shift, account, connected, busy]);
 
   /** Puts a past board back on screen, over whatever is there. */
   function openBoard(at: string) {
@@ -321,6 +368,8 @@ export default function TaskPanel() {
    * so a follow-up to one agent — or handing a result to another — never waits
    * on anything else.
    */
+  useEffect(() => { dispatchRef.current = dispatch; });
+
   async function dispatch(
     text: string,
     targets: string[],
@@ -550,6 +599,36 @@ export default function TaskPanel() {
     }} 
     onPower={() => void (connected ? stop() : start())}
     onHistory={() => setHistoryOpen(true)}
+    nightShift={shift ? { prompt: shift.prompt, everyMinutes: shift.everyMinutes } : null}
+    /* The rule lives in one place; this is only asking it about the model
+     * currently selected. */
+    fleetAllowed={nightShift.mayRunFleet(models.find(m => m.id === model)?.pricing)}
+    onNightShift={everyMinutes => {
+      if (!everyMinutes) { nightShift.save(account, null); setShift(null); setNotice('Night shift off.'); return; }
+      const text = task.trim() || sent;
+      if (!text) { setError('Write the task you want run on a schedule first.'); return; }
+      const free = nightShift.mayRunFleet(models.find(m => m.id === model)?.pricing);
+      // On a paid model this stays at one agent, which is the limit that was
+      // always there — the label above tells the user which they are getting.
+      const agents = free ? selected : selected.slice(0, 1);
+      if (!agents.length) { setError('Select at least one agent first.'); return; }
+      const next = { prompt: text, agents, everyMinutes, lastRunAt: Date.now() };
+      nightShift.save(account, next);
+      setShift(next);
+      setNotice(`Running ${agents.length === 1 ? 'one agent' : `${agents.length} agents`} ${nightShift.describeInterval(everyMinutes)}, while Aira is open.`);
+    }}
+    briefing={briefing ? { sent: briefing.sent, at: briefing.at, agents: briefing.results.length } : null}
+    onReadBriefing={() => {
+      if (!briefing) return;
+      openBoard(String(briefing.at));
+      setBoards(markBriefingRead(account, briefing.at));
+      setBriefing(null);
+    }}
+    onDismissBriefing={() => {
+      if (!briefing) return;
+      setBoards(markBriefingRead(account, briefing.at));
+      setBriefing(null);
+    }}
     onClearBoard={() => {
       // A new project is a clean board: stop what is running, clear the cards,
       // the headline task, the composer and any leftover message. It used to

@@ -330,6 +330,75 @@
 }
 .canvas-model select:disabled { opacity: .55; }
 
+/*
+ * The briefing notice.
+ *
+ * Sits above the board because it is about a different board than the one on
+ * screen. Quiet rather than alarming — this is good news arriving, not a
+ * failure — so it takes the accent's colour without its brightness.
+ */
+.canvas-briefing {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  margin: 0 20px;
+  padding: 13px 15px;
+  border: 1px solid #ffb87a3d;
+  border-radius: 16px;
+  background: linear-gradient(140deg, #ff9a3d1a, #ffffff06 62%);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 14px 40px #00000073, 0 0 40px -12px var(--canvas-glow);
+  position: relative;
+  z-index: 3;
+}
+.canvas-briefing > svg { width: 19px; height: 19px; color: var(--canvas-accent); flex: none; }
+.canvas-briefing-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.canvas-briefing-body strong { font-size: 13.5px; font-weight: 500; color: var(--canvas-ink); }
+.canvas-briefing-body span {
+  font-size: 12.5px;
+  color: var(--canvas-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-briefing-body small { font-size: 11px; color: #8a7568; }
+.canvas-briefing-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid #ffb96870;
+  background: linear-gradient(115deg, #f99729, #cf570d);
+  color: #200b02;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.canvas-briefing-open svg { width: 14px; height: 14px; }
+.canvas-briefing-dismiss {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid var(--canvas-line);
+  border-radius: 9px;
+  background: none;
+  color: var(--canvas-dim);
+}
+.canvas-briefing-dismiss:hover { background: #ffffff12; color: var(--canvas-ink); }
+.canvas-briefing-dismiss svg { width: 14px; height: 14px; }
+
+/* A schedule that is armed reads as on rather than as an idle dropdown. */
+.canvas-repeat.on {
+  border-color: #ffb87a5c;
+  background: #ff9a3d14;
+  color: var(--canvas-accent);
+}
+
 /* ── agent cards ─────────────────────────────────────────────────────────── */
 
 /*

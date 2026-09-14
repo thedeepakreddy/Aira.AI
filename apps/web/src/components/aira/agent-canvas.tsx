@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Coins, Crown, Eye, FileText, Gauge, History, Layers, Loader2, Minus, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, WifiOff, X
+  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Coins, Crown, Eye, FileText, Gauge, History, Layers, Loader2, Minus, Moon, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, WifiOff, X
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -115,6 +115,18 @@ export interface AgentCanvasProps {
   onPower: () => void;
   /** Opens the list of past boards. */
   onHistory: () => void;
+  /**
+   * Unattended work. `fleetAllowed` is false on a model that charges, where a
+   * schedule is capped at one agent — the limit is about the bill, not about
+   * the fleet, so it lifts exactly where the bill is zero.
+   */
+  nightShift: { prompt: string; everyMinutes: number } | null;
+  fleetAllowed: boolean;
+  onNightShift: (everyMinutes: number | null) => void;
+  /** A scheduled board nobody has read. */
+  briefing: { sent: string; at: number; agents: number } | null;
+  onReadBriefing: () => void;
+  onDismissBriefing: () => void;
   /** Stops every run and empties the board. */
   onClearBoard: () => void;
   canSave: boolean;
@@ -206,6 +218,28 @@ export default function AgentCanvas(props: AgentCanvasProps) {
         <Share2 />
       </button>
     </div>
+
+    {/*
+      * What ran while you were away.
+      *
+      * Above the board rather than inside it, because it is about a board other
+      * than the one on screen. Dismissing marks it read without opening it —
+      * "I do not need this one" is a real answer and should not require
+      * reading it first.
+      */}
+    {props.briefing && <div className="canvas-briefing" role="status">
+      <Moon />
+      <div className="canvas-briefing-body">
+        <strong>The night shift ran while you were away</strong>
+        <span>{props.briefing.sent}</span>
+        <small>
+          {new Date(props.briefing.at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+          {' · '}{props.briefing.agents} {props.briefing.agents === 1 ? 'agent' : 'agents'} reported
+        </small>
+      </div>
+      <button className="canvas-briefing-open" onClick={props.onReadBriefing}>Read it<ChevronRight /></button>
+      <button className="canvas-briefing-dismiss" onClick={props.onDismissBriefing} aria-label="Dismiss briefing"><X /></button>
+    </div>}
 
     <div className="canvas-stage" ref={stageRef}>
       {/* The composer is always on the board.
@@ -344,17 +378,28 @@ function TaskNode(props: AgentCanvasProps & { active: number; nodeRef: React.Ref
         * still happens with Aira closed. Only one agent, deliberately: an
         * unattended board task that fans out to five is five times the spend
         * with nobody watching it. */}
-      <label className="canvas-repeat" title="Repeat this task without anyone present">
+      {/*
+        * The night shift.
+        *
+        * On a paid model this still schedules one agent, for the reason it
+        * always did: an unattended board that fans out to five is five times
+        * the spend with nobody watching. On a free one there is no spend to
+        * multiply, so the whole selection runs and the label says so.
+        */}
+      <label className={`canvas-repeat ${props.nightShift ? 'on' : ''}`}
+        title={props.nightShift
+          ? `Running ${props.fleetAllowed ? `${props.selected.length} agents` : 'one agent'} on a schedule while Aira is open`
+          : 'Repeat this task while Aira is open'}>
         <Clock3 />
-        <select aria-label="Repeat this task" value="" onChange={e => {
-          if (!e.target.value) return;
-          props.onSchedule(e.target.value, props.selected[0] ?? '');
-          e.target.value = '';
-        }} disabled={!connected || !props.selected.length}>
-          <option value="">Repeat…</option>
-          <option value="1h">Every hour</option>
-          <option value="6h">Every 6 hours</option>
-          <option value="1d">Every day</option>
+        <select aria-label="Run this task on a schedule"
+          value={props.nightShift ? String(props.nightShift.everyMinutes) : ''}
+          onChange={e => props.onNightShift(e.target.value ? Number(e.target.value) : null)}
+          disabled={!connected || !props.selected.length}>
+          <option value="">{props.fleetAllowed ? 'Night shift…' : 'Repeat…'}</option>
+          <option value="60">Every hour</option>
+          <option value="180">Every 3 hours</option>
+          <option value="360">Every 6 hours</option>
+          <option value="1440">Once a day</option>
         </select>
       </label>
 

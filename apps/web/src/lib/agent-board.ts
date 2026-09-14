@@ -11,6 +11,10 @@ export interface SavedBoard {
   sent: string;
   results: { id: string; name: string; text: string; error: string }[];
   at: number;
+  /** Produced by the night shift rather than by someone pressing send. */
+  scheduled?: boolean;
+  /** A scheduled board nobody has opened yet. Drives the briefing notice. */
+  unread?: boolean;
 }
 
 /**
@@ -29,6 +33,8 @@ function bound(parsed: SavedBoard): SavedBoard | null {
   return {
     sent: parsed.sent.slice(0, 8_000),
     at: typeof parsed.at === 'number' ? parsed.at : 0,
+    ...(parsed.scheduled ? { scheduled: true } : {}),
+    ...(parsed.unread ? { unread: true } : {}),
     results: parsed.results.slice(0, 12).map(r => ({
       id: String(r.id ?? ''), name: String(r.name ?? ''),
       text: String(r.text ?? '').slice(0, 100_000),
@@ -87,3 +93,21 @@ export function saveBoard(userId: string | null, board: SavedBoard): void {
   catch { /* a full or blocked store must never break a run */ }
 }
 
+/** Boards the night shift produced that nobody has looked at yet. */
+export function unreadBriefings(userId: string | null): SavedBoard[] {
+  return loadBoardHistory(userId).filter(board => board.scheduled && board.unread);
+}
+
+/**
+ * Marks a briefing read.
+ *
+ * By timestamp rather than by index, because the list shifts under it every
+ * time the night shift files another one.
+ */
+export function markBriefingRead(userId: string | null, at: number): SavedBoard[] {
+  const next = loadBoardHistory(userId).map(board =>
+    board.at === at ? { ...board, unread: false } : board);
+  try { localStorage.setItem(`${BOARD_KEY}.history.${userId}`, JSON.stringify(next)); }
+  catch { /* nothing to do */ }
+  return next;
+}
