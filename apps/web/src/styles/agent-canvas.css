@@ -988,3 +988,12 @@
 .agent-node-chip.send-to-code:hover {
   background: color-mix(in srgb, var(--node-light) 14%, transparent);
 }
+
+/* Running the fleet on this machine. Green when on, because the state it
+   reports is "costing nothing", not "attention needed". */
+.canvas-share.local-toggle.on {
+  border-color: #5fd67f4d;
+  background: #5fd67f14;
+  color: #a8e6bb;
+}
+.canvas-share.local-toggle.on:hover { background: #5fd67f24; color: #c4f0d2; }

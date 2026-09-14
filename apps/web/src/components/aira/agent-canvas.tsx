@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { handOff } from '@/lib/handoff';
 import {
-  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Code2, Coins, Crown, Eye, FileText, Gauge, History, Layers, Loader2, Minus, Moon, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, UserPlus, WifiOff, X
+  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Code2, Coins, Crown, Eye, FileText, Gauge, HardDrive, History, Layers, Loader2, Minus, Moon, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, UserPlus, WifiOff, X
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -118,6 +118,11 @@ export interface AgentCanvasProps {
   onHistory: () => void;
   /** Opens the editor for agents the user has added. */
   onEditFleet: () => void;
+  /** Whether the fleet is set to run on this machine's own models. */
+  localOnly: boolean;
+  /** How many local models the gateway found; zero means the toggle is moot. */
+  localModels: number;
+  onToggleLocal: () => void;
   /**
    * Unattended work. `fleetAllowed` is false on a model that charges, where a
    * schedule is capped at one agent — the limit is about the bill, not about
@@ -213,6 +218,18 @@ export default function AgentCanvas(props: AgentCanvasProps) {
         {props.starting ? 'Working…' : props.connected ? 'Connected' : 'Connect agents'}
       </button>
       <div className="canvas-actions">
+        {/* Offered only when there is something local to run on. A switch that
+          * cannot change anything is worse than no switch. */}
+        {props.localModels > 0 && <button
+          className={`canvas-share local-toggle ${props.localOnly ? 'on' : ''}`}
+          onClick={props.onToggleLocal}
+          aria-pressed={props.localOnly}
+          title={props.localOnly
+            ? `Running on this machine (${props.localModels} local model${props.localModels === 1 ? '' : 's'}). Click for hosted models.`
+            : `Running on hosted models. Click to use this machine's ${props.localModels} local model${props.localModels === 1 ? '' : 's'}.`}
+          aria-label="Run agents on this machine">
+          <HardDrive />
+        </button>}
         <button className="canvas-share" onClick={props.onEditFleet} title="Your agents" aria-label="Your agents">
           <UserPlus />
         </button>

@@ -10,6 +10,9 @@ import SessionHistory, { type HistoryEntry } from './session-history';
 import AgentEditor from './agent-editor';
 import * as nightShift from '@/lib/night-shift';
 
+/** Remembered per device, since it is a property of this machine's models. */
+const LOCAL_FLEET_KEY = 'aira.fleet-local.v1';
+
 type Phase = 'idle' | 'working' | 'done' | 'error' | 'stopped';
 interface AgentState {
   agent: Agent;
@@ -76,6 +79,14 @@ export default function TaskPanel() {
   /* Past boards. The live board is one; this is every one before it. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
+  /*
+   * Run the fleet locally.
+   *
+   * Read at connect and not after, because the runtime's config is written once
+   * when it starts — flipping this mid-session would change the switch and not
+   * the fleet, which is worse than not offering it.
+   */
+  const [localOnly, setLocalOnly] = useState(() => localStorage.getItem(LOCAL_FLEET_KEY) === '1');
   const [boards, setBoards] = useState<SavedBoard[]>([]);
   /* Unattended work, and whether the last of it has been read. */
   const [shift, setShift] = useState<nightShift.NightShift | null>(null);
@@ -259,7 +270,11 @@ export default function TaskPanel() {
     const next = await supervisor.start({
       gatewayUrl: (import.meta.env?.VITE_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787',
       token, model: chosen,
-      catalogue: catalogue.models.map(m => `${m.id}|${m.tier}`),
+      // The provider is the third field: without it the shell cannot tell a
+      // local model from a remote one, and "run this fleet on the machine" has
+      // nothing to select on.
+      catalogue: catalogue.models.map(m => `${m.id}|${m.tier}|${m.provider}`),
+      localOnly,
     });
     if (!alive.current) { await supervisor.stop(); throw new Error('The workspace was closed.'); }
     setStatus(next);
@@ -612,6 +627,16 @@ export default function TaskPanel() {
     onPower={() => void (connected ? stop() : start())}
     onHistory={() => setHistoryOpen(true)}
     onEditFleet={() => setEditorOpen(true)}
+    localOnly={localOnly}
+    localModels={models.filter(m => m.provider === 'ollama').length}
+    onToggleLocal={() => setLocalOnly(next => {
+      const value = !next;
+      try { localStorage.setItem(LOCAL_FLEET_KEY, value ? '1' : '0'); } catch { /* private window */ }
+      setNotice(connected
+        ? `Agents will run ${value ? 'on this machine' : 'on hosted models'} from the next connect.`
+        : `Agents will run ${value ? 'on this machine' : 'on hosted models'}.`);
+      return value;
+    })}
     nightShift={shift ? { prompt: shift.prompt, everyMinutes: shift.everyMinutes } : null}
     /* The rule lives in one place; this is only asking it about the model
      * currently selected. */

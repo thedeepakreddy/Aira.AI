@@ -279,6 +279,15 @@ impl From<&Spec> for Member {
     }
 }
 
+/// One model the fleet may be pointed at.
+#[derive(Clone)]
+pub struct Choice {
+    pub id: String,
+    pub tier: String,
+    /// Which provider serves it. "ollama" is the local one.
+    pub provider: String,
+}
+
 /// The fleet as configured: the six Aira ships, then the user's own.
 ///
 /// Built-ins first and always present. They are data in the binary, so an
@@ -388,20 +397,39 @@ const BUILT_IN: &[Spec] = &[
 ];
 
 /// Builds the `agents.entries` map, one workspace per member.
+/// Picks the model for one member's tier.
+///
+/// `local_only` moves the local provider to the front of the search. It is not
+/// a filter: a tier with no local model in it still falls back to a remote one
+/// rather than leaving that member with nothing, because half a fleet is worse
+/// than a slow one. Exposed for tests — the preference is the whole feature.
+pub fn choose(catalogue: &[Choice], tier: &str, local_only: bool, fallback: &str) -> String {
+    if local_only {
+        if let Some(local) = catalogue
+            .iter()
+            .find(|c| c.tier == tier && c.provider == "ollama")
+        {
+            return local.id.clone();
+        }
+    }
+    catalogue
+        .iter()
+        .find(|c| c.tier == tier)
+        .map(|c| c.id.clone())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 fn fleet_entries(
     model: &str,
-    catalogue: &[(String, String)],
+    catalogue: &[Choice],
     root: &std::path::Path,
+    local_only: bool,
 ) -> serde_json::Value {
     let mut entries = serde_json::Map::new();
     for member in fleet() {
         // The routed model is the floor: a tier with nothing in it falls back
         // rather than naming a model the gateway does not serve.
-        let chosen = catalogue
-            .iter()
-            .find(|(_, tier)| *tier == member.tier)
-            .map(|(id, _)| id.as_str())
-            .unwrap_or(model);
+        let chosen = choose(catalogue, &member.tier, local_only, model);
         let qualified = format!("aira/{chosen}");
         entries.insert(
             member.id.to_string(),
@@ -439,9 +467,11 @@ fn write_fleet_briefs(root: &std::path::Path) -> Result<(), String> {
 fn build_config(
     gateway_url: &str,
     model: &str,
-    catalogue: &[(String, String)],
+    catalogue: &[Choice],
     port: u16,
     workspace: &str,
+    // Run the fleet on models served from this machine where possible.
+    local_only: bool,
 ) -> serde_json::Value {
     let qualified = format!("aira/{model}");
     serde_json::json!({
@@ -498,7 +528,7 @@ fn build_config(
                 // letting them land on whichever agent happened to be asked.
                 "systemAgent": { "agentId": BUILT_IN[0].id },
             },
-            "entries": fleet_entries(model, catalogue, std::path::Path::new(workspace)),
+            "entries": fleet_entries(model, catalogue, std::path::Path::new(workspace), local_only),
         },
         "models": {
             "providers": {
@@ -532,13 +562,24 @@ pub fn openclaw_start(
     token: String,
     model: String,
     catalogue: Option<Vec<String>>,
+    // Prefer models served from this machine. Absent means remote, as before.
+    local_only: Option<bool>,
 ) -> Result<Status, String> {
-    let catalogue: Vec<(String, String)> = catalogue
+    let local_only = local_only.unwrap_or(false);
+    // "id|tier|provider". The provider was added when local models arrived:
+    // without it there is no way to say "run this fleet on the machine", since
+    // every entry otherwise looks the same to the tier match.
+    let catalogue: Vec<Choice> = catalogue
         .unwrap_or_default()
         .into_iter()
         .filter_map(|entry| {
-            let (id, tier) = entry.split_once('|')?;
-            (!id.is_empty() && !tier.is_empty()).then(|| (id.to_string(), tier.to_string()))
+            let mut parts = entry.split('|');
+            let id = parts.next()?.to_string();
+            let tier = parts.next()?.to_string();
+            // Absent in an older panel than this shell; treated as remote,
+            // which is the safe reading — it only means "do not prefer".
+            let provider = parts.next().unwrap_or("").to_string();
+            (!id.is_empty() && !tier.is_empty()).then_some(Choice { id, tier, provider })
         })
         .collect();
     crate::runtime::validate_gateway(&gateway_url)?;
@@ -564,7 +605,7 @@ pub fn openclaw_start(
     std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
     // Each member's brief, written where OpenClaw looks for scoped policy.
     write_fleet_briefs(&workspace)?;
-    let config = build_config(&gateway_url, &model, &catalogue, port, &workspace.to_string_lossy());
+    let config = build_config(&gateway_url, &model, &catalogue, port, &workspace.to_string_lossy(), local_only);
     std::fs::write(
         &config_path,
         serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
@@ -1001,7 +1042,7 @@ mod tests {
     use super::*;
     #[test]
     fn config_uses_environment_credentials_and_dedicated_workspace() {
-        let config = build_config("https://aira.example/", "model", &[], 12345, "/tmp/aira-project");
+        let config = build_config("https://aira.example/", "model", &[], 12345, "/tmp/aira-project", false);
         assert_eq!(
             config["gateway"]["auth"]["token"],
             "${OPENCLAW_GATEWAY_TOKEN}"
@@ -1025,7 +1066,7 @@ mod tests {
     #[test]
     fn config_declares_a_team_of_distinct_agents() {
         let dir = std::env::temp_dir().join("aira-fleet-test");
-        let config = build_config("https://aira.example", "test-model", &[], 1234, &dir.to_string_lossy());
+        let config = build_config("https://aira.example", "test-model", &[], 1234, &dir.to_string_lossy(), false);
         let entries = config["agents"]["entries"].as_object().expect("entries");
         assert!(entries.len() >= 3, "a team of one is not a team: {}", entries.len());
         assert_eq!(config["agents"]["ownership"], "explicit");
@@ -1045,7 +1086,7 @@ mod tests {
     /// model-scoped, so a team spread across models forfeits the cache.
     #[test]
     fn every_member_runs_the_surface_model() {
-        let config = build_config("https://aira.example", "routed-model", &[], 1234, "/tmp/x");
+        let config = build_config("https://aira.example", "routed-model", &[], 1234, "/tmp/x", false);
         for (id, entry) in config["agents"]["entries"].as_object().unwrap() {
             assert_eq!(entry["model"]["primary"], "aira/routed-model", "{id} drifted off the routed model");
         }
@@ -1063,7 +1104,7 @@ mod tests {
     /// so the dangerous tools must be unreachable rather than merely unused.
     #[test]
     fn dangerous_tools_are_denied_to_every_agent() {
-        let config = build_config("https://aira.example", "m", &[], 1234, "/tmp/ws");
+        let config = build_config("https://aira.example", "m", &[], 1234, "/tmp/ws", false);
         let denied: Vec<String> = config["tools"]["deny"].as_array().unwrap()
             .iter().map(|v| v.as_str().unwrap().to_string()).collect();
         for tool in ["exec", "terminal", "secrets", "file_write", "apply_patch"] {
@@ -1080,7 +1121,7 @@ mod tests {
 
     #[test]
     fn every_member_starts_from_the_minimal_profile() {
-        let config = build_config("https://aira.example", "m", &[], 1234, "/tmp/ws");
+        let config = build_config("https://aira.example", "m", &[], 1234, "/tmp/ws", false);
         for (id, entry) in config["agents"]["entries"].as_object().unwrap() {
             assert_eq!(entry["tools"]["profile"], "minimal", "{id} does not start minimal");
             assert!(entry["tools"]["alsoAllow"].is_array(), "{id} grants nothing explicitly");
@@ -1105,19 +1146,77 @@ mod tests {
         let catalogue = vec![
             ("big-model".to_string(), "frontier".to_string()),
             ("mid-model".to_string(), "balanced".to_string()),
-        ];
-        let config = build_config("https://aira.example", "routed", &catalogue, 1, "/tmp/ws");
+        ]
+        .into_iter()
+        .map(|(id, tier)| Choice { id, tier, provider: "anthropic".into() })
+        .collect::<Vec<_>>();
+        let config = build_config("https://aira.example", "routed", &catalogue, 1, "/tmp/ws", false);
         let entries = config["agents"]["entries"].as_object().unwrap();
         assert_eq!(entries["research"]["model"]["primary"], "aira/big-model");
         assert_eq!(entries["lead"]["model"]["primary"], "aira/big-model");
         assert_eq!(entries["write"]["model"]["primary"], "aira/mid-model");
     }
 
+    /// The catalogue arrives remote-first, so local models are last and the
+    /// plain tier match never reaches them. This is the whole reason the
+    /// preference exists.
+    #[test]
+    fn local_models_are_chosen_only_when_asked_for() {
+        let catalogue = vec![
+            Choice { id: "claude-opus-5".into(),  tier: "frontier".into(), provider: "anthropic".into() },
+            Choice { id: "claude-sonnet-5".into(), tier: "balanced".into(), provider: "anthropic".into() },
+            Choice { id: "llama3.1:8b".into(),     tier: "balanced".into(), provider: "ollama".into() },
+            Choice { id: "llama3.2:3b".into(),     tier: "fast".into(),     provider: "ollama".into() },
+        ];
+        // Off: first match wins, which is always the remote one.
+        assert_eq!(choose(&catalogue, "balanced", false, "routed"), "claude-sonnet-5");
+        // On: the local one, even though it sits later in the catalogue.
+        assert_eq!(choose(&catalogue, "balanced", true, "routed"), "llama3.1:8b");
+    }
+
+    /// A preference, not a filter. Half a fleet is worse than a slow one.
+    #[test]
+    fn a_tier_with_no_local_model_still_gets_one() {
+        let catalogue = vec![
+            Choice { id: "claude-opus-5".into(), tier: "frontier".into(), provider: "anthropic".into() },
+            Choice { id: "llama3.2:3b".into(),   tier: "fast".into(),     provider: "ollama".into() },
+        ];
+        // Nothing local is frontier, so the lead falls back rather than
+        // starting with no model at all.
+        assert_eq!(choose(&catalogue, "frontier", true, "routed"), "claude-opus-5");
+        assert_eq!(choose(&catalogue, "fast", true, "routed"), "llama3.2:3b");
+    }
+
+    /// With nothing configured at all, the routed model is still the floor.
+    #[test]
+    fn preferring_local_never_invents_a_model() {
+        assert_eq!(choose(&[], "balanced", true, "routed"), "routed");
+    }
+
+    /// A fleet asked to run locally does so for every member it can.
+    #[test]
+    fn the_whole_fleet_moves_to_local_models() {
+        let catalogue = vec![
+            Choice { id: "claude-opus-5".into(), tier: "frontier".into(), provider: "anthropic".into() },
+            Choice { id: "big-local".into(),     tier: "frontier".into(), provider: "ollama".into() },
+            Choice { id: "mid-local".into(),     tier: "balanced".into(), provider: "ollama".into() },
+        ];
+        let config = build_config("https://aira.example", "routed", &catalogue, 1, "/tmp/ws", true);
+        let entries = config["agents"]["entries"].as_object().unwrap();
+        assert_eq!(entries["lead"]["model"]["primary"], "aira/big-local");
+        assert_eq!(entries["research"]["model"]["primary"], "aira/big-local");
+        assert_eq!(entries["write"]["model"]["primary"], "aira/mid-local");
+        for (id, entry) in entries {
+            let named = entry["model"]["primary"].as_str().unwrap();
+            assert!(!named.contains("claude"), "{id} stayed on a paid model");
+        }
+    }
+
     /// A tier the gateway does not serve must fall back, never invent a model.
     #[test]
     fn an_absent_tier_falls_back_to_the_routed_model() {
-        let catalogue = vec![("only-fast".to_string(), "fast".to_string())];
-        let config = build_config("https://aira.example", "routed", &catalogue, 1, "/tmp/ws");
+        let catalogue = vec![Choice { id: "only-fast".into(), tier: "fast".into(), provider: "anthropic".into() }];
+        let config = build_config("https://aira.example", "routed", &catalogue, 1, "/tmp/ws", false);
         for (id, entry) in config["agents"]["entries"].as_object().unwrap() {
             assert_eq!(entry["model"]["primary"], "aira/routed", "{id} named a model nobody serves");
         }
@@ -1139,7 +1238,7 @@ mod tests {
     /// agents, never spawning new ones.
     #[test]
     fn no_agent_can_spawn_more_agents() {
-        let config = build_config("https://aira.example", "m", &[], 1, "/tmp/ws");
+        let config = build_config("https://aira.example", "m", &[], 1, "/tmp/ws", false);
         let denied: Vec<String> = config["tools"]["deny"].as_array().unwrap()
             .iter().map(|v| v.as_str().unwrap().to_string()).collect();
         for tool in ["sessions_spawn", "subagents", "swarm"] {
@@ -1164,7 +1263,7 @@ mod tests {
     /// names has to be one of ours.
     #[test]
     fn scheduling_is_enabled_for_the_gateway_to_run() {
-        let config = build_config("https://aira.example", "m", &[], 1, "/tmp/ws");
+        let config = build_config("https://aira.example", "m", &[], 1, "/tmp/ws", false);
         assert_eq!(config["cron"]["enabled"], true);
         // A laptop closed overnight should take its next slot, not fire every
         // hour it missed the moment it wakes.

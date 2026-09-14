@@ -47,6 +47,13 @@ export interface StartOptions {
    * the routed model.
    */
   catalogue?: string[];
+  /**
+   * Run the fleet on models served from this machine where one fits the tier.
+   *
+   * A preference, not a filter: a tier with nothing local in it still gets a
+   * remote model, because half a fleet is worse than a slow one.
+   */
+  localOnly?: boolean;
 }
 
 export const supervisor = {
