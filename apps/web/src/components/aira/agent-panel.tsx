@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRightLeft, FolderOpen, History, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
+import { ArrowRightLeft, ChevronLeft, ChevronRight, FolderOpen, History, Loader2, X, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
 import { isDesktop, supervisor, pickDirectory, OpenCodeClient, toolTarget, type AgentEvent, type OpenCodeStatus, type PermissionRequest, type QuestionRequest, type ToolActivity } from '@/lib/opencode';
 import { getAccessToken } from '@/lib/supabase';
 import { listCatalogue, fetchUsage, type ModelSpec, type UsageSummary } from '@/lib/gateway';
@@ -84,6 +84,14 @@ export default function AgentPanel() {
   const [historyOpen, setHistoryOpen] = useState(false);
   /** Who sent the text now sitting in the composer, so it is never anonymous. */
   const [handedFrom, setHandedFrom] = useState('');
+  /*
+   * Replay position.
+   *
+   * null means "showing everything", which is the normal state and is different
+   * from "scrubbed to the end" — the latter would freeze the view as new work
+   * arrived. Only ever set while looking at a session that is not running.
+   */
+  const [replayAt, setReplayAt] = useState<number | null>(null);
   const [sessions, setSessions] = useState<HistoryEntry[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const [models, setModels] = useState<ModelSpec[]>([]);
@@ -260,6 +268,8 @@ export default function AgentPanel() {
   }, [busy, connected, workdir, sessionID]);
 
   /** Loads a stored session into the panel, replacing what is on screen. */
+  useEffect(() => { if (busy) setReplayAt(null); }, [busy]);
+
   const openSession = useCallback(async (id: string) => {
     const c = client.current;
     if (!c || busy) return;
@@ -269,6 +279,7 @@ export default function AgentPanel() {
       session.current = id;
       setSessionID(id);
       setEntries([]);
+      setReplayAt(null);
       await refreshSession(c, id);
       await connectStream(c, id);
     } catch (e) { setError(`Could not open that session: ${messageOf(e)}`); }
@@ -555,7 +566,9 @@ export default function AgentPanel() {
         </div>)}
       </div>}
 
-      {entries.map((entry, index) => {
+      {/* Replay trims the tail rather than filtering, so indices — and the
+        * streaming-cursor check that depends on them — stay meaningful. */}
+      {(replayAt === null ? entries : entries.slice(0, replayAt + 1)).map((entry, index) => {
         if (entry.kind === 'you') return <div className="ct-row ct-you" key={index}><span className="ct-mark">›</span><span className="ct-text">{entry.text}</span></div>;
         if (entry.kind === 'agent') {
           // The block cursor trails the text only while it is still arriving,
@@ -584,6 +597,23 @@ export default function AgentPanel() {
 
       {busy && <div className="ct-working" role="status"><Loader2 className="spin" />{waiting ? 'waiting for your response above' : 'working…'}</div>}
     </div>
+
+    {!busy && entries.length > 3 && <div className="ct-replay">
+      <button className="ct-replay-toggle" onClick={() => setReplayAt(replayAt === null ? 0 : null)}
+        title={replayAt === null ? 'Step back through this session' : 'Show the whole session'}>
+        {replayAt === null ? <><History />replay</> : <><X />live</>}
+      </button>
+      {replayAt !== null && <>
+        <button className="ct-replay-step" aria-label="Back one step" disabled={replayAt <= 0}
+          onClick={() => setReplayAt(at => Math.max(0, (at ?? 0) - 1))}><ChevronLeft /></button>
+        <input type="range" min={0} max={entries.length - 1} value={replayAt}
+          aria-label="Position in this session"
+          onChange={event => setReplayAt(Number(event.target.value))} />
+        <button className="ct-replay-step" aria-label="Forward one step" disabled={replayAt >= entries.length - 1}
+          onClick={() => setReplayAt(at => Math.min(entries.length - 1, (at ?? 0) + 1))}><ChevronRight /></button>
+        <span className="ct-replay-count">{replayAt + 1}/{entries.length}</span>
+      </>}
+    </div>}
 
     <form className="ct-composer lit lit-key" onSubmit={e => { e.preventDefault(); void send(); }}>
       <div className="ct-input-row">
