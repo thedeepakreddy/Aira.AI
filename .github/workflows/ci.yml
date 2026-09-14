@@ -147,3 +147,31 @@ jobs:
           path: apps/web/artifacts/
           if-no-files-found: warn
           retention-days: 14
+
+  integration:
+    name: Runtime integration
+    runs-on: ubuntu-24.04
+    # Longer than the unit jobs because each suite starts a real binary and
+    # waits for it to be ready, which is seconds rather than milliseconds.
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/gateway
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: services/gateway/package-lock.json
+      - run: npm ci
+      # Installed here rather than assumed. A runtime the job cannot find is a
+      # skip, not a failure — so without this step the job would pass green
+      # while checking nothing, which is exactly how these tests came to be
+      # orphaned in the first place.
+      - name: Install the runtimes these tests exercise
+        run: npm install -g opencode-ai openclaw
+      - name: Integration suites
+        run: npm run test:integration
