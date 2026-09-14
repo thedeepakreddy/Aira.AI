@@ -1,10 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createStreamBuffer } from './stream-buffer.ts';
-import { streamChat } from './gateway';
+import { streamChat, type ChatMessage } from './gateway';
+import { browseFor, supervisor as browserSupervisor } from './browser';
 import { messageContent, type TextAttachment } from './attachments';
 import { HISTORY_KEY, historyKey, parseHistory, saveConversation, type Conversation, type Message } from './workspace-state';
 
 /** One account owns this hook for its entire lifetime; Workspace keys it by user id. */
+/**
+ * How many times a turn may go and look something up.
+ *
+ * Two. A model that has searched twice and still wants to search is not
+ * converging, and every round is a real browser session and a second charge for
+ * the same question.
+ */
+const MAX_BROWSE_ROUNDS = 2;
+
+/**
+ * Whether this caller can actually perform a browse.
+ *
+ * Asked rather than assumed, because the answer differs by where the app is
+ * running and changes while it runs. Any failure is "no": the gateway then
+ * withholds both the tool and the instruction to use it, which is the safe
+ * direction — a stale answer beats an invented citation.
+ */
+async function browsingAvailable(): Promise<boolean> {
+  try {
+    const status = await browserSupervisor.status();
+    return Boolean(status.python ?? status.running);
+  } catch {
+    return false;
+  }
+}
+
+/** The task out of a tool call's arguments, whatever shape they arrived in. */
+function readTask(args: string): string {
+  try {
+    const parsed = JSON.parse(args) as { task?: unknown };
+    return typeof parsed.task === 'string' ? parsed.task : '';
+  } catch {
+    // A model that emitted something unparseable still meant the text.
+    return args.slice(0, 500);
+  }
+}
+
 export function useChat(userId: string | null) {
   const key = historyKey(userId);
   const [conversations, setConversations] = useState<Conversation[]>(() => {
@@ -14,6 +52,8 @@ export function useChat(userId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** True while a browse is running, which takes tens of seconds. */
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const [storageNotice, setStorageNotice] = useState('');
   const [answeredBy, setAnsweredBy] = useState('');
@@ -65,22 +105,68 @@ export function useChat(userId: string | null) {
         });
       });
       try {
-      for await (const event of streamChat({
-        messages: history.map(message => ({ role: message.role, content: messageContent(message) })),
-        surface: 'chat', model: model || undefined, conversationId: id, signal: controller.signal,
-      })) {
-        if (controller.signal.aborted || request.current !== controller) return;
-        if (event.type === 'start') setAnsweredBy(event.model);
-        if (event.type === 'text') {
-          buffer.push('reply', event.text);
-        } else if (event.type === 'error') {
-          // The advice says whose problem it is. A billing failure that reads
-          // as an Aira outage sends the only person who can fix it looking in
-          // the wrong place.
-          setError(event.advice ? `${event.message} ${event.advice}` : event.message);
+      /*
+       * The browse loop.
+       *
+       * A turn can end with the model asking to look something up rather than
+       * answering. When that happens the browse runs here — the caller owns the
+       * browser, the gateway only declares the tool — and the conversation is
+       * sent again with the result appended.
+       *
+       * Bounded: two rounds. A model that has searched twice and still wants to
+       * search is not converging, and every round is a real browser session and
+       * a second charge for the same question.
+       */
+      const conversation: ChatMessage[] = history.map(message => ({ role: message.role, content: messageContent(message) }));
+      const canBrowse = await browsingAvailable();
+
+      for (let round = 0; round <= MAX_BROWSE_ROUNDS; round++) {
+        const asked: Array<{ id: string; name: string; arguments: string }> = [];
+
+        for await (const event of streamChat({
+          messages: conversation,
+          surface: 'chat', model: model || undefined, conversationId: id,
+          signal: controller.signal, canBrowse,
+        })) {
+          if (controller.signal.aborted || request.current !== controller) return;
+          if (event.type === 'start') setAnsweredBy(event.model);
+          if (event.type === 'text') {
+            buffer.push('reply', event.text);
+          } else if (event.type === 'tool_call') {
+            asked.push(event.call);
+          } else if (event.type === 'error') {
+            // The advice says whose problem it is. A billing failure that reads
+            // as an Aira outage sends the only person who can fix it looking in
+            // the wrong place.
+            setError(event.advice ? `${event.message} ${event.advice}` : event.message);
+          }
         }
+
+        const browses = asked.filter(call => call.name === 'browse_web');
+        if (!browses.length || round === MAX_BROWSE_ROUNDS) break;
+
+        // Shown while it runs: a browse takes tens of seconds, and a chat that
+        // sits silent for that long reads as broken.
+        setSearching(true);
+        conversation.push({ role: 'assistant', content: '', toolCalls: asked });
+        for (const call of browses) {
+          const task = readTask(call.arguments);
+          const answer = await browseFor(task, 12, controller.signal);
+          conversation.push({
+            role: 'tool',
+            toolCallId: call.id,
+            // Attributed and delimited: this is a web page's words, and the
+            // model must not read them as the user's.
+            content: answer.urls.length
+              ? `${answer.text}\n\nPages read: ${answer.urls.slice(0, 8).join(', ')}`
+              : answer.text,
+          });
+        }
+        setSearching(false);
+        if (controller.signal.aborted || request.current !== controller) return;
       }
       } finally {
+        setSearching(false);
         // The last tokens are still in the buffer when the stream ends.
         if (!controller.signal.aborted) buffer.finish(); else buffer.dispose();
       }
@@ -112,5 +198,5 @@ export function useChat(userId: string | null) {
   function open(conversation: Conversation) { stop(); setCurrentId(conversation.id); setMessages(conversation.messages); setError(''); setAnsweredBy(''); }
   function reset() { stop(); setCurrentId(null); setMessages([]); messagesRef.current = []; setError(''); setAnsweredBy(''); }
   function remove(id: string) { if (id === currentId) reset(); setConversations(previous => previous.filter(conversation => conversation.id !== id)); }
-  return { conversations, messages, currentId, busy, error, storageNotice, answeredBy, send, stop, retry, open, reset, remove };
+  return { conversations, messages, currentId, busy, searching, error, storageNotice, answeredBy, send, stop, retry, open, reset, remove };
 }

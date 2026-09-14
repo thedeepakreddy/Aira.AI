@@ -12,8 +12,19 @@ import { getAccessToken } from './supabase';
 export type Surface = 'chat' | 'voice' | 'code' | 'task';
 
 export interface ChatMessage {
-  role: 'user' | 'assistant';
+  /**
+   * `tool` carries the result of something the model asked the caller to do.
+   *
+   * The gateway has always accepted these; the client type did not describe
+   * them, which is part of why chat could be offered a browsing tool and never
+   * complete one.
+   */
+  role: 'user' | 'assistant' | 'tool';
   content: string;
+  /** Present on an assistant turn that asked for tool calls. */
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  /** Present on a tool turn; identifies the call being answered. */
+  toolCallId?: string;
 }
 
 export type StreamEvent =
@@ -21,7 +32,15 @@ export type StreamEvent =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'done'; usage: unknown; stopReason: string | null }
-  | { type: 'error'; message: string; retryable: boolean; fault?: Fault; advice?: string };
+  | { type: 'error'; message: string; retryable: boolean; fault?: Fault; advice?: string }
+  /**
+   * The model asking for something to be done on its behalf.
+   *
+   * Dropped silently until now, which is why chat could be offered a browsing
+   * tool and never use it: the gateway declares tools, but the caller owns the
+   * browser and has to run them.
+   */
+  | { type: 'tool_call'; call: { id: string; name: string; arguments: string } };
 
 /**
  * Whose problem a failure is, mirrored from the gateway.
@@ -38,6 +57,15 @@ export interface StreamChatOptions {
   model?: string;
   conversationId?: string | null;
   signal?: AbortSignal;
+  /**
+   * Whether this caller can actually perform a browse.
+   *
+   * A property of the caller, not the account: the same user has a real browser
+   * on the desktop and a hosted one on the web, and neither before signing in.
+   * The gateway offers the tool only when this is true, because a model told it
+   * may search — when nothing can — announces a search and invents the result.
+   */
+  canBrowse?: boolean;
 }
 
 export const GATEWAY_URL: string =
@@ -48,7 +76,7 @@ export const GATEWAY_URL: string =
  * provider, so nothing here needs to know which model answered.
  */
 export async function* streamChat(options: StreamChatOptions): AsyncGenerator<StreamEvent> {
-  const { messages, surface = 'chat', model, conversationId, signal } = options;
+  const { messages, surface = 'chat', model, conversationId, signal, canBrowse = false } = options;
 
   // The gateway pays for every token it forwards, so it needs to know who is
   // asking. Without a session it answers 401 and nothing is spent.
@@ -62,7 +90,13 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ messages, surface, model, conversationId }),
+      body: JSON.stringify({
+        messages, surface, model, conversationId,
+        // Declared per request, because it is a property of the caller and not
+        // of the account: the same user has a browser on the desktop and a
+        // hosted one on the web, and neither before they have signed in.
+        canBrowse,
+      }),
       signal,
     });
   } catch (error) {

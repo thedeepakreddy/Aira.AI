@@ -334,7 +334,7 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
               </div>
               : <div className="message-bubble"><p>{message.text}</p>{message.attachment && <span className="message-file"><Paperclip />{message.attachment.name}</span>}</div>}
           </div>)}
-          {chat.busy && <p className="working-status" role="status">{chat.messages.at(-1)?.role === 'assistant' ? 'Aira is responding…' : 'Aira is thinking…'}</p>}
+          {chat.busy && <p className="working-status" role="status">{chat.searching ? 'Aira is reading the web…' : chat.messages.at(-1)?.role === 'assistant' ? 'Aira is responding…' : 'Aira is thinking…'}</p>}
           {chat.error && <div className="chat-error" role="alert"><p>{chat.error}</p><button type="button" onClick={() => chat.retry(model)} disabled={chat.busy}><RotateCcw />Retry response</button><button type="button" onClick={() => showScreen('connections')}><Settings2 />Connections</button></div>}
         </div>
         <form className="chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>

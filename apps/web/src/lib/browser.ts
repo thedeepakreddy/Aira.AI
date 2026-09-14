@@ -184,3 +184,57 @@ export class BrowserClient {
     }
   }
 }
+
+/** What a browse came back with, flattened for a model to read. */
+export interface BrowseAnswer {
+  text: string;
+  /** Pages actually visited, so an answer can be attributed. */
+  urls: string[];
+}
+
+/**
+ * Runs one research task and waits for the answer.
+ *
+ * The panel wants every step as it happens; a tool call wants only the result,
+ * so this collects the stream and returns its end. It also starts the browser
+ * if it is not already up — a model asking to search should not fail because
+ * the user never opened the browser screen.
+ *
+ * Errors are returned as text rather than thrown. This is the body of a tool
+ * result: a model that is told "the browse failed, here is why" will say so,
+ * where one handed an exception gets nothing back and guesses instead.
+ */
+export async function browseFor(task: string, maxSteps = 12, signal?: AbortSignal): Promise<BrowseAnswer> {
+  let status = await supervisor.status();
+  if (!status.running) {
+    status = await supervisor.start({
+      gatewayUrl: (import.meta.env?.VITE_GATEWAY_URL as string | undefined) ?? 'http://localhost:8787',
+      token: '', model: '',
+    }).catch(() => status);
+  }
+  if (!status.running || !status.port || !status.token) {
+    return { text: 'The browser could not be started, so nothing was looked up.', urls: [] };
+  }
+
+  const client = new BrowserClient(status.port, status.token);
+  let answer: BrowseAnswer | null = null;
+  let failure = '';
+  const visited: string[] = [];
+
+  await client.run(task, maxSteps, (event) => {
+    if (event.type === 'step' && event.url) visited.push(event.url);
+    if (event.type === 'result') answer = { text: event.text, urls: event.urls?.length ? event.urls : visited };
+    if (event.type === 'error') failure = event.message;
+    if (event.type === 'cancelled') failure = 'The browse was cancelled.';
+  }, signal).catch((error: unknown) => {
+    failure = error instanceof Error ? error.message : String(error);
+  });
+
+  if (answer) return answer;
+  return {
+    text: failure
+      ? `The browse did not finish: ${failure}`
+      : 'The browse finished without returning anything.',
+    urls: visited,
+  };
+}

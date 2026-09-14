@@ -111,8 +111,19 @@ export function createChatRoute(providers: ChatProvider[]) {
     // conversation would discard the prompt cache. Rules only here — no
     // classifier call — so this costs nothing per turn.
     const capability = await routeIntent(asked);
+    const offered = browseTools(parsed.canBrowse);
+    /*
+     * The instruction only goes in when the tool it describes went in too.
+     *
+     * The search profile tells the model to consult the web and cite each
+     * source. A caller with no browser gets an empty tool list, and a model
+     * told to search with nothing to search with does not decline — it
+     * announces a search it did not perform and invents the citations, which
+     * is worse than the stale answer the instruction was meant to prevent.
+     */
+    const equipped = capability.tools.every((name) => offered.some((tool) => tool.name === name));
     const system = withContext(
-      capability.system ? `${capability.system}\n\n${parsed.system ?? ''}`.trim() : parsed.system,
+      equipped && capability.system ? `${capability.system}\n\n${parsed.system ?? ''}`.trim() : parsed.system,
       useMemory ? await contextFor(userId, parsed.surface) : '',
     );
 
@@ -138,7 +149,7 @@ export function createChatRoute(providers: ChatProvider[]) {
         for await (const event of provider.streamChat({
           ...parsed,
           system,
-          tools: browseTools(parsed.canBrowse),
+          tools: offered,
           model: decision.model,
           signal,
         })) {
