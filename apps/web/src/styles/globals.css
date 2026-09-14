@@ -123,7 +123,18 @@
 .brand-wordmark>span{font-weight:400;color:#ffc790}
 .brand-byline{font-size:.52em;letter-spacing:.01em;font-weight:400;color:#ffc790}
 .brand-home small{font-size:10px;letter-spacing:.5px;color:#ffe9d3a0}
-.app-header{gap:22px}
+/*
+ * The header floats over the page at z-index 15 and is laid out
+ * space-between, so the wide gap between the brand and the nav belongs to the
+ * header and swallowed every click that landed there. Nothing is drawn in that
+ * gap — it is empty by construction — but it sat on top of whatever the page
+ * put beneath it, which on the agent board is the runtime's on/off control.
+ *
+ * The bar stops taking pointer events and its children take them back, so the
+ * empty space passes clicks through and every real control still works.
+ */
+.app-header{gap:22px;pointer-events:none}
+.app-header>*{pointer-events:auto}
 .history-trigger{display:grid;place-items:center;width:42px;height:42px;padding:0;border-radius:13px;color:#fff0db;flex-shrink:0;background:linear-gradient(145deg,#ffffff14,#ffffff08);border-color:#ffc08326}
 .menu-glyph{display:flex;flex-direction:column;justify-content:center;gap:4px;width:17px;height:17px}
 .menu-glyph i{display:block;width:100%;height:1px;border-radius:99px;background:#ffe0bd;box-shadow:0 1px 7px #ff8f421f;transition:transform .2s ease,width .2s ease}
