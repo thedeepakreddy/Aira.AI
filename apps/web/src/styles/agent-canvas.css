@@ -673,6 +673,23 @@
   font-size: 12px;
 }
 .agent-node-compose input::placeholder { color: #ffffff70; }
+/* What the agent produced, summarised on the card itself. */
+.agent-node-result { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
+.agent-node-preview {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c3ab9c;
+  /* Two lines, then ellipsis: enough to recognise the answer, not enough to
+     make every card a different height. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.agent-node-card.working .agent-node-preview { color: #ffffffc4; }
+.agent-node-result .agent-node-chip { align-self: flex-start; }
+
 .agent-node-card.idle .agent-node-compose input::placeholder { color: var(--canvas-dim); }
 .agent-node-compose input:focus { outline: none; border-color: #ffffff40; background: #ffffff17; }
 .agent-node-compose button {

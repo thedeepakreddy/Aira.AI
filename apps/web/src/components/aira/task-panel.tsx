@@ -68,6 +68,8 @@ export default function TaskPanel() {
   /** In-flight connect, shared so concurrent tasks await it rather than race. */
   const connecting = useRef<Promise<Agent[]> | null>(null);
   const [account, setAccount] = useState<string | null>(null);
+  /** Last session's output, waiting for a fleet to belong to. */
+  const restored = useRef<ReturnType<typeof loadBoard>>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const connected = Boolean(status?.running && client.current && agents.length);
@@ -92,10 +94,17 @@ export default function TaskPanel() {
       const saved = loadBoard(id);
       if (!saved) return;
       setSent(saved.sent);
-      setAgents(previous => previous.length ? previous : saved.results.map(r => ({
-        agent: { id: r.id, name: r.name }, phase: (r.error ? 'error' : 'done') as Phase,
-        text: r.text, startedAt: null, endedAt: saved.at, error: r.error,
-      })));
+      /*
+       * Held, not shown.
+       *
+       * This used to put the saved results straight onto the board, and a saved
+       * result only exists for an agent that answered — so a run where one
+       * specialist replied restored exactly that one card, and the board
+       * greeted the next session with a lone Research agent nobody had asked
+       * for. The roster belongs to the live fleet; this is last session's
+       * output, which is only meaningful once there are agents to attach it to.
+       */
+      restored.current = saved;
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
@@ -145,7 +154,12 @@ export default function TaskPanel() {
           if (cancelled) return;
           if (!found.length) throw new Error('The runtime is running but has no available agents. Reconnect to try again.');
           client.current = c;
-          setAgents(found.map(blank));
+          setAgents(found.map(agent => {
+            const was = restored.current?.results.find(r => r.id === agent.id);
+            return was
+              ? { ...blank(agent), phase: (was.error ? 'error' : 'done') as Phase, text: was.text, error: was.error, endedAt: restored.current?.at ?? null }
+              : blank(agent);
+          }));
           setSelected(defaultSelection(found));
           activeToken.current = null; // Verify credentials on the next task.
         }
@@ -191,7 +205,16 @@ export default function TaskPanel() {
     }
     client.current = c;
     activeToken.current = token;
-    setAgents(previous => found.map(agent => previous.find(a => a.agent.id === agent.id) ?? blank(agent)));
+    setAgents(previous => found.map(agent => {
+      const live = previous.find(a => a.agent.id === agent.id);
+      if (live) return live;
+      // Now there is a roster to hang it on, last session's output comes back
+      // onto the agents that produced it — and only onto those.
+      const was = restored.current?.results.find(r => r.id === agent.id);
+      return was
+        ? { ...blank(agent), phase: (was.error ? 'error' : 'done') as Phase, text: was.text, error: was.error, endedAt: restored.current?.at ?? null }
+        : blank(agent);
+    }));
     setSelected(previous => {
       const valid = previous.filter(id => found.some(a => a.id === id));
       return valid.length ? valid : defaultSelection(found);

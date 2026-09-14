@@ -380,6 +380,9 @@ function AgentNode({ agent, peers, selected, open, model, onRun, onStop, onHandO
   const elapsed = agent.startedAt ? Math.max(0, ((agent.endedAt ?? Date.now()) - agent.startedAt) / 1000) : 0;
   const words = agent.text ? agent.text.trim().split(/\s+/).length : 0;
   const lines = agent.text.trim().split('\n').filter(Boolean);
+  // Skip a leading markdown heading: "## Findings" is not a summary of itself.
+  const preview = (lines.find(line => !/^#{1,6}\s/.test(line)) ?? lines[0] ?? '')
+    .replace(/^[#>*\-\s]+/, '').slice(0, 150);
 
   // Real measurements, not a decorative percentage.
   //
@@ -440,6 +443,10 @@ function AgentNode({ agent, peers, selected, open, model, onRun, onStop, onHandO
         </dd>
       </div>
       <div>
+        <dt><Clock3 />Time</dt>
+        <dd>{elapsed ? (elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${Math.round(elapsed % 60)}s` : `${elapsed.toFixed(1)}s`) : '—'}</dd>
+      </div>
+      <div>
         <dt><Bot />Model</dt>
         <dd><span className="agent-node-chip">{model || '—'}</span></dd>
       </div>
@@ -447,12 +454,19 @@ function AgentNode({ agent, peers, selected, open, model, onRun, onStop, onHandO
 
     {agent.error && <p className="agent-node-error">{agent.error}</p>}
 
-    {agent.text && <>
-      <button className="agent-node-chip" style={{ marginTop: 12 }} onClick={onToggleOpen} aria-expanded={open}>
-        {open ? 'Hide output' : 'See steps'}<ChevronRight />
+    {agent.text && <div className="agent-node-result">
+      {/*
+        * A collapsed card used to say nothing about what it had produced, and
+        * the control to open it was labelled "See steps" while showing the
+        * answer. The first line is the answer's own summary far more often
+        * than not, so it is what the card shows at rest.
+        */}
+      {!open && <p className="agent-node-preview">{preview}</p>}
+      <button className="agent-node-chip" onClick={onToggleOpen} aria-expanded={open}>
+        {open ? 'Hide answer' : `Read answer · ${words.toLocaleString()} words`}<ChevronRight />
       </button>
       {open && <div className="agent-node-output"><Markdown>{agent.text}</Markdown></div>}
-    </>}
+    </div>}
 
     {/* This agent's own prompt. Runs independently of the board task and of
       * whatever anyone else is doing, so a follow-up never waits. */}
