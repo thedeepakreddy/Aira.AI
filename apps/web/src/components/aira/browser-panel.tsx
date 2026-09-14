@@ -1,8 +1,8 @@
 import {useCallback,useEffect,useRef,useState,type KeyboardEvent} from 'react';
-import {Power,Globe,Send,Square,ArrowUpRight,Check,Loader2,ShieldAlert,Plus,X,Search,EyeOff,ArrowLeft,ArrowRight,RotateCw,PanelRightClose,PanelRightOpen,Sparkles} from 'lucide-react';
+import {ArrowLeft,ArrowRight,ArrowUpRight,Check,Clock3,EyeOff,Globe,Loader2,PanelRightClose,PanelRightOpen,Plus,Power,RotateCw,Search,Send,ShieldAlert,Sparkles,Square,X} from 'lucide-react';
 import {isDesktop,supervisor,BrowserClient,type BrowseEvent,type BrowserStatus,type TabState} from '@/lib/browser';
 import {getAccessToken} from '@/lib/supabase';
-import {listCatalogue,gatewayRequest} from '@/lib/gateway';
+import {listCatalogue,gatewayRequest,keepPage,searchPages,type PageHit} from '@/lib/gateway';
 import Markdown from './markdown';
 import './browser-workbench.css';
 
@@ -42,6 +42,12 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
  const client=useRef<BrowserClient|null>(null);
  const run=useRef<AbortController|null>(null);
  const editingAddress=useRef(false);
+ const [recallOpen,setRecallOpen]=useState(false);
+ const [recallQuery,setRecallQuery]=useState('');
+ /** null means "not searched yet", which reads differently from "no matches". */
+ const [recallHits,setRecallHits]=useState<PageHit[]|null>(null);
+ const captured=useRef<Set<string>>(new Set());
+ const pendingCapture=useRef<{url:string;timer:number}>({url:'',timer:0});
  const currentAddress=useRef('');
  const alive=useRef(true);
  const pendingStart=useRef<Promise<BrowserStatus>|null>(null);
@@ -96,7 +102,10 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
      const next=await c.screen();
      if(disposed)return;
      setFrame(next.image);setFrameTitle(next.title||label(next.url));
-     if(next.url){currentAddress.current=next.url;if(!editingAddress.current)setAddress(next.url)}
+     if(next.url){
+      currentAddress.current=next.url;if(!editingAddress.current)setAddress(next.url);
+      void capture(c,next.url);
+     }
     }else setFrame(null);
     failures=0;
    }catch(e){
@@ -107,6 +116,38 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
   void refresh();
   return()=>{disposed=true;clearTimeout(timer)};
  },[connected,active,busy,applyTabs,showError]);
+
+ /**
+  * Keeps a page once the user has actually settled on it.
+  *
+  * Waits for the address to hold still for a moment rather than firing on every
+  * frame: a single navigation produces several, and a page mid-load has not
+  * finished saying what it says. Each URL is kept once per session — re-reading
+  * something is not new reading.
+  *
+  * Every failure is silent. This happens because the user browsed, not because
+  * they asked, and a browser that interrupts reading to report a memory problem
+  * is worse than one that forgets.
+  */
+ async function capture(c:BrowserClient,url:string){
+  if(captured.current.has(url))return;
+  if(pendingCapture.current.url===url)return;
+  clearTimeout(pendingCapture.current.timer);
+  pendingCapture.current={url,timer:setTimeout(async()=>{
+   if(currentAddress.current!==url)return;
+   captured.current.add(url);
+   try{
+    const page=await c.snapshot();
+    if(page?.url)await keepPage({url:page.url,title:page.title||'',text:page.text||''});
+   }catch{/* reading must not break because memory did */}
+  },2500) as unknown as number};
+ }
+
+ async function runRecall(){
+  const q=recallQuery.trim();
+  if(!q){setRecallHits(null);return}
+  setRecallHits(await searchPages(q).catch(()=>[]));
+ }
 
  async function start(){
   setError('');setStarting(true);
@@ -145,9 +186,11 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
   try{applyTabs(await action(c))}catch(e){showError(e)}finally{setWorking(false)}
  }
 
- async function navigate(){
-  if(!address.trim())return;
-  try{const url=browserAddress(address);editingAddress.current=false;await operate(c=>c.navigate(url))}catch(e){showError(e)}
+ /** `to` is for callers that already know the URL — a recalled page, say. */
+ async function navigate(to?:string){
+  const typed=to??address;
+  if(!typed.trim())return;
+  try{const url=browserAddress(typed);editingAddress.current=false;await operate(c=>c.navigate(url))}catch(e){showError(e)}
  }
 
  const onEvent=useCallback((event:BrowseEvent)=>{
@@ -224,7 +267,28 @@ export default function BrowserPanel({active=true}:{active?:boolean}){
       <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('back'))} aria-label="Back"><ArrowLeft/></button>
       <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('forward'))} aria-label="Forward"><ArrowRight/></button>
       <button className="browse-icon" disabled={locked} onClick={()=>void operate(c=>c.history('reload'))} aria-label="Reload"><RotateCw className={working?'spin':''}/></button>
-     </div><form className="browse-bar" onSubmit={e=>{e.preventDefault();void navigate()}}><Search/><input aria-label="Search or enter a web address" value={address} placeholder="Search or enter a web address" disabled={locked} autoComplete="off" spellCheck={false} onFocus={()=>{editingAddress.current=true}} onBlur={()=>{editingAddress.current=false}} onChange={e=>setAddress(e.target.value)}/><button className="browse-bar-go" disabled={locked||!address.trim()} aria-label="Navigate"><ArrowRight/></button></form>
+     </div><form className="browse-bar" onSubmit={e=>{e.preventDefault();void navigate()}}><Search/><input aria-label="Search or enter a web address" value={address} placeholder="Search or enter a web address" disabled={locked} autoComplete="off" spellCheck={false} onFocus={()=>{editingAddress.current=true}} onBlur={()=>{editingAddress.current=false}} onChange={e=>setAddress(e.target.value)}/><button className="browse-bar-go" disabled={locked||!address.trim()} aria-label="Navigate"><ArrowRight/></button></form><button type="button" className={"browse-recall-toggle"+(recallOpen?" on":"")} onClick={()=>{setRecallOpen(o=>!o);setRecallHits(null)}} title="Search pages you have read in Aira" aria-label="Search pages you have read" aria-pressed={recallOpen}><Clock3/></button>
+     {recallOpen&&<div className="browse-recall">
+      <form onSubmit={e=>{e.preventDefault();void runRecall()}}>
+       <Search/>
+       <input autoFocus value={recallQuery} placeholder="a phrase you remember from it…"
+        aria-label="Search pages you have read"
+        onChange={e=>setRecallQuery(e.target.value)}/>
+      </form>
+      {/* Three states, said plainly: not searched yet, searched and empty,
+        * searched and found. A blank drawer reads as broken. */}
+      {recallHits===null
+       ?<p className="browse-recall-hint">Pages you read in Aira are kept for 30 days. Nothing here is sent anywhere.</p>
+       :recallHits.length===0
+       ?<p className="browse-recall-hint">Nothing matched. Try a phrase from the page itself.</p>
+       :<ul className="browse-recall-hits">{recallHits.map(hit=><li key={hit.url+hit.at}>
+         <button type="button" onClick={()=>{setAddress(hit.url);setRecallOpen(false);void navigate(hit.url)}}>
+          <strong>{hit.title}</strong>
+          <span className="browse-recall-excerpt">{hit.excerpt}</span>
+          <span className="browse-recall-url">{label(hit.url)}</span>
+         </button>
+        </li>)}</ul>}
+     </div>}
      <button className={'browse-icon '+(tabState.private?'on':'')} disabled={locked} aria-label="Private browser profile" aria-pressed={tabState.private} title="Switch profile and close current tabs" onClick={()=>void operate(async c=>{await c.setPrivate(!tabState.private);return c.openTab(HOME)})}><EyeOff/></button>
      <button className="browse-icon" aria-label={showResearch?'Hide research panel':'Show research panel'} aria-expanded={showResearch} onClick={()=>setShowResearch(!showResearch)}>{showResearch?<PanelRightClose/>:<PanelRightOpen/>}</button></div>
     </div>

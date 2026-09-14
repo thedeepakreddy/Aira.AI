@@ -1,4 +1,5 @@
 import { FACT_SURFACE } from './facts.ts';
+import { PAGE_SURFACE } from './pages.ts';
 import { memory, trim, type MemoryEntry } from './store.ts';
 
 /**
@@ -94,10 +95,25 @@ export async function contextFor(userId: string | null, surface: string): Promis
   try {
     if (!await memory().enabled(userId)) return '';
     const entries = await memory().recall(userId, RECALL);
-    // Facts survive the same-surface filter: they are not this conversation's
-    // own turns echoed back, they are what is true regardless of where it was
-    // learned.
-    return render(entries.filter((e) => e.surface !== surface || e.surface === FACT_SURFACE));
+    return render(entries.filter((e) => {
+      /*
+       * Pages never become ambient context.
+       *
+       * This block is prepended to the SYSTEM PROMPT. Page text is written by
+       * whoever owns the page, so letting it in here would let any site the
+       * user visited put instructions into Aira's system prompt on their next
+       * message. Pages are searchable on request and reach a model only as
+       * quoted, attributed material in a user turn.
+       *
+       * This is the same boundary that removed `browser` from MEMORY_SURFACES.
+       * Do not relax it to make recall feel smarter.
+       */
+      if (e.surface === PAGE_SURFACE) return false;
+      // Facts survive the same-surface filter: they are not this conversation's
+      // own turns echoed back, they are what is true regardless of where it was
+      // learned.
+      return e.surface !== surface || e.surface === FACT_SURFACE;
+    }));
   } catch (error) {
     console.error('[memory] recall failed:', error);
     return '';

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AuthedVars } from '../auth.ts';
 import { memory, type MemoryEntry } from '../memory/store.ts';
+import { isPageSurface, rememberPage, searchPages } from '../memory/pages.ts';
 import { isFactSurface } from '../memory/facts.ts';
 import { invalid, object } from './validation.ts';
 import { ProviderError } from '../providers/types.ts';
@@ -31,6 +32,10 @@ export function memoryInput(value: unknown): Omit<MemoryEntry, 'id'> {
   if (value.surface !== undefined && !MEMORY_SURFACES.includes(value.surface as typeof MEMORY_SURFACES[number])) {
     invalid(isFactSurface(String(value.surface))
       ? 'Facts are derived by Aira, not written directly.'
+      // A client that could write here would be planting web-sourced text in a
+      // store the user believes holds their own reading.
+      : isPageSurface(String(value.surface))
+      ? 'Pages are recorded by the browser, not written directly.'
       : 'Invalid memory surface.');
   }
   return { at: new Date().toISOString(), surface: typeof value.surface === 'string' ? value.surface : 'workspace', role: 'user', text: value.text.trim() };
@@ -85,5 +90,34 @@ export function createMemoryRoutes() {
     await memory().forget(c.get('userId')!);
     return c.json({ deleted: true });
   });
+  /**
+   * Records a page the user read.
+   *
+   * Fire-and-forget by design: the browser calls this on navigation and the
+   * user did not ask for it, so a page that does not qualify comes back as
+   * "not kept" rather than as an error they would have to think about.
+   */
+  app.post('/pages', async (c) => {
+    const user = c.get('userId');
+    if (!user) return c.json({ error: 'Sign in to keep what you read.' }, 401);
+    const body = await c.req.json().catch(() => null) as { url?: string; title?: string; text?: string } | null;
+    if (!body?.url || typeof body.url !== 'string') return c.json({ error: 'url is required.' }, 400);
+    const kept = await rememberPage(user, {
+      url: body.url,
+      title: typeof body.title === 'string' ? body.title : '',
+      text: typeof body.text === 'string' ? body.text : '',
+    });
+    return c.json({ kept });
+  });
+
+  /** Finds pages by a phrase the user remembers from one. */
+  app.get('/pages', async (c) => {
+    const user = c.get('userId');
+    if (!user) return c.json({ error: 'Sign in to search what you have read.' }, 401);
+    const query = c.req.query('q') ?? '';
+    if (query.length > 200) return c.json({ error: 'Search is limited to 200 characters.' }, 400);
+    return c.json({ hits: await searchPages(user, query) });
+  });
+
   return app;
 }

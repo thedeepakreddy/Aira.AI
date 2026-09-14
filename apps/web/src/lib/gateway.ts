@@ -227,3 +227,45 @@ export async function fetchSecondOpinion(
   if (!response.ok) throw new Error(body.error || 'The second opinion could not be fetched.');
   return body;
 }
+
+/** A page the user read, found again by something they remember from it. */
+export interface PageHit {
+  url: string;
+  title: string;
+  excerpt: string;
+  at: string;
+}
+
+/**
+ * Keeps a page the user read.
+ *
+ * Silent on every failure. This runs because the user browsed, not because they
+ * asked, so there is nothing to report a problem to — and a browser that
+ * interrupts reading to complain about memory is worse than one that forgets.
+ */
+export async function keepPage(page: { url: string; title: string; text: string }): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+    const response = await fetch(`${GATEWAY_URL}/v1/memory/pages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(page),
+    });
+    if (!response.ok) return false;
+    return Boolean(((await response.json()) as { kept?: boolean }).kept);
+  } catch {
+    return false;
+  }
+}
+
+/** Searches pages the user has read. */
+export async function searchPages(query: string): Promise<PageHit[]> {
+  const token = await getAccessToken();
+  if (!token) return [];
+  const url = new URL(`${GATEWAY_URL}/v1/memory/pages`);
+  url.searchParams.set('q', query);
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) return [];
+  return ((await response.json()) as { hits?: PageHit[] }).hits ?? [];
+}

@@ -107,6 +107,16 @@ export class BrowserClient {
 
   health(): Promise<{ ready: boolean; error?: string }> { return this.api('GET', '/health'); }
   navigate(url: string): Promise<TabState> { return this.api('POST', '/navigate', { url }); }
+
+  /**
+   * The page's visible text.
+   *
+   * Untrusted, always: this is whatever the site chose to render. Callers store
+   * it and search it; nothing built from it may become an instruction.
+   */
+  snapshot(): Promise<{ url: string; title: string; text: string }> {
+    return this.api<{ url: string; title: string; text: string }>('GET', '/snapshot');
+  }
   selectTab(id: string): Promise<TabState> { return this.api('POST', '/tabs/select', { id }); }
   history(action: 'back' | 'forward' | 'reload'): Promise<TabState> { return this.api('POST', '/history', { action }); }
   focus(): Promise<TabState> { return this.api('POST', '/focus'); }

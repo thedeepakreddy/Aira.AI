@@ -13,3 +13,113 @@
 @media(max-width:1200px){.browser-workbench-grid{grid-template-columns:minmax(0,1fr) 270px;gap:10px}.browser-workbench .browse-nav{gap:0}.browser-workbench .browse-nav .browse-icon{width:25px}.browser-workbench .browse-tab{flex-basis:130px}}
 @media(max-width:980px){.browser-workbench-grid{grid-template-columns:minmax(0,1fr);overflow:visible}.browser-surface{min-height:420px}.browser-research{min-height:320px}.browser-workbench{overflow:auto!important}.browser-research-log{max-height:380px}.browser-welcome{min-height:350px;padding:28px 20px}.browser-feature-row{gap:9px}.browser-workbench .browse-bar input{font-size:11px}}
 @media(prefers-reduced-motion:reduce){.browser-workbench .spin{animation:none}}
+
+/* ── recall ────────────────────────────────────────────────────────────────
+ *
+ * Searching what you already read, next to the bar that searches the web.
+ * Deliberately a separate control: typing in the address bar should never
+ * silently search your history instead of going where you asked.
+ */
+.browse-recall-toggle {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid #ffffff14;
+  border-radius: 11px;
+  background: #ffffff08;
+  color: #9c8578;
+  cursor: pointer;
+  transition: background .18s, color .18s, border-color .18s;
+}
+.browse-recall-toggle:hover { background: #ffffff14; color: #f4ece6; }
+.browse-recall-toggle.on { border-color: #ffb87a5c; background: #ff9a3d1f; color: #ffc38a; }
+.browse-recall-toggle svg { width: 15px; height: 15px; }
+
+.browse-recall {
+  position: absolute;
+  top: 100%;
+  right: 12px;
+  z-index: 30;
+  width: min(420px, calc(100% - 24px));
+  margin-top: 6px;
+  border: 1px solid #ffb87a2e;
+  border-radius: 14px;
+  background: linear-gradient(168deg, #1a100bfa, #100807fc);
+  box-shadow: 0 24px 60px #000000a6;
+  overflow: hidden;
+}
+.browse-recall form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 13px;
+  border-bottom: 1px solid #ffffff12;
+}
+.browse-recall form svg { width: 14px; height: 14px; color: #9c8578; flex: none; }
+.browse-recall input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: #f4ece6;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.browse-recall input::placeholder { color: #7d6f66; }
+
+.browse-recall-hint {
+  margin: 0;
+  padding: 13px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a7568;
+}
+
+.browse-recall-hits {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.browse-recall-hits button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.browse-recall-hits button:hover { background: #ffffff0a; border-color: #ffffff14; }
+.browse-recall-hits strong {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #f4ece6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The matched sentence, over two lines — this is what tells the reader whether
+   it is the page they meant. */
+.browse-recall-excerpt {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #9c8578;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.browse-recall-url { font-size: 11px; color: #6b574c; }
