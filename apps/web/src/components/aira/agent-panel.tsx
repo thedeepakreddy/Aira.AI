@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FolderOpen, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
 import { isDesktop, supervisor, pickDirectory, OpenCodeClient, toolTarget, type AgentEvent, type OpenCodeStatus, type PermissionRequest, type QuestionRequest, type ToolActivity } from '@/lib/opencode';
 import { getAccessToken } from '@/lib/supabase';
-import { listCatalogue, type ModelSpec } from '@/lib/gateway';
+import { listCatalogue, fetchUsage, type ModelSpec, type UsageSummary } from '@/lib/gateway';
 import Markdown from './markdown';
 import '@/styles/agent-workbench.css';
 import '@/styles/code-terminal.css';
@@ -43,6 +43,9 @@ export default function AgentPanel() {
   const [checking, setChecking] = useState(isDesktop);
   const [streamState, setStreamState] = useState<'offline' | 'connecting' | 'live'>('offline');
   const [sessionID, setSessionID] = useState<string | null>(null);
+  /* What this surface has spent. A coding agent runs long and reads a lot;
+   * the panel that hides the bill is the one you stop trusting. */
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [pending, setPending] = useState<string[]>([]);
   const [models, setModels] = useState<ModelSpec[]>([]);
   const [model, setModel] = useState('');
@@ -166,6 +169,11 @@ export default function AgentPanel() {
       })();
     });
   }, [applyEvent, refreshSession]);
+
+  useEffect(() => {
+    if (busy) return;
+    void fetchUsage('code').then(next => { if (alive.current) setUsage(next); }).catch(() => undefined);
+  }, [busy]);
 
   useEffect(() => {
     alive.current = true;
@@ -349,6 +357,16 @@ export default function AgentPanel() {
   const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : !isDesktop ? 'Desktop required' : !connected ? 'Offline' : streamState !== 'live' ? 'Reconnecting…' : waiting ? 'Needs your input' : busy ? 'Working' : 'Ready';
 
   const folderName = workdir ? workdir.split('/').filter(Boolean).at(-1) : null;
+  /* Tokens read better abbreviated at a glance; the exact figure is the title. */
+  const tokens = usage ? usage.inputTokens + usage.outputTokens : 0;
+  const tokenLabel = tokens >= 1000 ? `${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k` : `${tokens}`;
+  /* A floor, not a total, when a model in the window had no verified price —
+   * so it is marked rather than quietly understated. */
+  // Omitted at exactly zero: "$0.0000" is noise, and free-tier models legitimately
+  // cost nothing — the token count already shows the work happened.
+  const costLabel = usage && usage.costUsd > 0
+    ? `${usage.complete ? '' : '≥'}$${usage.costUsd.toFixed(usage.costUsd < 1 ? 4 : 2)}`
+    : null;
   const modelLabel = models.find(item => item.id === model)?.label ?? model ?? 'no model';
   const dot = !isDesktop || missing ? 'bad' : busy ? 'busy' : ready ? 'live' : '';
 
@@ -361,7 +379,10 @@ export default function AgentPanel() {
           part that identifies the project rather than the part that repeats. */}
       <span className="ct-path" title={workdir || undefined}>{workdir || stateLabel}</span>
       <div className="ct-bar-actions">
-        <span className="ct-sep" title={`Model: ${modelLabel}`}>{modelLabel}</span>
+        {usage && usage.requests > 0 && <span className="ct-meter" title={`${tokens.toLocaleString()} tokens over ${usage.requests} request${usage.requests === 1 ? '' : 's'} in the last ${usage.windowHours}h${usage.complete ? '' : ' — a floor, one model had no published price'}`}>
+          <span>{tokenLabel} tok</span>{costLabel && <><span className="ct-sep">·</span><span>{costLabel}</span></>}
+        </span>}
+        <span className="ct-model" title={`Model: ${modelLabel}`}>{modelLabel}</span>
         {connected && streamState !== 'live' && <button className="ct-btn" disabled={starting} onClick={() => void reconnect()} title="Reconnect the event stream"><RefreshCw />reconnect</button>}
         <button className="ct-btn" disabled={!ready || busy} onClick={() => void newSession()} title="Start a fresh conversation"><Plus />new</button>
         {connected && <button className="ct-btn danger" disabled={starting} onClick={() => void stop()} title="Disconnect the coding agent"><Power />disconnect</button>}
@@ -407,8 +428,17 @@ export default function AgentPanel() {
         <div className="ct-setup-note"><a href="https://opencode.ai/docs/" target="_blank" rel="noreferrer noopener">Coding runtime guide ↗</a></div>
       </div>}
 
+      {connected && <div className="ct-banner">
+        <div className="ct-banner-glyph">✻</div>
+        <div className="ct-banner-body">
+          <strong>Aira Code</strong>
+          <span>{folderName ?? 'project'} <span className="ct-sep">·</span> {modelLabel}</span>
+          <span className="ct-banner-dim" title={workdir || undefined}>{workdir}</span>
+        </div>
+      </div>}
+
       {connected && !entries.length && <div className="ct-hints">
-        <div className="ct-row"><span className="ct-mark">·</span><span className="ct-text">Ready in {folderName ?? 'this project'}. Try:</span></div>
+        <div className="ct-row"><span className="ct-mark">·</span><span className="ct-text">Try one of these, or describe your own:</span></div>
         {examples.map(example => <div className="ct-row" key={example}>
           <span className="ct-mark" />
           <button onClick={() => setTask(example)}>› {example}</button>
@@ -417,7 +447,16 @@ export default function AgentPanel() {
 
       {entries.map((entry, index) => {
         if (entry.kind === 'you') return <div className="ct-row ct-you" key={index}><span className="ct-mark">›</span><span className="ct-text">{entry.text}</span></div>;
-        if (entry.kind === 'agent') return <div className="ct-row ct-agent" key={index}><span className="ct-mark">⏺</span><div className="ct-text"><Markdown>{entry.text}</Markdown></div></div>;
+        if (entry.kind === 'agent') {
+          // The block cursor trails the text only while it is still arriving,
+          // and only on the last entry — a caret sitting under a finished
+          // answer reads as "still working" when nothing is.
+          const streaming = busy && index === entries.length - 1;
+          return <div className={`ct-row ct-agent${streaming ? ' streaming' : ''}`} key={index}>
+            <span className="ct-mark">⏺</span>
+            <div className="ct-text"><Markdown>{entry.text}</Markdown></div>
+          </div>;
+        }
         if (entry.kind === 'tool') return <ToolLine key={index} activity={entry.activity} />;
         if (entry.kind === 'notice') return <div className="ct-row ct-note" key={index}><span className="ct-mark">·</span><span className="ct-text">{entry.text}</span></div>;
         if (entry.kind === 'question') return <QuestionCard key={entry.request.id} request={entry.request} answers={entry.answers} skipped={entry.skipped} pending={pending.includes(entry.request.id) || !ready}
