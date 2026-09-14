@@ -136,6 +136,13 @@ export function loadCatalogue(sources: {
   gemini?: string;
   anthropic?: string;
   compatible?: Array<{ id: string; models: string }>;
+  /**
+   * Models discovered at runtime rather than declared in the environment —
+   * today, whatever Ollama has on disk. They arrive as finished specs because
+   * there is nothing to parse: the source already knows the id, the size and
+   * the price.
+   */
+  discovered?: ModelSpec[];
   enabledProviders?: string[];
 }): void {
   const enabled = new Set(sources.enabledProviders ?? [
@@ -149,16 +156,21 @@ export function loadCatalogue(sources: {
     ...parseCompatibleModels(sources.openrouter, 'openrouter'),
     ...parseCompatibleModels(sources.gemini, 'gemini'),
     ...(sources.compatible ?? []).flatMap((provider) => parseCompatibleModels(provider.models, provider.id)),
+    ...(sources.discovered ?? []),
   ].filter((model) => enabled.has(model.provider));
   const ids = new Set<string>();
   for (const model of next) {
     if (ids.has(model.id)) throw new Error(`Duplicate model id "${model.id}" across configured providers. Model ids must be unique.`);
     ids.add(model.id);
   }
+  const discoveredProviders = new Set((sources.discovered ?? []).map((model) => model.provider));
   for (const provider of enabled) {
-    if (!next.some((model) => model.provider === provider)) {
-      throw new Error(`Provider "${provider}" has a key but no models. Set its MODELS catalogue before starting the gateway.`);
-    }
+    if (next.some((model) => model.provider === provider)) continue;
+    // A discovered provider with nothing in it is a user who has not pulled a
+    // model yet, not a broken configuration. Declared providers still have to
+    // declare something, or a key is sitting there doing nothing silently.
+    if (discoveredProviders.has(provider)) continue;
+    throw new Error(`Provider "${provider}" has a key but no models. Set its MODELS catalogue before starting the gateway.`);
   }
   catalogue = next;
 }

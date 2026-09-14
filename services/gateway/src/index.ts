@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { loadEnv } from './env.ts';
 import { AnthropicProvider } from './providers/anthropic.ts';
 import { OpenAICompatibleProvider } from './providers/openai.ts';
+import { discoverOllama } from './providers/ollama.ts';
 import { initMemory } from './memory/store.ts';
 import { loadCatalogue } from './providers/registry.ts';
 import { validateRoutes } from './routing/router.ts';
@@ -52,9 +53,31 @@ if (env.geminiApiKey) {
 }
 
 for (const config of env.compatibleProviders) providers.push(new OpenAICompatibleProvider(config));
+
+/*
+ * Local models, if any.
+ *
+ * Probed rather than declared, and awaited before the catalogue is built so the
+ * first request already sees them. The probe is short and fails closed: not
+ * having Ollama is the ordinary case and must not delay or break a boot.
+ *
+ * The adapter is the plain OpenAI-compatible one, because that is exactly what
+ * Ollama serves at /v1. The api key is a placeholder it ignores — the field is
+ * required by the adapter, not by the server.
+ */
+const localModels = env.ollamaUrl ? await discoverOllama(env.ollamaUrl) : [];
+if (localModels.length) {
+  providers.push(new OpenAICompatibleProvider({
+    id: 'ollama',
+    apiKey: 'local',
+    baseURL: `${env.ollamaUrl.replace(/\/+$/, '')}/v1`,
+  }));
+}
+
 loadCatalogue({
   anthropic: env.anthropicModels, openai: env.openaiModels, openrouter: env.openrouterModels,
-  gemini: env.geminiModels, compatible: env.compatibleProviders, enabledProviders: providers.map((provider) => provider.id),
+  gemini: env.geminiModels, compatible: env.compatibleProviders, discovered: localModels,
+  enabledProviders: providers.map((provider) => provider.id),
 });
 validateRoutes();
 const app = createApp(env, providers);

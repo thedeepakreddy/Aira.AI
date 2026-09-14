@@ -22,6 +22,8 @@ export interface Env {
   memoryEnabled: boolean;
   allowedOrigins: string[];
   compatibleProviders: Array<{ id: string; apiKey: string; baseURL: string; models: string; maxTokensField?: 'max_tokens' | 'max_completion_tokens' }>;
+  /** Where to look for Ollama. Empty disables the probe entirely. */
+  ollamaUrl: string;
   maxConcurrentRequests: number;
   requestsPerMinute: number;
 }
@@ -88,6 +90,10 @@ export function loadEnv(): Env {
     // memory layer nobody turns on is a memory layer nobody has.
     memoryEnabled: bool(process.env.AIRA_MEMORY, true),
     compatibleProviders: compatibleProviders(),
+    // On by default and probed at the standard port: a user who installed
+    // Ollama wants Aira to find it, and one who did not pays a failed connection
+    // to localhost once at boot. Set it empty to skip even that.
+    ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
     maxConcurrentRequests: positiveInt('AIRA_MAX_CONCURRENT_REQUESTS', 4, 100),
     requestsPerMinute: positiveInt('AIRA_REQUESTS_PER_MINUTE', 120, 10000),
     allowedOrigins: [
@@ -101,7 +107,7 @@ export function loadEnv(): Env {
     ],
   };
 
-  if (!env.anthropicApiKey && !env.openaiApiKey && !env.openrouterApiKey && !env.geminiApiKey && !env.compatibleProviders.length) {
+  if (!env.anthropicApiKey && !env.openaiApiKey && !env.openrouterApiKey && !env.geminiApiKey && !env.compatibleProviders.length && !env.ollamaUrl) {
     throw new Error(
       'No provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, ' +
         'OPENROUTER_API_KEY and/or GEMINI_API_KEY in services/gateway/.env',
