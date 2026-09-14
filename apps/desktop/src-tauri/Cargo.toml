@@ -21,7 +21,8 @@ tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-dialog = "2"
 # Loopback HTTP only — no TLS stack is pulled in, because the only thing it
 # talks to is a local agent on 127.0.0.1.
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart"] }
 tokio = { version = "1", features = ["rt"] }
 futures-util = { version = "0.3", default-features = false }
 serde = { version = "1", features = ["derive"] }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Loader2, RotateCcw } from 'lucide-react';
 import { streamChat, type ChatMessage } from '@/lib/gateway';
 import { listen, speak, stopSpeaking, speechSupported, warmVoices, type Listener } from '@/lib/voice';
+import { localSpeechStatus, startLocalSpeech, stopLocalSpeech, record, transcribeLocally } from '@/lib/local-speech';
 import { playOrb } from '@/lib/orb';
 
 type Phase = 'idle' | 'listening' | 'thinking' | 'speaking';
@@ -12,6 +13,8 @@ export default function VoiceScreen({ reduceMotion }: { reduceMotion: boolean })
   const [reply, setReply] = useState('');
   const [error, setError] = useState('');
   const [muted, setMuted] = useState(false);
+  /** Whether this session is transcribing on the device. Drives the privacy line. */
+  const [local, setLocal] = useState(false);
   const orb = useRef<HTMLVideoElement>(null);
   const controls = useRef<{ pause: () => void; resume: () => void } | null>(null);
 
@@ -25,18 +28,84 @@ export default function VoiceScreen({ reduceMotion }: { reduceMotion: boolean })
     const history: ChatMessage[] = [];
     const conversationId = crypto.randomUUID();
     const updatePhase = (next: Phase) => { currentPhase = next; if (live) setPhase(next); };
-    const stopListening = () => { listener?.stop(); listener = null; };
+    /*
+     * Local transcription when this machine can do it.
+     *
+     * Resolved once per session rather than per turn: starting the speech
+     * service takes a moment, and doing it between every sentence would put
+     * that moment in the middle of a conversation.
+     */
+    let localPort: number | null = null;
+    let recorder: { stop: () => Promise<Float32Array> } | null = null;
+
+    async function prepareLocal() {
+      const status = await localSpeechStatus();
+      if (!status?.installed || !status.model) return;
+      try {
+        const started = status.running ? status : await startLocalSpeech();
+        localPort = started.port ?? null;
+      } catch {
+        // Whisper present but unwilling. The platform recogniser still works,
+        // and a voice screen that refuses to listen is not a privacy feature.
+        localPort = null;
+      }
+    }
+
+    const stopListening = () => {
+      listener?.stop(); listener = null;
+      // A recording in flight is abandoned rather than transcribed: it was
+      // interrupted, so whatever is in it is half a sentence.
+      recorder?.stop().catch(() => undefined); recorder = null;
+    };
 
     function startListening() {
       if (!live || paused) return;
       stopListening();
       updatePhase('listening');
+
+      if (localPort !== null) {
+        // Recorded here and transcribed after the turn, rather than streamed.
+        // The screen still says "listening" throughout, so what is lost is
+        // words appearing early — not the sense of being heard.
+        void (async () => {
+          try {
+            recorder = await record(() => { void finishLocalTurn(); });
+          } catch {
+            // No microphone permission. The platform recogniser asks for it in
+            // its own way, so fall through and let it try.
+            localPort = null;
+            startListening();
+          }
+        })();
+        return;
+      }
+
       listener = listen({
         onPartial: text => { if (live && !paused) setHeard(text); },
         onFinal: text => { if (live && !paused && currentPhase === 'listening') void respond(text); },
         onError: message => { if (live) { stopListening(); setError(message); updatePhase('idle'); } },
       });
       if (!listener) { setError('Speech recognition is unavailable here. Use chat or open Aira in a browser with speech support.'); updatePhase('idle'); }
+    }
+
+    /** Ends a locally-recorded turn and hands what was said to the model. */
+    async function finishLocalTurn() {
+      const active = recorder;
+      if (!active || localPort === null) return;
+      recorder = null;
+      updatePhase('thinking');
+      try {
+        const samples = await active.stop();
+        // Under a quarter second is a slip of the hand, not a sentence.
+        if (samples.length < 4_000) { startListening(); return; }
+        const said = await transcribeLocally(localPort, samples);
+        if (!said.trim()) { startListening(); return; }
+        setHeard(said);
+        await respond(said);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : String(error));
+        updatePhase('idle');
+      }
     }
 
     async function respond(said: string) {
@@ -72,8 +141,20 @@ export default function VoiceScreen({ reduceMotion }: { reduceMotion: boolean })
       resume() { paused = false; setMuted(false); setError(''); startListening(); },
     };
     warmVoices();
-    startListening();
-    return () => { live = false; paused = true; stopListening(); controller?.abort(); cancelSpeech?.(); stopSpeaking(); controls.current = null; };
+    // Resolved before the first turn, so a session that can transcribe locally
+    // does so from the start rather than switching over mid-conversation.
+    void prepareLocal().then(() => {
+      if (!live) return;
+      setLocal(localPort !== null);
+      startListening();
+    });
+    return () => {
+      live = false; paused = true; stopListening(); controller?.abort(); cancelSpeech?.(); stopSpeaking();
+      // The speech service outlives this screen otherwise, holding the weights
+      // in memory for a conversation that ended.
+      void stopLocalSpeech();
+      controls.current = null;
+    };
   }, []);
 
   useEffect(() => playOrb(orb.current, reduceMotion), [reduceMotion]);
@@ -90,7 +171,9 @@ export default function VoiceScreen({ reduceMotion }: { reduceMotion: boolean })
       <span className="voice-secondary voice-phase" aria-hidden="true">{phase === 'thinking' ? <Loader2 className="spin" /> : null}</span>
       <div className="mic-orbit"><button className="mic-button voice-mic" onClick={() => muted ? controls.current?.resume() : controls.current?.pause()} aria-label={muted ? 'Resume the conversation' : 'Pause the conversation'} aria-pressed={!muted}>{muted ? <MicOff /> : <Mic />}</button></div>
       {error && speechSupported.listening ? <button className="voice-secondary" aria-label="Retry voice recognition" onClick={() => controls.current?.resume()}><RotateCcw /></button> : <span className="voice-secondary" aria-hidden="true" />}
-      <small className="voice-privacy">Speech is handled by your browser or operating system. Its speech service may process audio online.</small>
+      <small className="voice-privacy">{local
+        ? 'Transcribed on this device. Your voice does not leave it.'
+        : 'Speech is handled by your browser or operating system. Its speech service may process audio online.'}</small>
     </div>
   </section>;
 }

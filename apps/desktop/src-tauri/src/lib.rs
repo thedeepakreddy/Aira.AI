@@ -1,5 +1,6 @@
 mod applog;
 mod fleet;
+mod voice;
 mod browser;
 mod openclaw;
 mod opencode;
@@ -27,6 +28,7 @@ pub fn run() {
         // the sandbox will then actually let it read.
         .plugin(tauri_plugin_dialog::init())
         .manage(OpenCodeState::default())
+        .manage(voice::VoiceState::default())
         .manage(OpenClawState::default())
         .manage(BrowserState::default())
         .invoke_handler(tauri::generate_handler![
@@ -58,6 +60,11 @@ pub fn run() {
             fleet::fleet_list,
             fleet::fleet_add,
             fleet::fleet_remove,
+            voice::voice_status,
+            voice::voice_start,
+            voice::voice_stop,
+            voice::voice_fetch_model,
+            voice::voice_transcribe,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Aira")
@@ -68,6 +75,7 @@ pub fn run() {
                 app.state::<OpenCodeState>().shutdown();
                 app.state::<OpenClawState>().shutdown();
                 app.state::<BrowserState>().shutdown();
+                app.state::<voice::VoiceState>().shutdown();
             }
         });
 }

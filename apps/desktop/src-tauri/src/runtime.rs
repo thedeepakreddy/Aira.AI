@@ -160,3 +160,31 @@ mod tests {
         }
     }
 }
+
+/// A port nothing else holds.
+///
+/// The listener is dropped immediately, so this is advisory — between here and
+/// the child binding it, something else could take it. In practice nothing
+/// does, and the alternative is passing a listener across a process boundary.
+pub fn free_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("could not reserve a port: {e}"))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|e| format!("could not read the reserved port: {e}"))
+}
+
+/// Finds a binary the way a login shell would.
+///
+/// A Finder-launched app inherits a minimal PATH — which is how every runtime
+/// here managed to be "not installed" while working fine from a terminal.
+pub fn which(name: &str) -> Option<String> {
+    let out = std::process::Command::new("sh")
+        .arg("-lc")
+        .arg(format!("command -v {name}"))
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path)
+}
