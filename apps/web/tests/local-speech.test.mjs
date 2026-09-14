@@ -82,3 +82,18 @@ test('a turn cannot end before it has begun', () => {
   assert.equal(turnEnded(5000, 200), false);
   assert.equal(turnEnded(5000, 700), true);
 });
+
+import { deniedMessage } from '../src/lib/voice.ts';
+
+test('a refused microphone says where to turn it back on', () => {
+  // The OS prompt appears once. After that the refusal is silent, and a user
+  // left with "Aira cannot hear you" has no reason to guess at System Settings.
+  const mac = deniedMessage('MacIntel');
+  assert.match(mac, /System Settings/);
+  assert.match(mac, /Microphone/);
+  assert.match(deniedMessage('Win32'), /Settings/);
+});
+
+test('an unknown platform still gets somewhere to go', () => {
+  assert.match(deniedMessage('Linux x86_64'), /privacy settings/i);
+});

@@ -77,6 +77,23 @@ export interface Listener {
  * restarts it. Without that the conversation would silently stop listening
  * after the first lull, which reads as the app having frozen.
  */
+/**
+ * What to tell someone whose microphone was refused.
+ *
+ * Two different situations wearing the same error. The first time, the OS
+ * prompt was dismissed or denied; after that macOS refuses silently and the
+ * only way back is System Settings, which the user has no reason to guess.
+ */
+export function deniedMessage(platform = typeof navigator !== 'undefined' ? navigator.platform : ''): string {
+  if (/Mac/i.test(platform)) {
+    return 'Aira cannot hear you — microphone access is turned off. Open System Settings › Privacy & Security › Microphone and switch Aira on.';
+  }
+  if (/Win/i.test(platform)) {
+    return 'Aira cannot hear you — microphone access is turned off. Open Settings › Privacy & security › Microphone and allow Aira.';
+  }
+  return 'Aira cannot hear you — microphone access is turned off. Allow it in your system privacy settings, then try again.';
+}
+
 export function listen(handlers: ListenHandlers): Listener | null {
   const Ctor = recognitionCtor();
   if (!Ctor) return null;
@@ -117,7 +134,10 @@ export function listen(handlers: ListenHandlers): Listener | null {
       stopped = true;
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         stopped = true;
-        handlers.onError('Aira needs microphone access to listen.');
+        // Naming where to grant it, because the prompt only appears once and
+        // a refusal afterwards is silent — the user is left with a screen that
+        // says it cannot hear them and no way to change that from here.
+        handlers.onError(deniedMessage());
         return;
       }
       handlers.onError(`Speech recognition failed (${event.error}).`);

@@ -82,7 +82,8 @@
     "longDescription": "Aira brings chat, voice, and agents together in one workspace.",
     "macOS": {
       "signingIdentity": "-",
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": "Entitlements.plist"
     },
     "resources": {
       "../../../services/browser/server.py": "browser/server.py"
