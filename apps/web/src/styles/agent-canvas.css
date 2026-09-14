@@ -49,7 +49,16 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 18px 20px 0;
+  /*
+   * Clears the app header rather than sharing its band.
+   *
+   * The header floats at y 44-86 across the full width. This bar used to sit at
+   * y 34-72 — the same strip — so the board's own controls were overlapping the
+   * account button, and the one on the right was unclickable no matter what the
+   * pointer-events rules said. Starting below it removes the whole class of
+   * collision instead of arbitrating each one.
+   */
+  padding: 56px 20px 0;
   flex-shrink: 0;
 }
 .canvas-top-button {
@@ -120,9 +129,28 @@
   font-weight: 500;
 }
 .canvas-top-button.solid:hover:not(:disabled) { background: #fff; }
-.canvas-share {
+/*
+ * The right-hand controls, as a group.
+ *
+ * Each of these was `position: absolute; right: 20px` — a rule written when
+ * there was one of them. Adding a second and a third stacked all three at the
+ * identical coordinates, so two were invisible and unclickable and the third
+ * was whichever happened to paint last. They are a flex row now, positioned
+ * once.
+ *
+ * Named `canvas-actions` and not `canvas-tools`: that name is already taken by
+ * the bottom-centred toolbar further down this file, and reusing it had both
+ * rule sets applying to the same element and fighting over its position.
+ */
+.canvas-actions {
   position: absolute;
   right: 20px;
+  top: 56px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.canvas-share {
   display: grid;
   place-items: center;
   width: 38px;

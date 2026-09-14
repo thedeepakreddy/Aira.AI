@@ -212,17 +212,19 @@ export default function AgentCanvas(props: AgentCanvasProps) {
         {props.starting ? <Loader2 className="spin" /> : <Power />}
         {props.starting ? 'Working…' : props.connected ? 'Connected' : 'Connect agents'}
       </button>
-      <button className="canvas-share" onClick={props.onEditFleet} title="Your agents" aria-label="Your agents">
-        <UserPlus />
-      </button>
-      <button className="canvas-share" onClick={props.onHistory} title="Past boards" aria-label="Past boards">
-        <History />
-      </button>
+      <div className="canvas-actions">
+        <button className="canvas-share" onClick={props.onEditFleet} title="Your agents" aria-label="Your agents">
+          <UserPlus />
+        </button>
+        <button className="canvas-share" onClick={props.onHistory} title="Past boards" aria-label="Past boards">
+          <History />
+        </button>
       <button className="canvas-share" onClick={props.onCopy} disabled={!props.canSave}
         title={props.canSave ? 'Copy the whole board' : 'Nothing to copy yet — run a task first'}
         aria-label="Copy the whole board">
         <Share2 />
-      </button>
+        </button>
+      </div>
     </div>
 
     {/*
