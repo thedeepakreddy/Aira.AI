@@ -23,6 +23,16 @@
   --ct-ok: #6fd08c;
   --ct-bad: #ff7a5c;
   --ct-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* The board's own tokens, not approximations of them: the two surfaces are
+     the same room, so they read from one palette. */
+  --canvas-line: #ffffff14;
+  --canvas-glass: #ffffff08;
+  --canvas-glow: #ff6a0033;
+  --wave-hue: #ff8a3d;
+  /* Low, because this glow is inside the panel rather than behind it: every
+     point of opacity here is contrast taken directly off the log. It should
+     register as the ground shifting, not as a wash over the text. */
+  --wave-strength: .085;
 
   display: flex;
   flex-direction: column;
@@ -47,14 +57,15 @@
   background:
     radial-gradient(130% 58% at 50% 0%, #3d1f0b, transparent 72%),
     linear-gradient(180deg, #100a06, var(--ct-bg) 34%);
-  border: 1px solid #ffb87a24;
-  border-radius: 16px;
+  /* Matched to .task-node on the board — radius, hairline, lift and bloom —
+     so the coding panel is recognisably the same object as the task card. */
+  border: 1px solid var(--canvas-line);
+  border-radius: 26px;
   overflow: hidden;
-  /* The same treatment as the agent board: hairline, lift, and a wide bloom. */
   box-shadow:
     0 0 0 1px #ffffff08,
-    0 30px 80px #000000b3,
-    0 0 90px -10px #ff6a0026,
+    0 30px 90px #000000b3,
+    0 0 70px var(--canvas-glow),
     inset 0 1px 0 #ffd9b31f;
   font-family: var(--ct-mono);
   font-size: 12.5px;
@@ -64,6 +75,10 @@
 
 /* ── status strip ─────────────────────────────────────────────────────────── */
 
+/* Above the panel's own travelling glow, which is an absolutely positioned
+   pseudo-element and would otherwise paint over this in-flow content. */
+.ct-bar, .ct-log, .ct-composer { position: relative; z-index: 1; }
+
 .ct-bar {
   display: flex;
   align-items: center;
@@ -71,9 +86,9 @@
   flex: none;
   padding: 0 12px;
   height: 36px;
-  border-bottom: 1px solid #ffb87a1f;
-  background: linear-gradient(180deg, #ffffff0d, #ffffff03);
-  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--canvas-line);
+  background: var(--canvas-glass);
+  backdrop-filter: blur(24px);
   font-size: 11.5px;
   letter-spacing: .1px;
   color: var(--ct-dim);
@@ -116,10 +131,11 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 25px;
-  padding: 0 9px;
+  height: 27px;
+  padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  /* Pills, as on the board. */
+  border-radius: 999px;
   background: none;
   color: var(--ct-dim);
   font: inherit;
@@ -127,7 +143,7 @@
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
 }
-.ct-btn:hover:not(:disabled) { background: #ffffff0f; color: var(--ct-ink); }
+.ct-btn:hover:not(:disabled) { background: #ffffff14; border-color: var(--canvas-line); color: var(--ct-ink); }
 .ct-btn:disabled { opacity: .35; cursor: not-allowed; }
 .ct-btn svg { width: 13px; height: 13px; flex: none; }
 .ct-btn.on { border-color: #ffa85c4d; color: var(--ct-accent-soft); }
@@ -374,16 +390,19 @@
  */
 .ct-composer {
   flex: none;
-  margin: 0 12px 10px;
-  border: 1px solid #ffa85c33;
-  border-radius: 11px;
-  background: linear-gradient(180deg, #ffffff0a, #ffffff05);
-  box-shadow: 0 6px 20px #00000059, inset 0 1px 0 #ffd9b314;
+  margin: 0 14px 14px;
+  border: 1px solid #ffffff0f;
+  /* The agent card's radius and glass, so the thing you type into belongs to
+     the same family as the cards that answer. */
+  border-radius: 22px;
+  background: var(--canvas-glass);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 22px 60px #00000080, inset 0 1px 0 #ffd9b314;
   transition: border-color .18s, box-shadow .18s;
 }
 .ct-composer:focus-within {
-  border-color: #ffa85c8c;
-  box-shadow: 0 6px 24px #0000006b, 0 0 0 3px #ff9a3d1a, inset 0 1px 0 #ffd9b326;
+  border-color: #ffae6b66;
+  box-shadow: 0 22px 60px #00000080, 0 0 46px -8px #ff6a0059, inset 0 1px 0 #ffd9b326;
 }
 .ct-input-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; padding: 9px 11px 2px; }
 .ct-input-row > .ct-mark { color: var(--ct-accent); line-height: 1.65; }
@@ -415,10 +434,10 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 27px;
-  padding: 0 12px;
-  border: 1px solid #ffa85c59;
-  border-radius: 7px;
+  height: 30px;
+  padding: 0 15px;
+  border: 1px solid #ffb96870;
+  border-radius: 999px;
   background: linear-gradient(115deg, #f99729, #cf570d);
   color: #1d0a02;
   font: inherit;
@@ -446,9 +465,10 @@
   width: 100%;
   min-height: 36px;
   padding: 8px 10px;
-  border: 1px solid var(--ct-line);
-  border-radius: 8px;
-  background: #ffffff08;
+  border: 1px solid var(--canvas-line);
+  border-radius: 14px;
+  background: var(--canvas-glass);
+  backdrop-filter: blur(24px);
   color: var(--ct-ink);
   font: inherit;
   font-size: 12px;
@@ -465,10 +485,10 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 38px;
-  margin-top: 16px;
-  border: 1px solid #ffa85c59;
-  border-radius: 8px;
+  min-height: 42px;
+  margin-top: 18px;
+  border: 1px solid #ffb96870;
+  border-radius: 999px;
   background: linear-gradient(115deg, #f99729, #cf570d);
   color: #1d0a02;
   font: inherit;

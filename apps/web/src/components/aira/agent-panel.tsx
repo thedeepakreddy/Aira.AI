@@ -452,7 +452,7 @@ export default function AgentPanel() {
   const modelLabel = models.find(item => item.id === model)?.label ?? model ?? 'no model';
   const dot = !isDesktop || missing ? 'bad' : busy ? 'busy' : ready ? 'live' : '';
 
-  return <section className="cli-page agent-page code-term screen-content lit" aria-label="Coding workspace">
+  return <section className="cli-page agent-page code-term screen-content lit wave wave-inside" aria-label="Coding workspace">
     <SessionHistory
       open={historyOpen}
       onClose={() => setHistoryOpen(false)}
@@ -507,7 +507,7 @@ export default function AgentPanel() {
           </button>
         </div>
 
-        <button className="ct-connect" disabled={!isDesktop || checking || starting || missing || !workdir} onClick={() => void start()}>
+        <button className="ct-connect neon-edge" disabled={!isDesktop || checking || starting || missing || !workdir} onClick={() => void start()}>
           {starting ? <Loader2 className="spin" /> : <Power />}{starting ? 'connecting…' : 'connect'}
         </button>
 
@@ -567,7 +567,7 @@ export default function AgentPanel() {
       {busy && <div className="ct-working" role="status"><Loader2 className="spin" />{waiting ? 'waiting for your response above' : 'working…'}</div>}
     </div>
 
-    <form className="ct-composer lit lit-key" onSubmit={e => { e.preventDefault(); void send(); }}>
+    <form className="ct-composer lit lit-key wave" onSubmit={e => { e.preventDefault(); void send(); }}>
       <div className="ct-input-row">
         <span className="ct-mark" aria-hidden="true">›</span>
         <textarea aria-label="Task for coding agent" value={task} rows={2} disabled={busy || starting}
@@ -582,7 +582,7 @@ export default function AgentPanel() {
         <div className="ct-foot-actions">
           {busy
             ? <button key="stop" className="ct-send stop" type="button" disabled={starting} onClick={event => { event.preventDefault(); void interrupt(); }}><Square />stop</button>
-            : <button key="send" className="ct-send" type="submit" disabled={!ready || !task.trim() || waiting}><Send />send</button>}
+            : <button key="send" className="ct-send neon-edge" type="submit" disabled={!ready || !task.trim() || waiting}><Send />send</button>}
         </div>
       </div>
     </form>

@@ -1,0 +1,138 @@
+/*
+ * A neon glow that travels.
+ *
+ * Two effects, deliberately separate, because they are for different things:
+ *
+ *   .wave       a soft band of light sweeping behind a panel, on a long slow
+ *               loop — ambient, and never the thing you are looking at
+ *   .neon-edge  a bright point of light running the perimeter of a control,
+ *               short loop, for the one or two things that want a look
+ *
+ * The colour comes from --wave-hue, so a surface can tint its own glow: the
+ * board's agents each carry their own, and the coding surface takes Aira's
+ * amber. Both sit behind their element and take no pointer events.
+ *
+ * Motion stops entirely under prefers-reduced-motion — a light that crawls
+ * across the screen is exactly what that setting exists to turn off. The glow
+ * stays; only the travelling does not.
+ */
+
+.wave, .neon-edge { position: relative; }
+
+/*
+ * A panel that clips its own overflow cannot have a glow behind it — the glow
+ * is cropped to the panel and then buried under its ground. `.wave-inside`
+ * puts the same light within the panel instead, above the ground and below the
+ * content, which is where it can actually be seen.
+ */
+.wave-inside::before, .wave-inside::after { z-index: 0; inset: -20%; }
+.wave-inside::before { filter: blur(90px); }
+.wave-inside::after { filter: blur(120px); }
+
+/* ── travelling wash ──────────────────────────────────────────────────────── */
+
+.wave::before {
+  content: '';
+  position: absolute;
+  /* Bleeds past the panel so the band arrives from outside and leaves the
+     same way, rather than appearing and vanishing at the edges. */
+  inset: -34% -22%;
+  /* Behind whatever the element paints, and behind any child that lifts itself
+     to z-index 1 — which is how a host with a shell inside it is arranged. */
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 18%,
+    var(--wave-hue, #ff8a3d) 42%,
+    color-mix(in srgb, var(--wave-hue, #ff8a3d) 60%, #ff3d81) 52%,
+    transparent 74%
+  );
+  background-size: 260% 100%;
+  opacity: var(--wave-strength, .17);
+  filter: blur(46px);
+  animation: wave-travel 11s cubic-bezier(.55, 0, .45, 1) infinite;
+}
+
+@keyframes wave-travel {
+  0%   { background-position: 130% 50%; }
+  /* Rests briefly at each end: a band moving at one constant speed forever
+     reads as a machine, a band that arrives and settles reads as light. */
+  45%  { background-position: -30% 50%; }
+  55%  { background-position: -30% 50%; }
+  100% { background-position: 130% 50%; }
+}
+
+/* A second, slower band at a different angle. One is a stripe; two crossing at
+   different speeds never quite repeat, which is what stops the loop showing. */
+.wave::after {
+  content: '';
+  position: absolute;
+  inset: -30% -18%;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    72deg,
+    transparent 26%,
+    color-mix(in srgb, var(--wave-hue, #ff8a3d) 70%, #ffd27a) 50%,
+    transparent 72%
+  );
+  background-size: 300% 100%;
+  opacity: calc(var(--wave-strength, .17) * .62);
+  filter: blur(62px);
+  animation: wave-travel 17s cubic-bezier(.45, 0, .55, 1) infinite reverse;
+}
+
+/* ── running edge ─────────────────────────────────────────────────────────── */
+
+/*
+ * A conic gradient rotating behind the control, masked to the border, so a
+ * bright point appears to run around its perimeter. The angle is a registered
+ * property because a plain custom property cannot be interpolated — without
+ * this the gradient jumps between keyframes instead of sweeping.
+ */
+@property --neon-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.neon-edge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--neon-angle),
+    transparent 0deg,
+    transparent 250deg,
+    color-mix(in srgb, var(--wave-hue, #ff8a3d) 80%, #fff) 320deg,
+    var(--wave-hue, #ff8a3d) 345deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: neon-run 3.4s linear infinite;
+}
+
+@keyframes neon-run { to { --neon-angle: 360deg; } }
+
+/* Only while it matters: a button that pulses when it cannot be pressed is
+   asking for a click it will refuse. */
+.neon-edge:disabled::after,
+.neon-edge[aria-disabled='true']::after { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wave::before, .wave::after { animation: none; background-position: 40% 50%; }
+  .neon-edge::after {
+    animation: none;
+    /* Still lit, just not running. */
+    background: linear-gradient(146deg, var(--wave-hue, #ff8a3d), transparent 62%);
+  }
+}

@@ -5,6 +5,7 @@ import ErrorBoundary from './components/aira/error-boundary';
 import './styles/globals.css';
 import './styles/workspace.css';
 import './styles/light-rays.css';
+import './styles/neon-wave.css';
 import { installGlobalHandlers } from '@/lib/applog';
 
 // Before anything else runs: the failures worth catching are the ones no
