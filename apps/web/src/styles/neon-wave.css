@@ -115,38 +115,50 @@
 /*
  * A bright point running the perimeter of a control.
  *
- * A rotating conic layer, not an animated gradient angle. Animating the angle
- * regenerates the gradient every frame — paint work on the main thread — where
- * rotating an already-rasterised square is compositor work. The square is
- * oversized so its corners never enter the visible rim as it turns.
+ * Masked to the border box, not rotated.
+ *
+ * The rotating-layer version was cheaper but wrong: a pseudo-element paints
+ * above its element's background, so the conic wedge filled the inside of the
+ * button. Covering the middle is not available either — a pseudo that sits over
+ * the wedge also sits over the label, since `::after` paints after the
+ * element's own text. And the mask cannot travel with a rotating layer, because
+ * it rotates with it.
+ *
+ * So the gradient stays still and its angle animates, clipped to the border by
+ * an xor mask. That does repaint each frame — but over a control forty pixels
+ * tall, which is nothing like the full-screen blurred layers that made the app
+ * slow. Correct first, and cheap enough here.
  */
-.neon-edge { overflow: hidden; }
+@property --neon-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
 .neon-edge::after {
   content: '';
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 190%;
-  aspect-ratio: 1;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
   pointer-events: none;
   background: conic-gradient(
+    from var(--neon-angle),
     transparent 0deg,
     transparent 252deg,
     color-mix(in srgb, var(--wave-hue, #ff8a3d) 80%, #fff) 322deg,
     var(--wave-hue, #ff8a3d) 346deg,
     transparent 360deg
   );
-  will-change: transform;
-  animation: neon-spin 3.6s linear infinite;
+  /* Shows the padding ring only: the fill is excluded, leaving the border. */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: neon-run 3.6s linear infinite;
 }
 
-/* The control's own face sits over the spinning layer, leaving only a rim. */
-.neon-edge > * { position: relative; z-index: 1; }
-
-@keyframes neon-spin {
-  from { transform: translate(-50%, -50%) rotate(0turn); }
-  to   { transform: translate(-50%, -50%) rotate(1turn); }
-}
+@keyframes neon-run { to { --neon-angle: 360deg; } }
 
 /* A control that pulses while it cannot be pressed is asking for a click it
    will refuse, and it is cost spent on nothing. */
