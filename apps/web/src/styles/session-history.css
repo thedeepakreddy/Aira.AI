@@ -1,0 +1,163 @@
+/*
+ * The per-surface history panel.
+ *
+ * Scoped to its own class names rather than reusing the workspace drawer's, so
+ * the Code surface's monospace and the Agents board's canvas typography each
+ * stay out of the other's way — the panel inherits nothing from whichever page
+ * opened it.
+ */
+
+.sh-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: flex-start;
+  background: #00000073;
+  backdrop-filter: blur(3px);
+  animation: sh-fade .16s ease-out;
+}
+@keyframes sh-fade { from { opacity: 0 } to { opacity: 1 } }
+
+.sh-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 84vw);
+  background: linear-gradient(180deg, #1a100b, #120906);
+  border-right: 1px solid #ffb87a2e;
+  box-shadow: 24px 0 60px #000000a6;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #f2e6dc;
+  animation: sh-slide .2s cubic-bezier(.2, .7, .2, 1);
+}
+@keyframes sh-slide { from { transform: translateX(-14px); opacity: .4 } to { transform: none; opacity: 1 } }
+@media (prefers-reduced-motion: reduce) {
+  .sh-scrim, .sh-panel { animation: none; }
+}
+.sh-panel:focus { outline: none; }
+
+.sh-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid #ffffff12;
+  flex: none;
+}
+.sh-eyebrow {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: #d99e75;
+  margin-bottom: 4px;
+}
+.sh-head h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: -.4px;
+  text-transform: capitalize;
+}
+.sh-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid #ffffff14;
+  border-radius: 9px;
+  background: #ffffff08;
+  color: #bfa48f;
+  cursor: pointer;
+}
+.sh-close:hover { background: #ffffff14; color: #f2e6dc; }
+.sh-close svg { width: 15px; height: 15px; }
+
+.sh-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #5c4438 transparent;
+}
+.sh-row { display: flex; align-items: stretch; gap: 2px; }
+.sh-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.sh-item:hover { background: #ffffff0a; }
+.sh-item.current { border-color: #ffa85c4d; background: #ff9a3d14; }
+.sh-item strong {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  /* Two lines: a task is often a sentence, and truncating to one loses the verb. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sh-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #a68a76; }
+.sh-dot { color: #6b574c; }
+
+.sh-delete {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  flex: none;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: #6b574c;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, color .15s, background .15s;
+}
+/* Revealed on hover or focus, so the list reads as content rather than as a
+   row of delete buttons — but never hidden from the keyboard. */
+.sh-row:hover .sh-delete, .sh-delete:focus-visible { opacity: 1; }
+.sh-delete:hover { background: #ff7a5c1f; color: #ffab98; }
+.sh-delete svg { width: 14px; height: 14px; }
+
+.sh-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 30px 26px;
+  text-align: center;
+  color: #8a7568;
+}
+.sh-empty svg { width: 22px; height: 22px; color: #6b574c; }
+.sh-empty p { margin: 0; font-size: 13px; line-height: 1.55; }
+
+.sh-foot {
+  flex: none;
+  padding: 13px 18px 16px;
+  border-top: 1px solid #ffffff12;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a7568;
+}
+
+.sh-scrim :focus-visible { outline: 2px solid #ffad53; outline-offset: 2px; }

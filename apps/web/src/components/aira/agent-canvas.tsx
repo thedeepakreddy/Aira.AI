@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Coins, Crown, Eye, FileText, Gauge, Layers, Loader2, Minus, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, WifiOff, X
+  Activity, ArrowRight, BarChart3, Bot, ChevronRight, CircleHelp, Clock3, Cloud, Coins, Crown, Eye, FileText, Gauge, History, Layers, Loader2, Minus, Plus, Power, Scale, Send, Share2, Sparkles, Square, Trash2, WifiOff, X
 } from 'lucide-react';
 import Markdown from './markdown';
 import '@/styles/agent-canvas.css';
@@ -113,6 +113,8 @@ export interface AgentCanvasProps {
   onUnschedule: (id: string) => void;
   /** Starts the runtime when down, stops it when up. */
   onPower: () => void;
+  /** Opens the list of past boards. */
+  onHistory: () => void;
   /** Stops every run and empties the board. */
   onClearBoard: () => void;
   canSave: boolean;
@@ -194,6 +196,9 @@ export default function AgentCanvas(props: AgentCanvasProps) {
           : 'Start the agent runtime'}>
         {props.starting ? <Loader2 className="spin" /> : <Power />}
         {props.starting ? 'Working…' : props.connected ? 'Connected' : 'Connect agents'}
+      </button>
+      <button className="canvas-share" onClick={props.onHistory} title="Past boards" aria-label="Past boards">
+        <History />
       </button>
       <button className="canvas-share" onClick={props.onCopy} disabled={!props.canSave}
         title={props.canSave ? 'Copy the whole board' : 'Nothing to copy yet — run a task first'}

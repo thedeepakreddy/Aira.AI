@@ -32,9 +32,12 @@
   gap: 0;
   /* Not a flat fill: a cool floor with warmth pooling at the top edge, so the
      panel has a light source rather than being a rectangle of one colour. */
+  /* Translucent so the workspace's amber ground reads behind the panel, as it
+     does on the browser screen. Held firmer than the agent board's: a dense
+     monospace log needs more contrast behind it than a row of cards. */
   background:
     radial-gradient(120% 60% at 50% 0%, #2a150a66, transparent 70%),
-    linear-gradient(180deg, #0d0805, var(--ct-bg) 38%);
+    linear-gradient(165deg, #0d0805d6 0%, #0a0604f0 42%, #0a0604fa 100%);
   border: 1px solid #ffb87a24;
   border-radius: 16px;
   overflow: hidden;

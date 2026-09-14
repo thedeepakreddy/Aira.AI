@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FolderOpen, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
+import { FolderOpen, History, Loader2, MessageCircleQuestion, Plus, Power, RefreshCw, Send, ShieldAlert, ShieldCheck, Square, Terminal, WifiOff } from 'lucide-react';
 import { isDesktop, supervisor, pickDirectory, OpenCodeClient, toolTarget, type AgentEvent, type OpenCodeStatus, type PermissionRequest, type QuestionRequest, type ToolActivity } from '@/lib/opencode';
 import { getAccessToken } from '@/lib/supabase';
 import { listCatalogue, fetchUsage, type ModelSpec, type UsageSummary } from '@/lib/gateway';
 import { log as appLog } from '@/lib/applog';
+import SessionHistory, { type HistoryEntry } from './session-history';
 import Markdown from './markdown';
 import '@/styles/agent-workbench.css';
 import '@/styles/code-terminal.css';
@@ -77,6 +78,10 @@ export default function AgentPanel() {
   /* What this surface has spent. A coding agent runs long and reads a lot;
    * the panel that hides the bill is the one you stop trusting. */
   const [usage, setUsage] = useState<UsageSummary | null>(null);
+  /* Past coding sessions. These live in OpenCode, not in Aira — it had fifty-two
+   * stored for this machine and no way to reach any of them from here. */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [sessions, setSessions] = useState<HistoryEntry[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const [models, setModels] = useState<ModelSpec[]>([]);
   const [model, setModel] = useState('');
@@ -216,6 +221,41 @@ export default function AgentPanel() {
     if (busy) return;
     void fetchUsage('code').then(next => { if (alive.current) setUsage(next); }).catch(() => undefined);
   }, [busy]);
+
+  /* Refreshed when a task ends rather than on a timer: that is when the list
+   * has actually changed, and it is also when the reader might go looking. */
+  useEffect(() => {
+    const c = client.current;
+    if (!c || busy) return;
+    void c.sessions().then(all => {
+      if (!alive.current) return;
+      setSessions(all
+        .filter(item => !workdir || item.directory === workdir)
+        .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
+        .slice(0, 40)
+        .map(item => ({
+          id: item.id,
+          title: item.title || 'Untitled session',
+          at: item.time?.updated ?? 0,
+          detail: item.directory?.split('/').filter(Boolean).at(-1),
+        })));
+    }).catch(() => undefined);
+  }, [busy, connected, workdir, sessionID]);
+
+  /** Loads a stored session into the panel, replacing what is on screen. */
+  const openSession = useCallback(async (id: string) => {
+    const c = client.current;
+    if (!c || busy) return;
+    setError('');
+    try {
+      stream.current?.abort();
+      session.current = id;
+      setSessionID(id);
+      setEntries([]);
+      await refreshSession(c, id);
+      await connectStream(c, id);
+    } catch (e) { setError(`Could not open that session: ${messageOf(e)}`); }
+  }, [busy, connectStream, refreshSession, setError]);
 
   useEffect(() => {
     alive.current = true;
@@ -413,6 +453,15 @@ export default function AgentPanel() {
   const dot = !isDesktop || missing ? 'bad' : busy ? 'busy' : ready ? 'live' : '';
 
   return <section className="cli-page agent-page code-term screen-content" aria-label="Coding workspace">
+    <SessionHistory
+      open={historyOpen}
+      onClose={() => setHistoryOpen(false)}
+      noun="coding sessions"
+      entries={sessions}
+      currentId={sessionID}
+      onOpen={id => void openSession(id)}
+      empty="Sessions you start in this project will be listed here."
+      footnote="Kept by the coding runtime on this machine, not by Aira — they survive reinstalling the app." />
     <div className="ct-bar">
       <span className={`ct-dot ${dot}`} aria-hidden="true" />
       <span className="ct-name">aira-code</span>
@@ -426,6 +475,7 @@ export default function AgentPanel() {
         </span>}
         <span className="ct-model" title={`Model: ${modelLabel}`}>{modelLabel}</span>
         {connected && streamState !== 'live' && <button className="ct-btn" disabled={starting} onClick={() => void reconnect()} title="Reconnect the event stream"><RefreshCw />reconnect</button>}
+        <button className="ct-btn" disabled={!connected} onClick={() => setHistoryOpen(true)} title="Past coding sessions in this project"><History />history</button>
         <button className="ct-btn" disabled={!ready || busy} onClick={() => void newSession()} title="Start a fresh conversation"><Plus />new</button>
         {connected && <button className="ct-btn danger" disabled={starting} onClick={() => void stop()} title="Disconnect the coding agent"><Power />disconnect</button>}
       </div>

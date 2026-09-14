@@ -24,10 +24,19 @@
   inset: 0;
   display: flex;
   flex-direction: column;
+  /*
+   * Translucent, not a flat floor.
+   *
+   * The workspace paints an amber ground behind every screen; this used to
+   * cover it with opaque near-black, so the board looked unrelated to the rest
+   * of the app while the browser page — which covers nothing — kept the warmth.
+   * The scrim is dark enough to hold contrast for the cards and thin enough to
+   * let that ground through, strongest at the top left where it is brightest.
+   */
   background:
     radial-gradient(ellipse 60% 50% at 50% 42%, #2a0f0433 0%, transparent 70%),
     radial-gradient(ellipse 90% 70% at 50% 120%, #1a070233 0%, transparent 60%),
-    #070405;
+    linear-gradient(145deg, #0704059e 0%, #070405e8 46%, #070405f5 100%);
   overflow: hidden;
 }
 

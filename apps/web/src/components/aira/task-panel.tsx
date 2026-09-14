@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isDesktop, supervisor, OpenClawClient, collectFleet, type Agent, type OpenClawStatus, type Schedule } from '@/lib/openclaw';
 import { getAccessToken, getSession } from '@/lib/supabase';
-import { BOARD_KEY, loadBoard, saveBoard } from '@/lib/agent-board';
+import { BOARD_KEY, loadBoard, saveBoard, loadBoardHistory, recordBoard, forgetBoard, type SavedBoard } from '@/lib/agent-board';
 import { fetchUsage, listCatalogue, type ModelSpec, type UsageSummary } from '@/lib/gateway';
 import { createStreamBuffer } from '@/lib/stream-buffer';
 import AgentCanvas from './agent-canvas';
 import { log } from '@/lib/applog';
+import SessionHistory, { type HistoryEntry } from './session-history';
 
 type Phase = 'idle' | 'working' | 'done' | 'error' | 'stopped';
 interface AgentState {
@@ -70,6 +71,9 @@ export default function TaskPanel() {
   const [account, setAccount] = useState<string | null>(null);
   /** Last session's output, waiting for a fleet to belong to. */
   const restored = useRef<ReturnType<typeof loadBoard>>(null);
+  /* Past boards. The live board is one; this is every one before it. */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [boards, setBoards] = useState<SavedBoard[]>([]);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const connected = Boolean(status?.running && client.current && agents.length);
@@ -105,6 +109,7 @@ export default function TaskPanel() {
        * output, which is only meaningful once there are agents to attach it to.
        */
       restored.current = saved;
+      setBoards(loadBoardHistory(id));
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
@@ -112,13 +117,30 @@ export default function TaskPanel() {
   // Persist whenever a run settles, not on every token.
   useEffect(() => {
     if (!account || !sent || busy) return;
-    saveBoard(account, {
+    const board = {
       sent, at: Date.now(),
       results: agents.filter(a => a.text || a.error).map(a => ({
         id: a.agent.id, name: a.agent.name, text: a.text, error: a.error,
       })),
-    });
+    };
+    saveBoard(account, board);
+    // Filed into the history under the same rule: a settled board with work on
+    // it. Re-running the same goal replaces its entry rather than stacking.
+    setBoards(recordBoard(account, board));
   }, [account, sent, busy, agents]);
+
+  /** Puts a past board back on screen, over whatever is there. */
+  function openBoard(at: string) {
+    const board = boards.find(b => String(b.at) === at);
+    if (!board || busy) return;
+    setSent(board.sent);
+    setAgents(list => list.map(a => {
+      const was = board.results.find(r => r.id === a.agent.id);
+      return was
+        ? { ...a, phase: (was.error ? 'error' : 'done') as Phase, text: was.text, error: was.error, startedAt: null, endedAt: board.at }
+        : { ...a, phase: 'idle' as Phase, text: '', error: '', startedAt: null, endedAt: null };
+    }));
+  }
 
   // Schedules live in the runtime, so they are only readable while it is up.
   const refreshSchedules = useCallback(() => {
@@ -458,7 +480,22 @@ export default function TaskPanel() {
   const stateLabel = checking ? 'Checking runtime' : starting ? 'Connecting…' : busy ? `${active} working` : connected ? 'Ready' : isDesktop ? 'Offline' : 'Desktop required';
   const missing = Boolean(status && !status.binary);
 
-  return <AgentCanvas
+  return <><SessionHistory
+    open={historyOpen}
+    onClose={() => setHistoryOpen(false)}
+    noun="boards"
+    entries={boards.map((b): HistoryEntry => ({
+      id: String(b.at),
+      title: b.sent,
+      at: b.at,
+      detail: `${b.results.length} ${b.results.length === 1 ? 'agent' : 'agents'}`,
+    }))}
+    currentId={sent ? null : undefined}
+    onOpen={openBoard}
+    onDelete={id => setBoards(forgetBoard(account, Number(id)))}
+    empty="Boards you run will be kept here, so you can bring one back."
+    footnote="Kept in this browser for this account. Signing in elsewhere starts a fresh list." />
+  <AgentCanvas
     agents={agents.map(a => ({
       id: a.agent.id, name: a.agent.name, role: ROLES[a.agent.name] ?? 'Task agent',
       phase: a.phase, text: a.text, startedAt: a.startedAt, endedAt: a.endedAt, error: a.error,
@@ -512,6 +549,7 @@ export default function TaskPanel() {
       catch (e) { setError(messageOf(e)); }
     }} 
     onPower={() => void (connected ? stop() : start())}
+    onHistory={() => setHistoryOpen(true)}
     onClearBoard={() => {
       // A new project is a clean board: stop what is running, clear the cards,
       // the headline task, the composer and any leftover message. It used to
@@ -529,5 +567,5 @@ export default function TaskPanel() {
       ? 'Local agents run in the Aira desktop app. Your chat is available on the web.'
       : missing ? 'OpenClaw is not installed. Install the runtime, then run a task.'
       : 'Planning, synthesis, and thoughtful second opinions. Start with the outcome you want.'}
-  />;
+  /></>;
 }
