@@ -567,7 +567,7 @@ export default function AgentPanel() {
       {busy && <div className="ct-working" role="status"><Loader2 className="spin" />{waiting ? 'waiting for your response above' : 'working…'}</div>}
     </div>
 
-    <form className="ct-composer lit lit-key wave" onSubmit={e => { e.preventDefault(); void send(); }}>
+    <form className="ct-composer lit lit-key" onSubmit={e => { e.preventDefault(); void send(); }}>
       <div className="ct-input-row">
         <span className="ct-mark" aria-hidden="true">›</span>
         <textarea aria-label="Task for coding agent" value={task} rows={2} disabled={busy || starting}

@@ -456,7 +456,20 @@
  * Aira's is clicked, so it needs somewhere to live — but only until it is done,
  * after which this is replaced by the log it was blocking.
  */
-.ct-setup { max-width: 470px; margin: 26px auto; padding: 0 14px; }
+/*
+ * Centred in the panel, not stranded at the top of it.
+ *
+ * This was a 470px column with a fixed top margin inside a panel the width of
+ * the window, so nine-tenths of the coding surface was empty before connecting.
+ * It now takes the room it has and sits in the middle of it.
+ */
+.ct-setup {
+  width: min(560px, 100%);
+  margin: auto;
+  padding: 24px 14px;
+}
+/* The log is the flex child that grows, so centring has to happen in here. */
+.ct-log:has(> .ct-setup) { display: flex; flex-direction: column; }
 .ct-setup-title { color: var(--ct-accent-soft); margin-bottom: 4px; }
 .ct-setup-sub { color: var(--ct-dim); margin-bottom: 18px; }
 .ct-field { margin-bottom: 12px; }
