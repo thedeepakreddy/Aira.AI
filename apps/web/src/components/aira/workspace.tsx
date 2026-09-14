@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Paperclip, Sparkles, X, Send, Square, MessageCircle, Plus, Terminal, LogIn, LogOut, Bot, Globe, Settings2, Trash2, RotateCcw, Loader2 } from 'lucide-react';
+import { Bot, Globe, Loader2, LogIn, LogOut, MessageCircle, Mic, Paperclip, Plus, RotateCcw, Scale, Send, Settings2, Sparkles, Square, Terminal, Trash2, X } from 'lucide-react';
 import { Sheet, SheetTrigger, SheetContent, SheetTitle, SheetDescription, SheetHeader } from '@/components/ui/sheet';
 import ModelPicker from './model-picker';
-import { listModels, type ModelSpec } from '@/lib/gateway';
+import { listModels, fetchSecondOpinion, type ModelSpec, type SecondOpinion } from '@/lib/gateway';
 import { getSession, onAuthChange, signOut as authSignOut } from '@/lib/supabase';
 import { playOrb } from '@/lib/orb';
 import { parseRoute, screenPath, type Screen, type View } from '@/lib/routes';
@@ -70,6 +70,16 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
   const [filePending, setFilePending] = useState(false);
   const [notice, setNotice] = useState('');
   const [models, setModels] = useState<ModelSpec[]>([]);
+  /*
+   * A second opinion, and which message it belongs to.
+   *
+   * One at a time: asking for a second opinion on a second opinion is a
+   * rabbit hole, and the interesting comparison is always against the answer
+   * you were actually reading.
+   */
+  const [opinion, setOpinion] = useState<{ at: number; busy: boolean; result: SecondOpinion | null; error: string }>(
+    { at: -1, busy: false, result: null, error: '' },
+  );
   const [model, setModel] = useState('');
   const [reduceMotion, setReduceMotion] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -148,6 +158,25 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
   }
   function removeAttachment() { fileRead.current++; setFilePending(false); setAttachment(undefined); }
 
+  /**
+   * Asks a different model the same question.
+   *
+   * The conversation up to and including the question is sent, not the answer
+   * being checked — otherwise the second model reads the first one's reply and
+   * agrees with it, which is the one outcome that makes this worthless.
+   */
+  async function askSecondOpinion(at: number, answer: string) {
+    setOpinion({ at, busy: true, result: null, error: '' });
+    try {
+      const history = chat.messages.slice(0, at)
+        .map(m => ({ role: m.role, content: m.text }));
+      const result = await fetchSecondOpinion(history, answer, model);
+      setOpinion({ at, busy: false, result, error: '' });
+    } catch (error) {
+      setOpinion({ at, busy: false, result: null, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   const fileChip = attachment && <div className="attachment"><Paperclip /><span>{attachment.name}</span><button type="button" aria-label="Remove attachment" onClick={removeAttachment}><X /></button></div>;
 
   return <div className={'viewport-frame view-' + view + (isDesktop ? ' native-desktop' : '')}>
@@ -212,7 +241,36 @@ function WorkspaceContent({ view, initialScreen, userId }: { view: View; initial
           {!chat.messages.length && <div className="chat-empty"><MessageCircle /><h2>A new conversation.</h2><p>Ask a question or attach a text file to get started.</p></div>}
           {chat.messages.map((message, index) => <div key={index} className={'message-row ' + message.role}>
             {message.role === 'assistant' && <img src="/assets/orb.jpg" className="avatar" alt="Aira" />}
-            {message.role === 'assistant' ? <div className="message-bubble"><Suspense fallback={<p>{message.text}</p>}><Markdown>{message.text}</Markdown></Suspense></div>
+            {message.role === 'assistant' ? <div className="message-bubble">
+                <Suspense fallback={<p>{message.text}</p>}><Markdown>{message.text}</Markdown></Suspense>
+                {/* Offered only on the finished answer: checking a reply that is
+                  * still arriving would compare against half of it. */}
+                {!chat.busy && message.text.trim() && index === chat.messages.length - 1 &&
+                  <button type="button" className="second-opinion-ask"
+                    disabled={opinion.busy}
+                    onClick={() => void askSecondOpinion(index, message.text)}
+                    title="Ask a different model the same question">
+                    {opinion.busy && opinion.at === index ? <Loader2 className="spin" /> : <Scale />}
+                    {opinion.busy && opinion.at === index ? 'asking…' : 'second opinion'}
+                  </button>}
+                {opinion.at === index && opinion.error &&
+                  <p className="second-opinion-error" role="alert">{opinion.error}</p>}
+                {opinion.at === index && opinion.result && <div className="second-opinion">
+                  <header>
+                    <span className="so-label">Second opinion</span>
+                    <span className="so-model">{opinion.result.model}</span>
+                    <button type="button" aria-label="Dismiss second opinion"
+                      onClick={() => setOpinion({ at: -1, busy: false, result: null, error: '' })}><X /></button>
+                  </header>
+                  {/* The sentence names the choice. It deliberately does not
+                    * rule on it — a small model can describe a difference
+                    * reliably and cannot judge one. */}
+                  {opinion.result.difference && <p className="so-difference">{opinion.result.difference}</p>}
+                  <div className="so-answer">
+                    <Suspense fallback={<p>{opinion.result.answer}</p>}><Markdown>{opinion.result.answer}</Markdown></Suspense>
+                  </div>
+                </div>}
+              </div>
               : <div className="message-bubble"><p>{message.text}</p>{message.attachment && <span className="message-file"><Paperclip />{message.attachment.name}</span>}</div>}
           </div>)}
           {chat.busy && <p className="working-status" role="status">{chat.messages.at(-1)?.role === 'assistant' ? 'Aira is responding…' : 'Aira is thinking…'}</p>}

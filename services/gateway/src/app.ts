@@ -11,6 +11,7 @@ import { createChatRoute } from './routes/chat.ts';
 import { createOpenAIChatRoute, createOpenAIModelsRoute } from './routes/openai.ts';
 import { createMemoryRoutes } from './routes/memory.ts';
 import { createUsageRoutes } from './routes/usage.ts';
+import { createSecondOpinionRoutes } from './routes/second-opinion.ts';
 import { createMcpRoutes } from './routes/mcp.ts';
 import { requestLimits } from './limits.ts';
 
@@ -55,6 +56,7 @@ export function createApp(env: Env, providers: ChatProvider[]) {
   secure.post('/openai/task/v1/chat/completions', createOpenAIChatRoute(providers, 'task'));
   secure.route('/v1/memory', createMemoryRoutes());
   secure.route('/v1/usage', createUsageRoutes());
+  secure.route('/v1/second-opinion', createSecondOpinionRoutes(providers));
   secure.route('/mcp', createMcpRoutes(env.allowedOrigins));
   app.route('/', secure);
   return app;

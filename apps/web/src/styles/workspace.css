@@ -218,3 +218,91 @@
  .memory-clear{flex-wrap:wrap}
  .memory-search input{font-size:16px}
 }
+
+/* ── second opinion ────────────────────────────────────────────────────────
+ *
+ * Attached to the answer it checks rather than shown as a separate message:
+ * the whole point is reading the two next to each other, and a reply further
+ * down the log would be scrolled apart from what it is about.
+ */
+.second-opinion-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid #ffffff1a;
+  background: #ffffff0a;
+  color: #c4a894;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background .18s, color .18s, border-color .18s;
+}
+.second-opinion-ask:hover:not(:disabled) { background: #ffffff14; color: #f2e6dc; border-color: #ffb87a3d; }
+.second-opinion-ask:disabled { opacity: .5; cursor: not-allowed; }
+.second-opinion-ask svg { width: 13px; height: 13px; }
+
+.second-opinion-error { margin: 9px 0 0; font-size: 12px; color: #ffab98; }
+
+.second-opinion {
+  margin-top: 12px;
+  border: 1px solid #ffb87a2e;
+  border-radius: 14px;
+  /* Its own ground, a shade off the bubble it sits in, so the boundary between
+     the two answers is never in doubt. */
+  background: linear-gradient(158deg, #2a160b6b, #140a0699);
+  overflow: hidden;
+}
+.second-opinion > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #ffffff12;
+}
+.second-opinion .so-label {
+  font-size: 10px;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: #d99e75;
+}
+.second-opinion .so-model {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #9a8578;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.second-opinion > header button {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: #8a7568;
+  cursor: pointer;
+}
+.second-opinion > header button:hover { background: #ffffff14; color: #f2e6dc; }
+.second-opinion > header button svg { width: 13px; height: 13px; }
+
+/* The sentence naming the choice. Set apart from the answer because it is
+   about the two answers, not a third one. */
+.so-difference {
+  margin: 0;
+  padding: 11px 13px;
+  border-bottom: 1px solid #ffffff0f;
+  background: #ff9a3d0f;
+  color: #f0dccd;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.so-answer { padding: 12px 13px; font-size: 13.5px; line-height: 1.6; }
+.so-answer > :first-child { margin-top: 0; }
+.so-answer > :last-child { margin-bottom: 0; }

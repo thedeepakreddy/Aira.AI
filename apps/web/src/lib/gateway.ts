@@ -195,3 +195,35 @@ export async function fetchUsage(surface?: string): Promise<UsageSummary | null>
   if (!response.ok) return null;
   return response.json() as Promise<UsageSummary>;
 }
+
+/** A second model's answer, and one sentence on what the two make you choose. */
+export interface SecondOpinion {
+  answer: string;
+  model: string;
+  /** Null when no local judge was available; the answers still stand alone. */
+  difference: string | null;
+}
+
+/**
+ * Asks a different model the same question.
+ *
+ * Never automatic. A second opinion costs a second request, so it happens when
+ * the reader asks for one — and only they can decide an answer is worth
+ * checking.
+ */
+export async function fetchSecondOpinion(
+  messages: Array<{ role: string; content: string }>,
+  answer: string,
+  model: string,
+): Promise<SecondOpinion> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Sign in to ask for a second opinion.');
+  const response = await fetch(`${GATEWAY_URL}/v1/second-opinion`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ messages, answer, model }),
+  });
+  const body = await response.json().catch(() => ({})) as SecondOpinion & { error?: string };
+  if (!response.ok) throw new Error(body.error || 'The second opinion could not be fetched.');
+  return body;
+}
