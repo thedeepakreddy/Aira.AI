@@ -13,9 +13,11 @@ reference with simulated behavior, not a second production frontend.
 | Directory | Responsibility |
 |---|---|
 | `apps/web` | Main UI, chat/voice, model picker, Code/Agents/Browser, account memory |
-| `apps/desktop` | Tauri window, local-runtime lifecycle, restricted native bridge |
+| `apps/desktop` | Tauri window (macOS), local-runtime lifecycle, restricted native bridge |
+| `apps/desktop-windows` | Tauri window (Windows), local-runtime lifecycle, restricted native bridge |
 | `services/gateway` | Auth, model routing/adapters, usage events, shared memory, MCP |
 | `services/browser` | Dedicated Chrome session, research, local browser MCP |
+| `askdeepakai-front-end`| Older visual reference front-end demo with simulated behavior |
 
 ## Local setup
 
@@ -26,6 +28,7 @@ native build tools. Install the separate package dependencies:
 npm --prefix apps/web ci
 npm --prefix services/gateway ci
 npm --prefix apps/desktop ci
+npm --prefix apps/desktop-windows ci
 ```
 
 Create local environment files using `apps/web/.env.example` and
@@ -41,7 +44,7 @@ npm --prefix apps/web run dev
 ```
 
 Web development uses `http://127.0.0.1:5180`. For the desktop, stop that web dev
-server and run `npm --prefix apps/desktop run dev`; Tauri starts its own copy.
+server and run `npm --prefix apps/desktop run dev` (or `apps/desktop-windows`); Tauri starts its own copy.
 Its port is strict so it cannot silently attach to a different frontend.
 
 Local no-auth gateway testing requires `AIRA_REQUIRE_AUTH=false`; it is
@@ -98,6 +101,7 @@ profiles and local fixture pages, not vendor calls or the user's browser data.
 ```sh
 npm --prefix apps/web run build
 npm --prefix apps/desktop run build -- --bundles app
+npm --prefix apps/desktop-windows run build
 ```
 
 Frontend environment settings are baked into both builds. Configure the
