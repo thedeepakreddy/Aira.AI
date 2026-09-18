@@ -1,0 +1,90 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Aira",
+  "version": "0.1.0",
+  "identifier": "ai.askdeepak.aira",
+  "build": {
+    "frontendDist": "../../web/dist",
+    "devUrl": "http://localhost:5180",
+    "beforeDevCommand": "npm --prefix ../web run dev",
+    "beforeBuildCommand": "npm --prefix ../web run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Aira",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "resizable": true,
+        "center": true,
+        "theme": "Dark",
+        "backgroundColor": "#090301"
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": [
+          "'self'",
+          "'unsafe-inline'"
+        ],
+        "img-src": [
+          "'self'",
+          "data:",
+          "asset:",
+          "http://asset.localhost"
+        ],
+        "media-src": [
+          "'self'",
+          "asset:",
+          "http://asset.localhost"
+        ],
+        "font-src": [
+          "'self'",
+          "data:"
+        ],
+        "connect-src": [
+          "'self'",
+          "ipc:",
+          "http://ipc.localhost",
+          "http://127.0.0.1:*",
+          "http://localhost:*",
+          "ws://localhost:*",
+          "https:",
+          "wss:",
+          "https://*.supabase.co",
+          "wss://*.supabase.co"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "copyright": "\u00a9 AskDeepakAI",
+    "category": "Productivity",
+    "shortDescription": "Your AI workspace",
+    "longDescription": "Aira brings chat, voice, and agents together in one workspace.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "allowDowngrades": false
+    },
+    "resources": {
+      "../../../services/browser/server.py": "browser/server.py"
+    }
+  }
+}

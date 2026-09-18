@@ -1,0 +1,37 @@
+[package]
+name = "aira-windows"
+version = "0.1.0"
+description = "Aira — your AI workspace (Windows)"
+authors = ["AskDeepakAI"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "aira_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `unstable` is what exposes Window::add_child — a native child webview,
+# which is how a real browser lives inside the app window rather than
+# being streamed into it as pictures.
+tauri = { version = "2", features = ["unstable"] }
+tauri-plugin-dialog = "2"
+# Loopback HTTP only — no TLS stack is pulled in, because the only thing it
+# talks to is a local agent on 127.0.0.1.
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart"] }
+tokio = { version = "1", features = ["rt"] }
+futures-util = { version = "0.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

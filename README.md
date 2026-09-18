@@ -1,14 +1,15 @@
-# Aira
+# Aira AI
 
-One React workspace for the web and a Tauri desktop shell, with a server-side
-model gateway and supervised local coding, task-agent, and Chrome runtimes.
+Aira is a full-stack AI workspace integrating web, desktop (macOS & Windows), server-side gateway, and automated local runtimes (Chrome & Coding Agents).
+
+It features a unified React workspace for the web and Tauri desktop shells, connecting to a server-side model gateway and supervising local coding, task-agent, and Chrome browser automation runtimes.
 
 The current implementation and release boundaries are documented in
 [the production-readiness report](docs/production-readiness-report.md).
 This is the active application. `askdeepakai-front-end/` is an older visual
 reference with simulated behavior, not a second production frontend.
 
-## Repository
+## Architecture & Workspaces
 
 | Directory | Responsibility |
 |---|---|
@@ -19,10 +20,26 @@ reference with simulated behavior, not a second production frontend.
 | `services/browser` | Dedicated Chrome session, research, local browser MCP |
 | `askdeepakai-front-end`| Older visual reference front-end demo with simulated behavior |
 
-## Local setup
+## Features
 
-Use Node.js 24 LTS. Desktop development also needs Rust and the platform's
-native build tools. Install the separate package dependencies:
+- **Unified React Frontend**: A single, responsive React 19 + TypeScript frontend handling Chat, Voice, Model selection, Code, Agents, Browser, and Account memory.
+- **Cross-Platform Native Shells**: Tauri-based shells for macOS (`apps/desktop`) and Windows (`apps/desktop-windows`), which run the exact same web view with restricted native capabilities, supervising local tools and runtime processes.
+- **Secure Server-side Gateway**: A robust gateway (`services/gateway`) owning provider API keys (OpenAI, Anthropic, Gemini, etc.), routing traffic by tier (frontier, fast, balanced), and providing shared memory powered by Supabase.
+- **Shared Memory & MCP**: Automatic and explicit cross-tool memory shared via the authenticated Model Context Protocol (MCP). Notes, context, and configurations are securely stored per user.
+- **Supervised Browser Automation**: Real Chrome orchestration via a Python-based browser service (`services/browser`), supporting localized agents and research runtimes.
+- **Agent Integration**: Direct connections with OpenCode (coding workflows) and OpenClaw (task management) executing safely as native desktop supervisors.
+
+## Getting Started
+
+### Local Development Requirements
+
+- **Node.js 24 LTS**
+- **Rust** (for desktop builds) and native platform build tools (Xcode CLI or Visual Studio Build Tools).
+- For local browser agents: **Python 3.11+** and **Chrome/Chromium**.
+
+### Installation
+
+Install dependencies across the monorepo workspaces:
 
 ```sh
 npm --prefix apps/web ci
@@ -31,72 +48,63 @@ npm --prefix apps/desktop ci
 npm --prefix apps/desktop-windows ci
 ```
 
-Create local environment files using `apps/web/.env.example` and
-`services/gateway/.env.example`. Keep provider keys and the Supabase service-role
-key **only** in the gateway. The web environment contains the public Supabase
-project settings and gateway URL, never provider credentials.
+### Environment Configuration
 
-Run in separate terminals:
+Create local environment files:
+- `apps/web/.env.example` -> `apps/web/.env`
+- `services/gateway/.env.example` -> `services/gateway/.env`
+
+> **Security Note:** Provider keys and the Supabase service-role key must remain **only** in the gateway. The web environment only holds public project settings.
+
+### Running the Services
+
+Run the web frontend and gateway in separate terminals:
 
 ```sh
 npm --prefix services/gateway run dev
 npm --prefix apps/web run dev
 ```
 
-Web development uses `http://127.0.0.1:5180`. For the desktop, stop that web dev
-server and run `npm --prefix apps/desktop run dev` (or `apps/desktop-windows`); Tauri starts its own copy.
-Its port is strict so it cannot silently attach to a different frontend.
+Web development is served at `http://127.0.0.1:5180`. 
 
-Local no-auth gateway testing requires `AIRA_REQUIRE_AUTH=false`; it is
-loopback-only and uses one development identity. A production deployment needs
-Supabase authentication, HTTPS, allowed web origins, configured model ids, and
-both gateway SQL migrations. No deployment or database mutation is automatic.
+**For Desktop Apps:** 
+Stop the web dev server and run the Tauri dev environment for your OS (it starts its own web copy):
+```sh
+npm --prefix apps/desktop run dev
+# OR for Windows:
+npm --prefix apps/desktop-windows run dev
+```
 
-For Code and Agents, install the supported OpenCode/OpenClaw executables and
-use their panels to connect. Code requires an explicit project directory.
-For Chrome/Python installation and browser controls, see
-[browser setup](services/browser/README.md). Start Browser **before** connecting
-Code; reconnect Code after a browser restart to refresh its MCP connection.
-These local runtimes are desktop-only; the website cannot execute tools on
-someone's computer without a separately authorized companion.
+### Local Agents & Browser Runtime
+To enable the Coding and Browser automation features, follow the [Browser Service Setup](services/browser/README.md). Start the Browser service **before** connecting Code to ensure it receives its local MCP connection.
 
-## Verification
+## Verification & Testing
+
+The repository maintains an extensive test suite across services:
 
 ```sh
+# Web
 npm --prefix apps/web test
 npm --prefix apps/web run build
+# (Run in another terminal alongside preview server at 5192)
+AIRA_TEST_URL=http://127.0.0.1:5192 npm --prefix apps/web run test:ui
+
+# Gateway
 npm --prefix services/gateway test
 npm --prefix services/gateway run typecheck
+
+# Browser service
 python3 -m unittest discover -s services/browser -p 'test_*.py'
+
+# Desktop (macOS)
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-UI tests need Playwright Chromium (`npx playwright install chromium` from
-`apps/web`). Start a production preview at port 5192, then run the layout and
-chat/memory checks from `apps/web`:
+*(See `services/gateway/README.md` and `services/browser/README.md` for specific integration tests.)*
 
-```sh
-npm run preview -- --host 127.0.0.1 --port 5192 --strictPort
-# In another terminal, also inside apps/web:
-AIRA_TEST_URL=http://127.0.0.1:5192 npm run test:ui
-```
+## Builds & Release
 
-The native-bridge simulations require a Vite development server at port 5191
-because they substitute the auth module with an isolated test account:
-
-```sh
-npm run dev -- --port 5191
-# In another terminal, inside apps/web:
-node tests/agent-ui-smoke.mjs
-node tests/browser-ui-smoke.mjs
-```
-
-These UI tests mock services and never buy model tokens. Optional actual-client
-integration commands are in [gateway documentation](services/gateway/README.md).
-`services/browser/smoke.py` exercises real installed Chrome with disposable
-profiles and local fixture pages, not vendor calls or the user's browser data.
-
-## Builds and release
+Build the frontend and packaged native desktop binaries:
 
 ```sh
 npm --prefix apps/web run build
@@ -104,7 +112,5 @@ npm --prefix apps/desktop run build -- --bundles app
 npm --prefix apps/desktop-windows run build
 ```
 
-Frontend environment settings are baked into both builds. Configure the
-deployment URL before building. A local `.app` is not a signed/notarized public
-release. See [desktop requirements](apps/desktop/README.md) and the
-[release checklist](docs/production-readiness-report.md#release-gates).
+Configure `VITE_GATEWAY_URL` prior to building. The output will land in `src-tauri/target/release/bundle/`. 
+> Note: Local desktop builds are ad-hoc signed and will require a developer certificate for public release. See the [Release checklist](docs/production-readiness-report.md#release-gates).

@@ -1,0 +1,452 @@
+//! Supervises the OpenCode agent server.
+//!
+//! OpenCode ships a headless HTTP server, so Aira drives it over its API rather
+//! than scraping a terminal UI. Aira owns the process: it picks the port, mints
+//! the credential, and kills the child when the app exits.
+//!
+//! Two things about that server make supervision security-relevant rather than
+//! bookkeeping:
+//!
+//!   * It is unauthenticated unless `OPENCODE_SERVER_PASSWORD` is set, and it
+//!     says so on startup.
+//!   * `POST /session/{id}/shell` executes arbitrary shell commands and sits
+//!     outside its own tool-permission system.
+//!
+//! Together those mean an unsecured instance is local code execution for
+//! anything that can reach the port. So a fresh random password is generated per
+//! launch, the server is bound to loopback, and no extra CORS origin is passed.
+
+use std::collections::VecDeque;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+use serde::Serialize;
+use tauri::State;
+
+#[derive(Default)]
+pub struct OpenCodeState {
+    inner: Mutex<Option<Running>>,
+}
+
+struct Running {
+    child: Child,
+    /// Recent stderr, for saying why a start failed.
+    log: Arc<Mutex<VecDeque<String>>>,
+    port: u16,
+    password: String,
+    /// Where the server was started. The agent's tools inherit this, so the
+    /// panel needs it to tell which stored session belongs to this process.
+    directory: Option<String>,
+    model: String,
+}
+
+#[derive(Serialize)]
+pub struct Status {
+    pub running: bool,
+    pub port: Option<u16>,
+    /// Sent to the webview so it can authenticate; it never leaves this machine.
+    pub password: Option<String>,
+    /// Absolute path to the binary, or None when OpenCode is not installed.
+    pub binary: Option<String>,
+    /// Working directory of the running server, if any.
+    pub directory: Option<String>,
+    pub model: Option<String>,
+}
+
+/// Looks for the opencode binary on PATH and in the usual install locations.
+/// Returning the path rather than a bool lets the UI say *what* is missing.
+fn find_binary() -> Option<String> {
+    // On Windows, use where.exe to find the binary on PATH.
+    crate::runtime::which("opencode")
+        .or_else(|| {
+            // Check common Windows install locations.
+            let mut candidates: Vec<String> = Vec::new();
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                candidates.push(format!("{appdata}\\npm\\opencode.cmd"));
+                candidates.push(format!("{appdata}\\npm\\opencode"));
+            }
+            if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+                candidates.push(format!("{localappdata}\\Programs\\opencode\\opencode.exe"));
+            }
+            candidates
+                .into_iter()
+                .find(|c| std::path::Path::new(c).exists())
+        })
+}
+
+/// Asks the OS for a free port by binding to 0 and reading back the assignment,
+/// rather than guessing a fixed port that may already be taken.
+fn free_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("could not reserve a port: {e}"))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|e| format!("could not read the reserved port: {e}"))
+}
+
+impl OpenCodeState {
+    /// Drops the handle if the child has exited.
+    ///
+    /// Both commands need this. Without it in `start`, an agent that crashed or
+    /// was killed from outside leaves a dead handle behind, `start` sees it as
+    /// already running, and the panel is handed a port nothing is listening on
+    /// — which surfaces as an unexplained connection failure that no amount of
+    /// pressing the button can clear.
+    fn reap(&self) {
+        let mut guard = self.inner.lock().unwrap();
+        if let Some(running) = guard.as_mut() {
+            if matches!(running.child.try_wait(), Ok(Some(_))) {
+                *guard = None;
+            }
+        }
+    }
+}
+
+/// Keeps the tail of a child's stderr, and — more importantly — keeps reading it.
+///
+/// A piped stream nobody drains is not just a lost diagnostic. The pipe holds
+/// about 64KB; once it fills, the child blocks on its next write and stops
+/// making progress. These agents log every plugin they load at startup, so one
+/// would hang part-way through booting: the process is alive, nothing is
+/// listening, and the panel reports an agent that never answered.
+fn drain(stderr: Option<std::process::ChildStderr>, log: Arc<Mutex<VecDeque<String>>>) {
+    let Some(stderr) = stderr else { return };
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let mut guard = log.lock().unwrap();
+            if guard.len() >= 60 {
+                guard.pop_front();
+            }
+            guard.push_back(line);
+        }
+    });
+}
+
+#[tauri::command]
+pub fn opencode_status(state: State<'_, OpenCodeState>) -> Status {
+    state.reap();
+    let guard = state.inner.lock().unwrap();
+
+    match guard.as_ref() {
+        Some(running) => Status {
+            running: true,
+            port: Some(running.port),
+            password: Some(running.password.clone()),
+            binary: find_binary(),
+            directory: running.directory.clone(),
+            model: Some(running.model.clone()),
+        },
+        None => Status {
+            running: false,
+            port: None,
+            password: None,
+            binary: find_binary(),
+            directory: None,
+            model: None,
+        },
+    }
+}
+
+/// Builds the config OpenCode runs under.
+///
+/// Passed through `OPENCODE_CONFIG_CONTENT` rather than a file, for two
+/// reasons: writing `opencode.json` into the user's repository would litter
+/// their project, and the gateway token would then sit on disk. In the
+/// environment it lives only as long as the process.
+///
+/// Two things this config is responsible for:
+///
+///  * Pointing the agent at Aira's gateway, so agent spend is metered and
+///    capped like every other surface instead of billing somewhere invisible.
+///  * Setting `edit` and `bash` to "ask". OpenCode allows everything by
+///    default, so without this the approval prompts in Aira's UI would never
+///    fire and the agent would edit files unannounced.
+/// Builds OpenCode's configuration.
+///
+/// `catalogue` is every model the gateway serves; `model` is the one the
+/// coding surface routes to, which becomes the default.
+///
+/// Declaring the whole catalogue rather than just the routed model matters
+/// because OpenCode stores a model per session. With one model declared,
+/// changing AIRA_ROUTE_CODE strands every existing session on a name the
+/// config no longer contains, and OpenCode fails with "Model not found:
+/// aira/<old>. Did you mean: <new>?" — a dead session with no way back.
+fn build_config(
+    gateway_url: &str,
+    token: &str,
+    model: &str,
+    catalogue: &[String],
+    browser: Option<(u16, String)>,
+) -> String {
+    let qualified = format!("aira/{model}");
+    let mut models = serde_json::Map::new();
+    for id in catalogue.iter().map(String::as_str).chain(std::iter::once(model)) {
+        models.entry(id.to_string()).or_insert_with(|| {
+            serde_json::json!({ "name": if id == model { "Aira Agent" } else { id } })
+        });
+    }
+    let mut config = serde_json::json!({
+        "provider": {
+            "aira": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Aira Gateway",
+                "options": {
+                    "baseURL": format!("{}/openai/v1", gateway_url.trim_end_matches('/')),
+                    "apiKey": token,
+                },
+                "models": models,
+            }
+        },
+        "model": qualified,
+        "mcp": {
+            "aira_memory": {
+                "type": "remote", "url": format!("{}/mcp", gateway_url.trim_end_matches('/')),
+                "headers": { "Authorization": format!("Bearer {token}") }, "oauth": false,
+            }
+        },
+        "permission": {
+            "*": "ask",
+            "read": "allow",
+            "list": "allow",
+            "glob": "allow",
+            "grep": "allow",
+            "lsp": "allow",
+            "edit": "ask",
+            "bash": "ask",
+            "task": "ask",
+            "webfetch": "deny",
+            "websearch": "deny",
+            // Ask rather than deny.
+            //
+            // `deny` is silent: the tool fails with no prompt and no reason, so
+            // a project opened one directory too deep produces a run of
+            // identical failures with nothing saying the path was the problem.
+            // Fourteen of those in one session is what "it cannot write to
+            // disk" turned out to be.
+            //
+            // It was not buying much either. `bash` is already `ask`, and an
+            // approved shell command reaches any path on the machine — so
+            // denying the well-behaved tools while the shell goes anywhere is
+            // not a boundary, it is an inconsistency. Asking puts the decision
+            // where the others already are: with the person watching.
+            "external_directory": "ask",
+            "aira_browser*": "ask",
+            "aira_memory*": "ask",
+        },
+    });
+    if let Some((port, secret)) = browser {
+        config["mcp"]["aira_browser"] = serde_json::json!({
+            "type": "remote", "url": format!("http://127.0.0.1:{port}/mcp"),
+            "headers": { "Authorization": format!("Bearer {secret}") }, "oauth": false,
+        });
+    }
+    config.to_string()
+}
+
+#[tauri::command]
+pub fn opencode_start(
+    state: State<'_, OpenCodeState>,
+    browser: State<'_, crate::browser::BrowserState>,
+    directory: Option<String>,
+    gateway_url: String,
+    token: String,
+    model: String,
+    catalogue: Option<Vec<String>>,
+) -> Result<Status, String> {
+    crate::runtime::validate_gateway(&gateway_url)?;
+    if token.trim().is_empty() || model.trim().is_empty() {
+        return Err("Sign in and select a coding model first".into());
+    }
+    let catalogue = catalogue.unwrap_or_default();
+    let selected = directory
+        .filter(|d| !d.trim().is_empty())
+        .ok_or("Choose a project folder before starting the coding agent")?;
+    let canonical = std::path::Path::new(&selected)
+        .canonicalize()
+        .map_err(|_| "The selected project folder does not exist")?;
+    if !canonical.is_dir()
+        || canonical.parent().is_none()
+        || crate::runtime::home_dir().ok().as_deref() == canonical.to_str()
+    {
+        return Err(
+            "Choose a specific project folder, rather than your home or filesystem root".into(),
+        );
+    }
+    let workdir = Some(canonical.to_string_lossy().to_string());
+    state.reap();
+    let mut guard = state.inner.lock().unwrap();
+    if guard.is_some() {
+        drop(guard);
+        return Ok(opencode_status(state));
+    }
+
+    let binary = find_binary().ok_or_else(|| {
+        "OpenCode is not installed. Install it with `npm install -g opencode-ai`.".to_string()
+    })?;
+
+    let port = free_port()?;
+    let password = uuid::Uuid::new_v4().to_string();
+
+    let mut command = Command::new(&binary);
+    command
+        .arg("serve")
+        .arg("--port")
+        .arg(port.to_string())
+        // Loopback only. The server executes shell commands, so it must never
+        // be reachable off this machine.
+        .arg("--hostname")
+        .arg("127.0.0.1")
+        .env("OPENCODE_SERVER_PASSWORD", &password)
+        // Config by environment: nothing is written into the user's project,
+        // and the gateway token never reaches disk.
+        .env(
+            "OPENCODE_CONFIG_CONTENT",
+            build_config(&gateway_url, &token, &model, &catalogue, browser.connection()),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    // Set working directory to the selected project folder.
+    if let Some(dir) = &workdir {
+        command.current_dir(dir);
+    }
+    crate::runtime::prepare(&mut command);
+
+    let child = command
+        .spawn()
+        .map_err(|e| format!("could not start OpenCode: {e}"))?;
+
+    let log: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let mut child = child;
+    drain(child.stderr.take(), Arc::clone(&log));
+
+    *guard = Some(Running {
+        child,
+        log,
+        port,
+        password: password.clone(),
+        directory: workdir.clone(),
+        model: model.clone(),
+    });
+
+    Ok(Status {
+        running: true,
+        port: Some(port),
+        password: Some(password),
+        binary: Some(binary),
+        directory: workdir,
+        model: Some(model),
+    })
+}
+
+#[tauri::command]
+pub fn opencode_stop(state: State<'_, OpenCodeState>) -> Result<(), String> {
+    if let Some(mut running) = state.inner.lock().unwrap().take() {
+        crate::runtime::terminate(&mut running.child);
+    }
+    Ok(())
+}
+
+impl OpenCodeState {
+    /// Called when the app exits. Without this the agent server outlives Aira
+    /// and keeps a shell-executing port open with nothing watching it.
+    pub fn shutdown(&self) {
+        if let Some(mut running) = self.inner.lock().unwrap().take() {
+            crate::runtime::terminate(&mut running.child);
+        }
+    }
+}
+
+/// The tail of the agent's own stderr, so a failed start can say what it said
+/// rather than only that it said nothing.
+#[tauri::command]
+pub fn opencode_log(state: State<'_, OpenCodeState>) -> Vec<String> {
+    let guard = state.inner.lock().unwrap();
+    guard
+        .as_ref()
+        .map(|r| r.log.lock().unwrap().iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn mcp_connections_share_runtime_credentials_and_require_approval() {
+        let config: serde_json::Value = serde_json::from_str(&build_config("https://aira.example/", "session-token", "vendor/model", &[], Some((12345, "browser-token".into())),
+        ))
+        .unwrap();
+        assert_eq!(
+            config["provider"]["aira"]["options"]["baseURL"],
+            "https://aira.example/openai/v1"
+        );
+        assert_eq!(
+            config["mcp"]["aira_memory"]["url"],
+            "https://aira.example/mcp"
+        );
+        assert_eq!(
+            config["mcp"]["aira_browser"]["headers"]["Authorization"],
+            "Bearer browser-token"
+        );
+        assert_eq!(config["permission"]["aira_browser*"], "ask");
+        // Reaching outside the project prompts rather than failing silently.
+        // What matters is that it is never "allow": the decision has to reach
+        // a person, and a silent deny did not do that either.
+        assert_eq!(config["permission"]["external_directory"], "ask");
+        // The tools that change the machine must never grant themselves.
+        for gated in ["*", "edit", "bash", "task", "external_directory"] {
+            assert_ne!(
+                config["permission"][gated], "allow",
+                "{gated} must not be allowed without asking"
+            );
+        }
+        // Reading is allowed outright; that is the whole point of the split.
+        for readonly in ["read", "list", "glob", "grep"] {
+            assert_eq!(config["permission"][readonly], "allow", "{readonly} should not prompt");
+        }
+        // The network tools stay off: the browser surface is the way out.
+        assert_eq!(config["permission"]["webfetch"], "deny");
+        assert_eq!(config["permission"]["websearch"], "deny");
+        let disconnected: serde_json::Value = serde_json::from_str(&build_config("https://aira.example", "token", "model", &[], None,
+        ))
+        .unwrap();
+        assert!(disconnected["mcp"].get("aira_browser").is_none());
+    }
+
+    /// OpenCode stores a model per session. If the config declares only the
+    /// routed model, changing AIRA_ROUTE_CODE strands every existing session
+    /// on a name the config no longer has, and the session dies with
+    /// "Model not found: aira/<old>".
+    #[test]
+    fn config_declares_every_catalogue_model_so_sessions_survive_a_route_change() {
+        let catalogue = vec!["gemini-3.7-flash".to_string(), "gemini-3.6-flash".to_string()];
+        let config: serde_json::Value = serde_json::from_str(&build_config(
+            "https://aira.example", "token", "gemini-3.6-flash", &catalogue, None,
+        ))
+        .expect("valid config");
+        let models = config["provider"]["aira"]["models"]
+            .as_object()
+            .expect("models is an object");
+        for id in &catalogue {
+            assert!(models.contains_key(id), "{id} missing from {models:?}");
+        }
+        // The routed model is still the default.
+        assert_eq!(config["model"], "aira/gemini-3.6-flash");
+    }
+
+    /// A gateway that reports nothing must still yield a usable config.
+    #[test]
+    fn config_falls_back_to_the_routed_model_when_the_catalogue_is_empty() {
+        let config: serde_json::Value =
+            serde_json::from_str(&build_config("https://aira.example", "t", "only-model", &[], None))
+                .expect("valid config");
+        assert!(config["provider"]["aira"]["models"]["only-model"].is_object());
+        assert_eq!(config["model"], "aira/only-model");
+    }
+}
