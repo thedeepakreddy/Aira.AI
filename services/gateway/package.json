@@ -11,7 +11,8 @@
     "test:integration": "node --experimental-strip-types scripts/integration.mjs",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
     "migrate:check": "node --env-file-if-exists=.env scripts/migrate.mjs --check",
-    "migrations:build": "node scripts/build-migrations.mjs"
+    "migrations:build": "node scripts/build-migrations.mjs",
+    "install-gateway": "node scripts/install-gateway.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Brain, Cable, Check, Copy, Cpu, Globe, Loader2, Plus, RefreshCw, Search, Server, Trash2 } from 'lucide-react';
 import { gatewayRequest, GATEWAY_URL, listCatalogue, type ModelSpec, type SurfaceRouting } from '@/lib/gateway';
+import { gatewayStatus, type GatewayStatus } from '@/lib/gateway-ready';
 
 interface Health {
   ok: boolean; providers: string[]; models: number; authRequired: boolean;
@@ -11,6 +12,12 @@ interface MemoryState { enabled: boolean; storage: string; entries: MemoryEntry[
 
 export default function ConnectionsPanel({ onModelsChanged }: { onModelsChanged: () => Promise<void> }) {
   const [health, setHealth] = useState<Health>();
+  /**
+   * What the desktop shell is doing about the gateway, which is now a
+   * process it starts rather than one the user is expected to have running.
+   * Null in the browser, where nothing is being supervised.
+   */
+  const [shell, setShell] = useState<GatewayStatus | null>(null);
   const [models, setModels] = useState<ModelSpec[]>([]);
   const [routing, setRouting] = useState<SurfaceRouting>({});
   const [memory, setMemory] = useState<MemoryState>();
@@ -30,6 +37,7 @@ export default function ConnectionsPanel({ onModelsChanged }: { onModelsChanged:
   }, []);
   const refresh = useCallback(async () => {
     setLoading(true); setError(''); setMemoryError('');
+    setShell(await gatewayStatus());
     const result = await Promise.allSettled([
       gatewayRequest<Health>('/health'), listCatalogue(), reloadMemory(),
       gatewayRequest<{ enabled: boolean }>('/v1/memory/preferences'),
@@ -66,7 +74,7 @@ export default function ConnectionsPanel({ onModelsChanged }: { onModelsChanged:
     <div className="settings-heading"><div><span className="eyebrow">YOUR WORKSPACE</span><h1>Everything, connected.</h1><p>Models, shared context, and the tools behind your work.</p></div><button className="subtle-button" disabled={loading} onClick={() => { void refresh(); void onModelsChanged(); }}>{loading ? <Loader2 className="spin" /> : <RefreshCw />}Refresh</button></div>
     {error && <div className="agent-notice error" role="alert">{error}</div>}
     <div className="connection-summary">
-      <article><Server /><span>Gateway<strong>{health?.ok ? 'Connected' : loading ? 'Checking…' : 'Unavailable'}</strong></span><i className={health?.ok ? 'healthy' : ''} /></article>
+      <article><Server /><span>Gateway<strong>{health?.ok ? (shell?.managed ? 'Started by Aira' : 'Connected') : loading ? 'Checking…' : shell?.note || 'Unavailable'}</strong></span><i className={health?.ok ? 'healthy' : ''} /></article>
       <article><Cpu /><span>Models<strong>{models.length ? models.length + ' available' : 'No models configured'}</strong></span></article>
       <article><Brain /><span>Shared memory<strong>{memory?.storage === 'supabase' ? 'Persistent' : memory?.storage === 'ephemeral' ? 'Session storage' : 'Unavailable'}</strong></span></article>
     </div>

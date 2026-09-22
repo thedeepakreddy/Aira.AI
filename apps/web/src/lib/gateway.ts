@@ -8,6 +8,7 @@
 
 import { parseSSE } from './sse';
 import { getAccessToken } from './supabase';
+import { waitForGateway } from './gateway-ready.ts';
 
 export type Surface = 'chat' | 'voice' | 'code' | 'task';
 
@@ -83,10 +84,9 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
   // The gateway pays for every token it forwards, so it needs to know who is
   // asking. Without a session it answers 401 and nothing is spent.
   let response: Response;
-  try {
+  const send = async () => {
     const token = await getAccessToken();
-    if (signal?.aborted) return;
-    response = await fetch(`${GATEWAY_URL}/v1/chat`, {
+    return fetch(`${GATEWAY_URL}/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -101,16 +101,39 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
       }),
       signal,
     });
+  };
+
+  try {
+    if (signal?.aborted) return;
+    response = await send();
   } catch (error) {
     // Abort is a deliberate user action, not a failure to report.
     if (signal?.aborted) return;
-    yield {
-      type: 'error',
-      message: 'Aira could not connect. Check Connections and try again.',
-      retryable: true,
-      fault: 'gateway',
-    };
-    return;
+    /*
+     * The desktop starts its own gateway, so a message sent during that window
+     * should wait for it rather than blaming the user's connection.
+     *
+     * Retried exactly once, in place. Recursing into streamChat here would
+     * loop without end the moment the gateway reports healthy while the
+     * request keeps failing for some other reason — a wrong port, a proxy —
+     * because every pass would be told it was fine and try again immediately.
+     */
+    const { ready, note } = await waitForGateway();
+    let retried: Response | null = null;
+    if (ready && !signal?.aborted) {
+      try { retried = await send(); } catch { retried = null; }
+    }
+    if (!retried) {
+      if (signal?.aborted) return;
+      yield {
+        type: 'error',
+        message: note || 'Aira could not connect. Check Connections and try again.',
+        retryable: true,
+        fault: 'gateway',
+      };
+      return;
+    }
+    response = retried;
   }
 
   if (response.status === 401) {
@@ -171,7 +194,7 @@ export type SurfaceRouting = Partial<Record<'chat' | 'voice' | 'code' | 'task', 
  * session has expired — an empty picker is a better failure than a blank screen.
  */
 export async function listCatalogue(): Promise<{ models: ModelSpec[]; routing: SurfaceRouting }> {
-  try {
+  const fetchOnce = async () => {
     const token = await getAccessToken();
     const response = await fetch(`${GATEWAY_URL}/v1/models`, {
       headers: {
@@ -182,8 +205,23 @@ export async function listCatalogue(): Promise<{ models: ModelSpec[]; routing: S
     if (!response.ok) return { models: [], routing: {} };
     const body = (await response.json()) as { models?: ModelSpec[]; routing?: SurfaceRouting };
     return { models: Array.isArray(body.models) ? body.models : [], routing: body.routing ?? {} };
+  };
+  try {
+    return await fetchOnce();
   } catch {
-    return { models: [], routing: {} };
+    /*
+     * An empty catalogue is indistinguishable from a configured one on a
+     * gateway that has not finished starting, and the model picker renders
+     * both as "no models". On the desktop this is usually the second case, so
+     * it is worth waiting out the cold start before believing the empty list.
+     */
+    const { ready } = await waitForGateway();
+    if (!ready) return { models: [], routing: {} };
+    try {
+      return await fetchOnce();
+    } catch {
+      return { models: [], routing: {} };
+    }
   }
 }
 
@@ -197,9 +235,22 @@ export async function gatewayRequest<T>(path: string, options: RequestInit = {})
   const headers = new Headers(options.headers);
   if (options.body) headers.set('Content-Type', 'application/json');
   if (token) headers.set('Authorization', `Bearer ${token}`);
+  const send = () => fetch(`${GATEWAY_URL}${path}`, { ...options, headers, signal: options.signal ?? AbortSignal.timeout(12000) });
   let response: Response;
-  try { response = await fetch(`${GATEWAY_URL}${path}`, { ...options, headers, signal: options.signal ?? AbortSignal.timeout(12000) }); }
-  catch { throw new Error('Could not reach Aira. Check your connection and try again.'); }
+  try { response = await send(); }
+  catch {
+    /*
+     * On the desktop this is as likely to be "not up yet" as "not there". The
+     * app starts its own gateway at launch and a cold one takes seconds, so the
+     * first requests after opening Aira can arrive before it is listening —
+     * which used to greet the user with a connection error on every screen at
+     * once, moments before it would have worked.
+     */
+    const { ready, note } = await waitForGateway();
+    if (!ready) throw new Error(note || 'Could not reach Aira. Check your connection and try again.');
+    try { response = await send(); }
+    catch { throw new Error('Could not reach Aira. Check your connection and try again.'); }
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const error = typeof body?.error === 'string' ? body.error : body?.error?.message;

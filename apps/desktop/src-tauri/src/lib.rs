@@ -1,5 +1,6 @@
 mod applog;
 mod fleet;
+mod gateway;
 mod voice;
 mod browser;
 mod openclaw;
@@ -7,6 +8,7 @@ mod opencode;
 mod runtime;
 
 use browser::BrowserState;
+use gateway::GatewayState;
 use openclaw::OpenClawState;
 use opencode::OpenCodeState;
 use tauri::{Manager, RunEvent};
@@ -31,6 +33,7 @@ pub fn run() {
         .manage(voice::VoiceState::default())
         .manage(OpenClawState::default())
         .manage(BrowserState::default())
+        .manage(GatewayState::default())
         .invoke_handler(tauri::generate_handler![
             opencode::opencode_status,
             opencode::opencode_start,
@@ -65,7 +68,16 @@ pub fn run() {
             voice::voice_stop,
             voice::voice_fetch_model,
             voice::voice_transcribe,
+            gateway::gateway_status,
+            gateway::gateway_restart,
         ])
+        .setup(|app| {
+            // Before anything else the user might click. Nothing in Aira works
+            // without the gateway, so bringing one up is not a feature of a
+            // screen — it is what opening the app means.
+            gateway::supervise(app.handle().clone());
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("failed to start Aira")
         .run(|app, event| {
@@ -76,6 +88,8 @@ pub fn run() {
                 app.state::<OpenClawState>().shutdown();
                 app.state::<BrowserState>().shutdown();
                 app.state::<voice::VoiceState>().shutdown();
+                // Last: the others may still be talking to it on their way out.
+                app.state::<GatewayState>().shutdown();
             }
         });
 }
