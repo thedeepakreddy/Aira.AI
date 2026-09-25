@@ -119,6 +119,30 @@ pub fn http_client(timeout: u64) -> Result<reqwest::Client, String> {
 mod tests {
     use super::*;
     #[test]
+    fn which_searches_the_path_children_actually_get() {
+        // The bug this replaced: npm's global prefix is appended by
+        // `login_path` but not exported by the login shell, so a runtime that
+        // was installed and runnable was reported as missing.
+        let path = login_path();
+        if let Ok(home) = std::env::var("HOME") {
+            let npm_global = format!("{home}/.npm-global/bin");
+            if std::path::Path::new(&npm_global).is_dir() {
+                assert!(path.contains(&npm_global), "login_path must include npm's global bin");
+            }
+        }
+        // Whatever it finds must be a real executable file, not a name on a list.
+        if let Some(found) = which("node") {
+            assert!(is_executable(std::path::Path::new(&found)), "{found} is not executable");
+        }
+    }
+
+    #[test]
+    fn a_directory_is_not_a_binary() {
+        assert!(!is_executable(std::path::Path::new("/tmp")));
+        assert!(!is_executable(std::path::Path::new("/nonexistent/node")));
+    }
+
+    #[test]
     fn gateway_requires_tls_except_loopback() {
         assert!(validate_gateway("https://aira.example").is_ok());
         assert!(validate_gateway("http://localhost:8787").is_ok());
@@ -175,16 +199,45 @@ pub fn free_port() -> Result<u16, String> {
         .map_err(|e| format!("could not read the reserved port: {e}"))
 }
 
-/// Finds a binary the way a login shell would.
+/// Finds a binary on the same PATH a spawned child is given.
 ///
 /// A Finder-launched app inherits a minimal PATH — which is how every runtime
 /// here managed to be "not installed" while working fine from a terminal.
+/// `login_path` solves that for children by asking a login shell and then
+/// appending the usual user-install directories.
+///
+/// This must search that same list, and used to ask `sh -lc command -v`
+/// instead. The two disagreed exactly where it hurt: npm's default global
+/// prefix is one of the directories `login_path` appends and the login shell
+/// does not export, so OpenClaw installed correctly, `prepare` would have let
+/// a child execute it, and the app still reported the fleet as not installed.
+/// Detection and execution have to consult one list or the answer is a lie.
 pub fn which(name: &str) -> Option<String> {
-    let out = std::process::Command::new("sh")
-        .arg("-lc")
-        .arg(format!("command -v {name}"))
-        .output()
-        .ok()?;
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!path.is_empty()).then_some(path)
+    for dir in login_path().split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let candidate = std::path::Path::new(dir).join(name);
+        if is_executable(&candidate) {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// A regular file with an execute bit. A directory named `node` is not node.
+fn is_executable(path: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return meta.permissions().mode() & 0o111 != 0;
+    }
+    #[cfg(not(unix))]
+    true
 }

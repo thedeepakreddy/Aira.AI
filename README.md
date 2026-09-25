@@ -4,6 +4,26 @@ Aira is a full-stack AI workspace integrating web, desktop (macOS & Windows), se
 
 It features a unified React workspace for the web and Tauri desktop shells, connecting to a server-side model gateway and supervising local coding, task-agent, and Chrome browser automation runtimes.
 
+## Demo
+
+![Aira demo — chat, Code, Agents, Browser and Workspace](docs/media/aira-demo.gif)
+
+*Recorded from the macOS build. [Full-quality MP4](docs/media/aira-demo.mp4).*
+
+What the recording shows, in order:
+
+| | Surface | What is happening |
+|---|---|---|
+| 1 | **Chat** | A question is sent and the answer streams back live. The status line names the model that actually answered. |
+| 2 | **Code** | The coding agent, waiting to be pointed at a project. File changes and commands request approval before they run. |
+| 3 | **Agents** | The fleet connected — Lead, Research, Analyse and Review, each with its own role, model, token usage and progress. |
+| 4 | **Browser** | A real Chrome session the agents can drive, sharing context with the rest of the workspace. |
+| 5 | **Workspace** | Providers, model routing per surface, shared memory, and the MCP endpoint other tools connect to. |
+
+Nothing in the recording is mocked. The gateway starts itself when the app
+launches, so there is no server to connect to first.
+
+
 The current implementation and release boundaries are documented in
 [the production-readiness report](docs/production-readiness-report.md).
 This is the active application. `askdeepakai-front-end/` is an older visual
