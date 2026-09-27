@@ -23,6 +23,46 @@ What the recording shows, in order:
 Nothing in the recording is mocked. The gateway starts itself when the app
 launches, so there is no server to connect to first.
 
+## Download
+
+**[Aira 0.1.0 for macOS](releases/Aira_0.1.0_universal.dmg)** — universal binary
+(Apple Silicon and Intel), 7.2 MB.
+
+```
+SHA-256  5aecc92dee78d0dcb20ae18b79f63a581c80fa54530c8c38284eb05078eeaa59
+```
+
+Verify the download before opening it:
+
+```sh
+shasum -a 256 Aira_0.1.0_universal.dmg
+```
+
+### Opening it the first time
+
+This build is signed ad-hoc and **has not been notarised by Apple**, so
+Gatekeeper will refuse it on first launch — the warning is about the absent
+notarisation, not about the app. After dragging Aira to Applications:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Aira.app
+```
+
+Then open it normally. Right-click → Open works too.
+
+### What it needs
+
+| Requirement | Why |
+|---|---|
+| macOS 13 or later | Tauri 2 runtime |
+| Node 22+ | The gateway runs on it |
+| A model provider key | Chat, Code and Agents all route through the gateway; without one the app opens but cannot answer |
+
+Optional, per surface: `openclaw` for the agent fleet, `opencode` for the coding
+agent, whisper.cpp for on-device dictation, Ollama for local models. Each
+surface reports what is missing and how to install it rather than failing
+silently.
+
 
 The current implementation and release boundaries are documented in
 [the production-readiness report](docs/production-readiness-report.md).
