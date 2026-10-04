@@ -1,27 +1,92 @@
-# Aira AI
+<div align="center">
 
-Aira is a full-stack AI workspace integrating web, desktop (macOS & Windows), server-side gateway, and automated local runtimes (Chrome & Coding Agents).
+# Aira
 
-It features a unified React workspace for the web and Tauri desktop shells, connecting to a server-side model gateway and supervising local coding, task-agent, and Chrome browser automation runtimes.
+**One desktop workspace for chat, coding, autonomous agents and web research — running on your machine, across five AI providers at once.**
 
-## Demo
+[![tests](https://img.shields.io/badge/tests-372%20passing-1b6e46)](#testing)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-5a6472)](#download)
+[![built with](https://img.shields.io/badge/Tauri%202-React%2019-b65e0a)](#how-it-works)
+[![version](https://img.shields.io/badge/version-0.1.0-5a6472)](#download)
 
-![Aira demo — chat, Code, Agents, Browser and Workspace](docs/media/aira-demo.gif)
+![Aira — chat, Code, Agents, Browser and Workspace](docs/media/aira-demo.gif)
 
-*Recorded from the macOS build. [Full-quality MP4](docs/media/aira-demo.mp4).*
+*Recorded from the macOS build — nothing mocked. [Full-quality MP4](docs/media/aira-demo.mp4) · [Download for macOS](#download)*
 
-What the recording shows, in order:
+</div>
 
-| | Surface | What is happening |
-|---|---|---|
-| 1 | **Chat** | A question is sent and the answer streams back live. The status line names the model that actually answered. |
-| 2 | **Code** | The coding agent, waiting to be pointed at a project. File changes and commands request approval before they run. |
-| 3 | **Agents** | The fleet connected — Lead, Research, Analyse and Review, each with its own role, model, token usage and progress. |
-| 4 | **Browser** | A real Chrome session the agents can drive, sharing context with the rest of the workspace. |
-| 5 | **Workspace** | Providers, model routing per surface, shared memory, and the MCP endpoint other tools connect to. |
+---
 
-Nothing in the recording is mocked. The gateway starts itself when the app
-launches, so there is no server to connect to first.
+## Why this exists
+
+Most AI tools do one thing and live in a browser tab. You chat in one, code in
+another, and a third reads web pages for you — and none of them know what you
+did in the others.
+
+Aira puts those jobs in a single desktop app that carries context across all of
+them, and talks to five providers at once so a single vendor's outage, rate
+limit or empty balance does not end your afternoon.
+
+Three things follow from that, and they are the parts worth looking at:
+
+- **Nothing to start.** The app launches its own gateway. There is no server to
+  run first and no "connect" step.
+- **A provider going down is survivable.** A failed request moves to a different
+  vendor at the same tier, and the UI says which model actually answered rather
+  than substituting one silently.
+- **Your keys are not in the app.** A packaged `.app` can be unzipped and read,
+  so provider credentials live only in the gateway.
+
+---
+
+## The four surfaces
+
+### Chat & Voice
+
+![Chat](docs/media/surface-chat.png)
+
+Conversation across every configured model, with a picker or automatic routing
+per surface. It can read live web pages to answer questions about current
+information, and page text is handed to the model as quoted material so
+instructions hidden in a page cannot redirect the assistant.
+
+Dictation is transcribed **on the machine** via whisper.cpp, so the audio never
+leaves it — falling back to the browser's recogniser only when the local one is
+unavailable, because a voice screen that refuses to listen is not a privacy
+feature.
+
+### Code
+
+![Code](docs/media/surface-code.png)
+
+A coding agent with real access to your project — it reads files, writes them,
+and runs commands. Every consequential action requests approval first. It can
+run what it just built and show the result back, which is the half of a browser
+IDE that usually goes missing.
+
+### Agents
+
+![Agents](docs/media/surface-agents.png)
+
+A fleet of six specialists — **Lead, Research, Plan, Write, Review, Analyse** —
+that take tasks from a board and work them independently, each with its own
+workspace, model, token budget and progress. Work can be scheduled to run
+overnight with a briefing waiting in the morning. Custom agents can be added.
+
+Asked what it could reach, a default agent listed 49 tools including arbitrary
+shell execution and stored credentials. **Eighteen are blocked outright** for
+every agent, and a test fails if that list is ever weakened.
+
+### Browser
+
+![Browser](docs/media/surface-browser.png)
+
+A real Chrome session an agent can drive — navigating, reading and gathering
+from live sites rather than relying on a training snapshot. It shares context
+with the rest of the workspace, so research done here is available to chat and
+to the coding agent.
+
+---
 
 ## Download
 
@@ -32,10 +97,8 @@ launches, so there is no server to connect to first.
 SHA-256  5aecc92dee78d0dcb20ae18b79f63a581c80fa54530c8c38284eb05078eeaa59
 ```
 
-Verify the download before opening it:
-
 ```sh
-shasum -a 256 Aira_0.1.0_universal.dmg
+shasum -a 256 Aira_0.1.0_universal.dmg   # verify before opening
 ```
 
 ### Opening it the first time
@@ -56,121 +119,138 @@ Then open it normally. Right-click → Open works too.
 |---|---|
 | macOS 13 or later | Tauri 2 runtime |
 | Node 22+ | The gateway runs on it |
-| A model provider key | Chat, Code and Agents all route through the gateway; without one the app opens but cannot answer |
+| At least one provider key | Every surface routes through the gateway; without a key the app opens but cannot answer |
 
 Optional, per surface: `openclaw` for the agent fleet, `opencode` for the coding
-agent, whisper.cpp for on-device dictation, Ollama for local models. Each
-surface reports what is missing and how to install it rather than failing
-silently.
+agent, whisper.cpp for on-device dictation, Ollama for local models. Each surface
+reports what is missing and how to install it rather than failing silently.
 
+---
 
-The current implementation and release boundaries are documented in
-[the production-readiness report](docs/production-readiness-report.md).
-This is the active application. `askdeepakai-front-end/` is an older visual
-reference with simulated behavior, not a second production frontend.
+## How it works
 
-## Architecture & Workspaces
+Every screen talks to one local service that owns the providers on their behalf.
+Putting it in one place is what makes the rest possible.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Desktop shell (Tauri 2, Rust)                      │
+│  · starts and supervises the gateway                │
+│  · owns local runtimes, kills them on exit          │
+│  ┌───────────────────────────────────────────────┐  │
+│  │  Workspace UI (React 19 + TypeScript)         │  │
+│  │  Chat · Voice · Code · Agents · Browser       │  │
+│  └───────────────────────────────────────────────┘  │
+└────────────────────────┬────────────────────────────┘
+                         │ HTTP + SSE
+┌────────────────────────▼────────────────────────────┐
+│  Gateway (Hono on Node)                             │
+│  routing · fallback · memory · usage · MCP          │
+└──┬───────────┬───────────┬───────────┬───────────┬──┘
+   │           │           │           │           │
+Anthropic   OpenAI    OpenRouter    Gemini      Ollama
+                                              (local)
+```
+
+| Capability | What it does |
+|---|---|
+| **Provider fallback** | A failed turn moves to another vendor at the same tier. Never after output has started, never on your own mistake, never across tiers — each refusal is tested. |
+| **Shared memory** | Context carries between chat, code and agents, and survives a restart. Pausable, searchable, deletable. |
+| **Usage metering** | Every request records model, tokens and estimated spend, attributed to the surface that spent it — including the attempts that failed, so the bill is not understated. |
+| **Second opinion** | For answers where being wrong matters, a different model from a different vendor is asked the same question and the app reports where they disagree. |
+| **Interoperability** | Exposes an OpenAI-compatible API and an MCP endpoint, so other AI tools on the machine use Aira's models and memory without bespoke work. |
+
+---
+
+## Repository layout
 
 | Directory | Responsibility |
 |---|---|
-| `apps/web` | Main UI, chat/voice, model picker, Code/Agents/Browser, account memory |
-| `apps/desktop` | Tauri window (macOS), local-runtime lifecycle, restricted native bridge |
-| `apps/desktop-windows` | Tauri window (Windows), local-runtime lifecycle, restricted native bridge |
-| `services/gateway` | Auth, model routing/adapters, usage events, shared memory, MCP |
+| `apps/web` | Workspace UI — chat, voice, model picker, Code, Agents, Browser, memory |
+| `apps/desktop` | Tauri shell (macOS) — runtime lifecycle, restricted native bridge |
+| `apps/desktop-windows` | Tauri shell (Windows) — same web view, same bridge |
+| `services/gateway` | Auth, routing, fallback, usage events, shared memory, MCP |
 | `services/browser` | Dedicated Chrome session, research, local browser MCP |
-| `askdeepakai-front-end`| Older visual reference front-end demo with simulated behavior |
 
-## Features
+Implementation and release boundaries are documented in the
+[production-readiness report](docs/production-readiness-report.md).
 
-- **Unified React Frontend**: A single, responsive React 19 + TypeScript frontend handling Chat, Voice, Model selection, Code, Agents, Browser, and Account memory.
-- **Cross-Platform Native Shells**: Tauri-based shells for macOS (`apps/desktop`) and Windows (`apps/desktop-windows`), which run the exact same web view with restricted native capabilities, supervising local tools and runtime processes.
-- **Secure Server-side Gateway**: A robust gateway (`services/gateway`) owning provider API keys (OpenAI, Anthropic, Gemini, etc.), routing traffic by tier (frontier, fast, balanced), and providing shared memory powered by Supabase.
-- **Shared Memory & MCP**: Automatic and explicit cross-tool memory shared via the authenticated Model Context Protocol (MCP). Notes, context, and configurations are securely stored per user.
-- **Supervised Browser Automation**: Real Chrome orchestration via a Python-based browser service (`services/browser`), supporting localized agents and research runtimes.
-- **Agent Integration**: Direct connections with OpenCode (coding workflows) and OpenClaw (task management) executing safely as native desktop supervisors.
+---
 
-## Getting Started
+## Development
 
-### Local Development Requirements
-
-- **Node.js 24 LTS**
-- **Rust** (for desktop builds) and native platform build tools (Xcode CLI or Visual Studio Build Tools).
-- For local browser agents: **Python 3.11+** and **Chrome/Chromium**.
-
-### Installation
-
-Install dependencies across the monorepo workspaces:
+**Requirements** — Node 24 LTS recommended (22+ works; the gateway runs TypeScript
+directly through Node's type stripping, so there is no build step), Rust with
+platform build tools (Xcode CLI or Visual Studio Build Tools), and for browser
+agents Python 3.11+ with Chrome/Chromium.
 
 ```sh
+# install
 npm --prefix apps/web ci
 npm --prefix services/gateway ci
 npm --prefix apps/desktop ci
-npm --prefix apps/desktop-windows ci
+
+# configure — copy each .env.example to .env
+#   apps/web/.env          public project settings only
+#   services/gateway/.env  provider keys and the Supabase service-role key
 ```
 
-### Environment Configuration
-
-Create local environment files:
-- `apps/web/.env.example` -> `apps/web/.env`
-- `services/gateway/.env.example` -> `services/gateway/.env`
-
-> **Security Note:** Provider keys and the Supabase service-role key must remain **only** in the gateway. The web environment only holds public project settings.
-
-### Running the Services
-
-Run the web frontend and gateway in separate terminals:
+> **Keys live in the gateway, never in the web environment.** The web build ships
+> to a browser; anything in it is public.
 
 ```sh
-npm --prefix services/gateway run dev
-npm --prefix apps/web run dev
-```
+# run — two terminals
+npm --prefix services/gateway run dev     # :8787
+npm --prefix apps/web run dev             # :5180
 
-Web development is served at `http://127.0.0.1:5180`. 
-
-**For Desktop Apps:** 
-Stop the web dev server and run the Tauri dev environment for your OS (it starts its own web copy):
-```sh
+# or the desktop shell, which starts its own copy of both
 npm --prefix apps/desktop run dev
-# OR for Windows:
-npm --prefix apps/desktop-windows run dev
 ```
 
-### Local Agents & Browser Runtime
-To enable the Coding and Browser automation features, follow the [Browser Service Setup](services/browser/README.md). Start the Browser service **before** connecting Code to ensure it receives its local MCP connection.
+The gateway's schema is applied with `npm --prefix services/gateway run migrate`,
+and `migrate:check` reports whether it is in place. Without it memory still works
+but does not survive a restart, and `/health` says so.
 
-## Verification & Testing
+---
 
-The repository maintains an extensive test suite across services:
+## Testing
 
 ```sh
-# Web
-npm --prefix apps/web test
-npm --prefix apps/web run build
-# (Run in another terminal alongside preview server at 5192)
-AIRA_TEST_URL=http://127.0.0.1:5192 npm --prefix apps/web run test:ui
-
-# Gateway
-npm --prefix services/gateway test
-npm --prefix services/gateway run typecheck
-
-# Browser service
-python3 -m unittest discover -s services/browser -p 'test_*.py'
-
-# Desktop (macOS)
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+npm --prefix services/gateway test        # 217
+npm --prefix apps/web test                # 104
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # 42
+python3 -m unittest discover -s services/browser -p 'test_*.py' # 9
 ```
 
-*(See `services/gateway/README.md` and `services/browser/README.md` for specific integration tests.)*
+**372 tests**, all passing. They are written against the failures that actually
+happened — a fleet that reported one agent instead of six, a store that claimed
+a database it had never spoken to, a retry that would have appended a second
+answer to a half-delivered first one.
 
-## Builds & Release
+Integration checks that need real runtimes live behind
+`npm --prefix services/gateway run test:integration`, and skip rather than fail
+when a runtime is not installed.
 
-Build the frontend and packaged native desktop binaries:
+---
 
-```sh
-npm --prefix apps/web run build
-npm --prefix apps/desktop run build -- --bundles app
-npm --prefix apps/desktop-windows run build
-```
+## Status
 
-Configure `VITE_GATEWAY_URL` prior to building. The output will land in `src-tauri/target/release/bundle/`. 
-> Note: Local desktop builds are ad-hoc signed and will require a developer certificate for public release. See the [Release checklist](docs/production-readiness-report.md#release-gates).
+| | |
+|---|---|
+| Chat, routing, fallback | Working — 5 providers, automatic failover |
+| Shared memory | Working — verified across a restart |
+| Coding agent | Working — real file access behind approval gates |
+| Browser research | Working |
+| Agent fleet | Working — requires `openclaw` |
+| Voice dictation | Built — needs a one-time speech-model download |
+| Cost tracking | Partial — recorded per request, not yet stored durably |
+| Distribution | Not ready — ad-hoc signed, not notarised |
+| Windows | Shell exists; less exercised than macOS |
+
+---
+
+<div align="center">
+
+**Aira** · by [AskDeepakAI](https://github.com/thedeepakreddy)
+
+</div>
